@@ -1,6 +1,6 @@
 # stock-mcp(Go 版)
 
-以 **MCP Streamable HTTP transport** 提供服務的唯讀 MCP Server,讓授權的 AI client 查詢既有 `stock_rust` 專案 PostgreSQL 資料庫中的台股資料。
+以 **MCP Streamable HTTP transport** 提供服務的唯讀 MCP Server。預設透過 `stock_rust` 的版本化 Data API 查詢台股資料；`db` 模式只供遷移期比對。
 
 > **非即時行情聲明**:本服務所有報價均為「資料庫中目前最新可取得的日報價或歷史日線資料」,**非交易所逐筆或保證即時行情**,僅供資訊參考。所有價格輸出都帶有 `is_realtime: false` 與免責聲明欄位。
 
@@ -25,12 +25,12 @@
                     │              │                                │
                     └──────────────┼────────────────────────────────┘
                                    ▼
-                        PostgreSQL(stock_rust 資料庫)
-                        stocks / last_daily_quotes /
-                        "DailyQuotes" / quote_history_record
+                  stock_rust Data API (Bearer key)
+                               │
+                           PostgreSQL
 ```
 
-- **`stock/`**:資料模型、pgtype 轉換、repository(全專案唯一允許出現 SQL 的檔案)、MCP tool 實作。
+- **`stock/`**:資料模型、Data API client、遷移期的 PostgreSQL repository、MCP tool 實作。
 - **`web/`**:API key 驗證、rate limit、健康檢查、HTTP server。tool 與資料庫邏輯完全與 transport 解耦,未來可新增 stdio adapter。
 - **`config/`**:環境變數載入與啟動驗證。
 
@@ -45,11 +45,11 @@
 ```bash
 git clone <本專案>
 cd stock_mcp_go
-cp .env.example .env   # 填入實際 DATABASE_URL 與 MCP_API_KEY
+cp .env.example .env   # 填入 STOCK_RUST_API_* 與 MCP_API_KEY
 go build ./...
 ```
 
-啟動時會驗證必要環境變數:缺少 `DATABASE_URL` 或 `MCP_API_KEY` 會直接拒絕啟動,錯誤訊息只包含變數名稱、不含任何敏感值。
+API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY` 與 `MCP_API_KEY`；db 模式才需要 `DATABASE_URL`。
 
 ### 環境變數
 
@@ -60,7 +60,11 @@ go build ./...
 | `PORT` | `3000` | 監聽 port |
 | `MCP_PATH` | `/mcp` | MCP endpoint 路徑 |
 | `TRUST_PROXY` | `false` | 僅在 `true` 時信任 `X-Forwarded-For` |
-| `DATABASE_URL` | (必填) | 唯讀帳號的 PostgreSQL 連線字串 |
+| `DATA_SOURCE` | `api` | `api`（正式）或 `db`（遷移期比對） |
+| `STOCK_RUST_API_BASE_URL` | api 模式必填 | 例如 `http://127.0.0.1:9002` |
+| `STOCK_RUST_API_KEY` | api 模式必填 | stock_rust 的 `DATA_API_KEY`，不可與 MCP key 共用 |
+| `API_TIMEOUT_MS` | `5000` | Data API HTTP timeout |
+| `DATABASE_URL` | db 模式必填 | 僅遷移期的唯讀連線字串 |
 | `DB_POOL_MAX` | `10` | 連線池上限 |
 | `DB_CONNECTION_TIMEOUT_MS` | `5000` | 連線逾時 |
 | `DB_STATEMENT_TIMEOUT_MS` | `5000` | 每條查詢的 statement timeout |
@@ -165,6 +169,10 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 ```
 
 > **關聯假設**:`quote_history_record.security_code` 與 `stocks."SecurityCode"` 為等價關聯(沿用原始規格書明確指定的假設,非本專案自行推測)。
+
+### `get_realtime_snapshot`
+
+僅在 `DATA_SOURCE=api` 出現。資料來自第三方站點採集的快照，`is_realtime` 固定為 `false`，並以 `updated_at` 作為 `data_as_of`；非交易時段或個股無快照時會回 tool error，建議改查 `get_latest_daily_quote`。
 
 ## 安全設計
 
