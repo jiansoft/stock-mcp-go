@@ -1,0 +1,19 @@
+# docker-compose 範例:僅示範 stock-mcp 服務本身。
+#
+# 注意:
+#   - 不要把 PostgreSQL 公開暴露到網際網路;資料庫應只在內部網路
+#     (或既有 stock_rust 主機)供本服務連線。
+#   - 秘密一律透過 .env 或部署平台的 secret 管理注入,不寫進 image。
+#   - 正式環境請將本服務放在 HTTPS 反向代理(Caddy / Nginx)後方。
+
+services:
+  stock-mcp:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env            # 由 .env.example 複製並填入實際值
+    environment:
+      HOST: 0.0.0.0     # 容器內必須綁定 0.0.0.0
+    ports:
+      # 只綁定本機迴環位址,由反向代理對外提供 HTTPS
+      - "127.0.0.1:3000:3000"
