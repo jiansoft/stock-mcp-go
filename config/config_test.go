@@ -23,6 +23,8 @@ func setRequired(t *testing.T) {
 	} {
 		t.Setenv(name, "")
 	}
+	// 舊有資料庫情境明確指定 db，避免受正式預設 api 影響。
+	t.Setenv("DATA_SOURCE", "db")
 	t.Setenv("DATABASE_URL", "postgresql://reader:secret@127.0.0.1:5432/stock")
 	t.Setenv("MCP_API_KEY", "test-key")
 }

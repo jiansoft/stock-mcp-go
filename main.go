@@ -88,16 +88,23 @@ func run(ctx context.Context) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
-	pool, err := newPool(ctx, cfg)
-	if err != nil {
-		return err
+	var repo stock.Querier
+	var closeDataSource func()
+	if cfg.DataSource == "api" {
+		repo = stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout)
+		closeDataSource = func() {}
+	} else {
+		pool, err := newPool(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		repo = stock.NewRepository(pool)
+		closeDataSource = pool.Close
 	}
 	// defer pool.Close() 確保無論 run 函式從哪一個 return 離開,都會
 	// 關閉資料庫連線池、釋放底層的網路連線,不會因為程式提前返回而讓
 	// 連線一直開著。
-	defer pool.Close()
-
-	repo := stock.NewRepository(pool)
+	defer closeDataSource()
 
 	// mcp.NewServer 建立一個空的 MCP server 實例(此時還沒有註冊任何
 	// 工具),Implementation 這個欄位是給 MCP 用戶端在初始化交握

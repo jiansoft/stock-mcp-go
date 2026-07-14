@@ -2,6 +2,7 @@ package stock
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -154,6 +155,39 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		InputSchema: symbolOnlySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.stockProfile)
+	if snapshots, ok := q.(SnapshotQuerier); ok {
+		mcp.AddTool(server, &mcp.Tool{Name: "get_realtime_snapshot", Description: "查詢第三方採集的近即時股票報價快照，可能有數秒至數分鐘延遲。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, (&snapshotToolset{snapshots: snapshots, logf: logf}).realtimeSnapshot)
+	}
+}
+
+// snapshotToolset 將獨立快照介面與記錄函式綁定，避免擴充既有日線 Querier。
+type snapshotToolset struct {
+	snapshots SnapshotQuerier
+	logf      func(string, ...any)
+}
+
+// realtimeSnapshot 執行 get_realtime_snapshot 並明確標示資料不是保證即時行情。
+func (ts *snapshotToolset) realtimeSnapshot(ctx context.Context, _ *mcp.CallToolRequest, in SymbolInput) (*mcp.CallToolResult, any, error) {
+	symbol, err := normalizeSymbol(in.Symbol)
+	if err != nil {
+		return nil, nil, err
+	}
+	snapshot, err := ts.snapshots.RealtimeSnapshot(ctx, symbol)
+	if err != nil {
+		ts.logf("工具 get_realtime_snapshot 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+	if snapshot == nil {
+		return nil, nil, fmt.Errorf("查無此股票的即時報價快照；可改用 get_latest_daily_quote 查詢最近收盤資料")
+	}
+	out := struct {
+		DataKind   string            `json:"data_kind"`
+		DataAsOf   string            `json:"data_as_of"`
+		IsRealtime bool              `json:"is_realtime"`
+		Disclaimer string            `json:"disclaimer"`
+		Snapshot   *RealtimeSnapshot `json:"snapshot"`
+	}{"realtime_snapshot", snapshot.UpdatedAt, false, "本資料為盤中由第三方站點採集的近即時報價快照,可能有數秒至數分鐘延遲,非交易所保證即時行情,僅供資訊參考。", snapshot}
+	return textResult(fmt.Sprintf("股票名稱:%s (%s)\n近即時價格:%s\n免責聲明:%s", snapshot.Name, snapshot.StockSymbol, displayFloat(snapshot.Price), out.Disclaimer)), out, nil
 }
 
 // toolset 把「查詢介面」與「錯誤記錄函式」打包在一起,四個工具方法
@@ -577,6 +611,9 @@ func (ts *toolset) priceHistory(ctx context.Context, _ *mcp.CallToolRequest, in 
 
 	quotes, err := ts.q.PriceHistory(ctx, symbol, from, to, limit)
 	if err != nil {
+		if errors.Is(err, ErrStockNotFound) {
+			return nil, nil, fmt.Errorf("找不到股票代號:%s", in.Symbol)
+		}
 		ts.logf("工具 get_price_history 執行失敗:%v", err)
 		return nil, nil, fmt.Errorf("%s", errInternal)
 	}

@@ -7,6 +7,8 @@
 // 工具參數轉成查詢條件」,讓查詢邏輯可以獨立於 transport 之外被測試。
 package stock
 
+import "context"
+
 // 本檔案定義所有「對外輸出」的資料模型,也就是 MCP 工具回應裡
 // structuredContent 欄位的實際形狀。每個型別上的 `json:"..."` 是 Go 的
 // struct tag(結構標籤):encoding/json 套件在把 struct 轉成 JSON
@@ -204,4 +206,25 @@ type StockProfile struct {
 	// History 是這支股票系統收錄範圍內的歷史高低點;若
 	// quote_history_record 表沒有對應資料,整個 History 為 nil。
 	History *QuoteHistoryRecord `json:"history"`
+}
+
+// RealtimeSnapshot 是第三方站點採集的近即時快照；資料可能延遲，並非交易所保證即時行情。
+type RealtimeSnapshot struct {
+	StockSymbol string   `json:"stock_symbol"`
+	Name        string   `json:"name"`
+	Price       *float64 `json:"price"`
+	Change      *float64 `json:"change"`
+	ChangeRange *float64 `json:"change_range"`
+	Open        *float64 `json:"open"`
+	High        *float64 `json:"high"`
+	Low         *float64 `json:"low"`
+	LastClose   *float64 `json:"last_close"`
+	VolumeLots  *float64 `json:"volume_lots"`
+	SourceSite  string   `json:"source_site"`
+	UpdatedAt   string   `json:"updated_at"`
+}
+
+// SnapshotQuerier 是僅 API 模式提供的即時快照最小介面。
+type SnapshotQuerier interface {
+	RealtimeSnapshot(context.Context, string) (*RealtimeSnapshot, error)
 }

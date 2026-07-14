@@ -12,6 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrStockNotFound 明確表示股票主檔不存在，讓工具層能與「存在但區間無資料」分辨。
+var ErrStockNotFound = errors.New("stock not found")
+
 // 本檔案是整個專案「唯一允許出現 SQL 字串」的地方。其他檔案(tools.go 等)
 // 一律透過 Repository 提供的方法跟資料庫互動,不會、也不應該自己寫 SQL。
 // 把所有 SQL 集中在一個檔案裡,有兩個好處:
@@ -469,6 +472,13 @@ func (r *Repository) LatestDailyQuote(ctx context.Context, symbol string) (*Late
 //
 // 查無資料時回傳空 slice,理由同 SearchStock。
 func (r *Repository) PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int) ([]HistoricalQuote, error) {
+	var exists bool
+	if err := r.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM stocks WHERE stock_symbol = $1)", symbol).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("確認股票存在:%w", err)
+	}
+	if !exists {
+		return nil, ErrStockNotFound
+	}
 	rows, err := r.pool.Query(ctx, priceHistorySQL, symbol, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查詢歷史日線:%w", err)

@@ -80,6 +80,12 @@ type Config struct {
 	DBPoolMax          int32
 	DBConnectTimeout   time.Duration
 	DBStatementTimeout time.Duration
+	// DataSource 決定資料來源；db 為過渡期直連 PostgreSQL，api 改走 stock_rust Data API。
+	DataSource string
+	// StockRustAPIBaseURL、StockRustAPIKey、APITimeout 是 api 模式的內網 HTTP 設定。
+	StockRustAPIBaseURL string
+	StockRustAPIKey     string
+	APITimeout          time.Duration
 
 	// APIKey 是 MCP 對外驗證用的金鑰,屬敏感資訊,不可寫入 log。
 	APIKey string
@@ -142,10 +148,24 @@ func Load() (*Config, error) {
 	// 空字串就立刻拒絕啟動。錯誤訊息只提「缺少哪個變數名稱」,絕不提
 	// 使用者可能已經(錯誤地)填入的值——即使那個值是空字串,只提名稱
 	// 的習慣能避免日後改程式碼時不小心把敏感值也一起印出來。
+	cfg.DataSource = getEnv("DATA_SOURCE", "api")
+	if cfg.DataSource != "db" && cfg.DataSource != "api" {
+		return nil, fmt.Errorf("環境變數 DATA_SOURCE 的值格式不正確:只能是 db 或 api")
+	}
 	cfg.DatabaseURL = os.Getenv("DATABASE_URL")
-	if cfg.DatabaseURL == "" {
+	if cfg.DataSource == "db" && cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數:DATABASE_URL")
 	}
+	cfg.StockRustAPIBaseURL = os.Getenv("STOCK_RUST_API_BASE_URL")
+	cfg.StockRustAPIKey = os.Getenv("STOCK_RUST_API_KEY")
+	if cfg.DataSource == "api" && (cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "") {
+		return nil, fmt.Errorf("api 模式需要 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
+	}
+	apiTimeoutMS, err := intEnv("API_TIMEOUT_MS", 5000, 1, 600_000)
+	if err != nil {
+		return nil, err
+	}
+	cfg.APITimeout = time.Duration(apiTimeoutMS) * time.Millisecond
 	cfg.APIKey = os.Getenv("MCP_API_KEY")
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數:MCP_API_KEY")
