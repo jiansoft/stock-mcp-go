@@ -9,6 +9,8 @@ package stock
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +58,25 @@ func (f *fakeQuerier) PriceHistory(_ context.Context, symbol string, from, to *t
 func (f *fakeQuerier) StockProfile(_ context.Context, symbol string) (*StockProfile, error) {
 	f.gotSymbol = symbol
 	return f.profile, nil
+}
+
+// fakeSnapshotQuerier 除了滿足 Querier(內嵌 fakeQuerier)之外,還多實作
+// RealtimeSnapshot,讓它同時滿足 SnapshotQuerier 介面——用來測試
+// AddTools 依型別斷言決定是否註冊 get_realtime_snapshot 工具,以及
+// snapshotToolset.realtimeSnapshot 本身的邏輯。
+type fakeSnapshotQuerier struct {
+	fakeQuerier
+	snapshot *RealtimeSnapshot
+	err      error
+
+	// gotSymbol 覆蓋(shadow)內嵌 fakeQuerier 的同名欄位,只記錄
+	// RealtimeSnapshot 這一個方法實際收到的股票代號。
+	gotSymbol string
+}
+
+func (f *fakeSnapshotQuerier) RealtimeSnapshot(_ context.Context, symbol string) (*RealtimeSnapshot, error) {
+	f.gotSymbol = symbol
+	return f.snapshot, f.err
 }
 
 // newToolset 用給定的 fakeQuerier 建立一個 *toolset,logf 傳入一個
@@ -288,6 +309,158 @@ func TestStockProfileTool(t *testing.T) {
 		_, _, err := ts.stockProfile(t.Context(), nil, SymbolInput{Symbol: "   "})
 		if err == nil || !strings.Contains(err.Error(), "symbol") {
 			t.Fatalf("預期 symbol 長度錯誤,實際為:%v", err)
+		}
+	})
+}
+
+// newSnapshotToolset 用給定的 fakeSnapshotQuerier 建立一個
+// *snapshotToolset,logf 同 newToolset 的理由,傳入空函式。
+func newSnapshotToolset(f *fakeSnapshotQuerier) *snapshotToolset {
+	return &snapshotToolset{snapshots: f, logf: func(string, ...any) {}}
+}
+
+func TestRealtimeSnapshotTool(t *testing.T) {
+	t.Run("symbol 為空白字串回傳驗證錯誤", func(t *testing.T) {
+		ts := newSnapshotToolset(&fakeSnapshotQuerier{})
+		_, _, err := ts.realtimeSnapshot(t.Context(), nil, SymbolInput{Symbol: "   "})
+		if err == nil || !strings.Contains(err.Error(), "symbol") {
+			t.Fatalf("預期 symbol 長度錯誤,實際為:%v", err)
+		}
+	})
+
+	t.Run("代號正規化為 trim 後大寫", func(t *testing.T) {
+		f := &fakeSnapshotQuerier{snapshot: &RealtimeSnapshot{StockSymbol: "00631L"}}
+		ts := newSnapshotToolset(f)
+		_, _, _ = ts.realtimeSnapshot(t.Context(), nil, SymbolInput{Symbol: "  00631l "})
+		if f.gotSymbol != "00631L" {
+			t.Errorf("預期查詢 00631L,實際為 %q", f.gotSymbol)
+		}
+	})
+
+	t.Run("查無快照時回傳工具錯誤並建議改用日報價", func(t *testing.T) {
+		ts := newSnapshotToolset(&fakeSnapshotQuerier{snapshot: nil})
+		_, _, err := ts.realtimeSnapshot(t.Context(), nil, SymbolInput{Symbol: "2330"})
+		if err == nil || !strings.Contains(err.Error(), "get_latest_daily_quote") {
+			t.Fatalf("預期查無快照的錯誤並建議改用 get_latest_daily_quote,實際為:%v", err)
+		}
+	})
+
+	t.Run("底層查詢錯誤時回傳通用訊息,不外洩內部細節", func(t *testing.T) {
+		ts := newSnapshotToolset(&fakeSnapshotQuerier{err: errors.New("dial tcp: 內部主機無法連線")})
+		_, _, err := ts.realtimeSnapshot(t.Context(), nil, SymbolInput{Symbol: "2330"})
+		if err == nil || err.Error() != errInternal {
+			t.Fatalf("預期回傳通用內部錯誤訊息,實際為:%v", err)
+		}
+	})
+
+	t.Run("查詢成功回傳摘要與 structuredContent", func(t *testing.T) {
+		snapshot := &RealtimeSnapshot{
+			StockSymbol: "2330",
+			Name:        "台積電",
+			Price:       ptr(1000.0),
+			SourceSite:  "example.com",
+			UpdatedAt:   "2026-07-16T05:00:00Z",
+		}
+		ts := newSnapshotToolset(&fakeSnapshotQuerier{snapshot: snapshot})
+		res, out, err := ts.realtimeSnapshot(t.Context(), nil, SymbolInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("預期成功,實際錯誤:%v", err)
+		}
+		if !strings.Contains(summaryOf(t, res), "台積電") || !strings.Contains(summaryOf(t, res), "1000") {
+			t.Errorf("摘要應包含股票名稱與價格:%q", summaryOf(t, res))
+		}
+
+		// realtimeSnapshot 的 structuredContent 型別是未匯出的匿名 struct,
+		// 這裡改用 JSON 往返比對欄位,避免測試耦合到匿名型別的確切定義。
+		raw, err := json.Marshal(out)
+		if err != nil {
+			t.Fatalf("json.Marshal(out) 失敗:%v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("json.Unmarshal 失敗:%v", err)
+		}
+		if got["data_kind"] != "realtime_snapshot" {
+			t.Errorf("data_kind 不正確:%v", got["data_kind"])
+		}
+		if got["is_realtime"] != false {
+			t.Errorf("is_realtime 必須為 false,實際為 %v", got["is_realtime"])
+		}
+		if got["data_as_of"] != "2026-07-16T05:00:00Z" {
+			t.Errorf("data_as_of 應等於 snapshot.UpdatedAt,實際為 %v", got["data_as_of"])
+		}
+		disclaimer, _ := got["disclaimer"].(string)
+		if !strings.Contains(disclaimer, "非交易所保證即時行情") {
+			t.Errorf("disclaimer 應明確標示非保證即時行情:%q", disclaimer)
+		}
+		snapOut, ok := got["snapshot"].(map[string]any)
+		if !ok {
+			t.Fatalf("snapshot 欄位型別不正確:%#v", got["snapshot"])
+		}
+		if snapOut["stock_symbol"] != "2330" {
+			t.Errorf("snapshot.stock_symbol 不正確:%v", snapOut["stock_symbol"])
+		}
+	})
+}
+
+// TestAddToolsRegistersRealtimeSnapshotOnlyWhenSupported 驗證 AddTools 依
+// Querier 是否同時滿足 SnapshotQuerier 介面(型別斷言,見 tools.go),
+// 決定要不要多註冊 get_realtime_snapshot 這個工具——這是 db 模式(只有
+// *Repository)跟 api 模式(*APIClient 額外實作了 RealtimeSnapshot)在
+// 工具清單上的唯一差異,必須透過真正的 MCP tools/list 往返驗證,單靠
+// 呼叫 snapshotToolset 本身的方法無法測到這段註冊邏輯。
+func TestAddToolsRegistersRealtimeSnapshotOnlyWhenSupported(t *testing.T) {
+	toolNames := func(t *testing.T, q Querier) []string {
+		t.Helper()
+		server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "0.0.1"}, nil)
+		AddTools(server, q, nil)
+
+		client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+		t1, t2 := mcp.NewInMemoryTransports()
+		if _, err := server.Connect(t.Context(), t1, nil); err != nil {
+			t.Fatalf("server.Connect: %v", err)
+		}
+		cs, err := client.Connect(t.Context(), t2, nil)
+		if err != nil {
+			t.Fatalf("client.Connect: %v", err)
+		}
+		defer cs.Close()
+
+		var names []string
+		for tool, err := range cs.Tools(t.Context(), nil) {
+			if err != nil {
+				t.Fatalf("列出工具失敗:%v", err)
+			}
+			names = append(names, tool.Name)
+		}
+		return names
+	}
+
+	t.Run("僅實作 Querier 時不註冊 get_realtime_snapshot", func(t *testing.T) {
+		names := toolNames(t, &fakeQuerier{})
+		if len(names) != 4 {
+			t.Errorf("預期 4 個工具,實際為 %d 個:%v", len(names), names)
+		}
+		for _, name := range names {
+			if name == "get_realtime_snapshot" {
+				t.Fatalf("不應註冊 get_realtime_snapshot,實際工具清單:%v", names)
+			}
+		}
+	})
+
+	t.Run("同時實作 SnapshotQuerier 時會多註冊 get_realtime_snapshot", func(t *testing.T) {
+		names := toolNames(t, &fakeSnapshotQuerier{})
+		if len(names) != 5 {
+			t.Errorf("預期 5 個工具,實際為 %d 個:%v", len(names), names)
+		}
+		found := false
+		for _, name := range names {
+			if name == "get_realtime_snapshot" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("預期註冊 get_realtime_snapshot,實際工具清單:%v", names)
 		}
 	})
 }

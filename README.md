@@ -36,7 +36,7 @@
 
 ## 系統需求
 
-- Go 1.27(開發當下為 `go1.27rc1`)
+- Go 1.27(開發當下為 `go1.27rc2`,與 `go.mod`/`Dockerfile` 一致)
 - 可連線的 PostgreSQL(既有 `stock_rust` 資料庫)
 - 正式環境:HTTPS 反向代理(Caddy / Nginx)
 

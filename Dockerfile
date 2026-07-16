@@ -1,5 +1,5 @@
 # ── 建置階段 ────────────────────────────────────────────────────────────
-FROM golang:1.27rc1 AS build
+FROM golang:1.27rc2 AS build
 
 WORKDIR /src
 

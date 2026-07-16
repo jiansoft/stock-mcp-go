@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build / vet / fmt / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # go-version-file 直接讀 go.mod 的 go 指令行,確保 CI 用的 Go 版本
+      # 與本地開發、Dockerfile 一致,不需要在這裡另外手動維護一份版本號。
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt 檢查
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下檔案未經 gofmt 格式化:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # 未設定 TEST_DATABASE_URL 時,stock 套件的資料庫整合測試
+      # (TestRepositoryIntegration)會自動略過,見 stock/repository_test.go
+      # 與 README「已知限制」章節——CI 不連真實資料庫,只跑純邏輯測試。
+      - name: go test
+        run: go test ./... -cover
