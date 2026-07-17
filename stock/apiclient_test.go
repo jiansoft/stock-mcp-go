@@ -542,3 +542,199 @@ func TestAPIClientScreenStocksErrors(t *testing.T) {
 		t.Fatal("timeout 必須回傳 error")
 	}
 }
+
+// TestAPIClientMarketData 驗證 Phase 4 三個市場輔助 endpoint 的完整
+// envelope、query string 組裝(選填參數未提供時不出現)、null 欄位與
+// 空陣列語意。fixture 數值會在 tool 測試重用,固定 Data API 到 MCP
+// structuredContent 之間不做重新計算。
+func TestAPIClientMarketData(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/market/index-history":
+			if r.URL.Query().Get("from") == "2030-01-01" {
+				// 合法條件但查無資料:200 + 空陣列 + data_as_of null。
+				_, _ = w.Write([]byte(`{"data_as_of":null,"points":[]}`))
+				return
+			}
+			// trade_value/transaction/trading_volume 帶 null,驗證數值欄位
+			// 的缺值語意被原樣保留。
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-17","points":[{"date":"2026-07-17","index":23000.5,"change":120.3,"trade_value":412345678901,"transaction":null,"trading_volume":null},{"date":"2026-07-16","index":22880.2,"change":-50.1,"trade_value":null,"transaction":1234567,"trading_volume":9876543210}]}`))
+		case "/api/v1/market/dividend-calendar":
+			if r.URL.Query().Get("event_type") == "ex_rights" {
+				_, _ = w.Write([]byte(`{"data_as_of":null,"events":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data_as_of":null,"events":[{"stock_symbol":"2330","name":"台積電","event_type":"ex_dividend","event_date":"2026-07-20","dividend_year":2025,"quarter":"A","cash_dividend":17,"stock_dividend":0,"total_dividend":17}]}`))
+		case "/api/v1/market/qfii-holding-ranking":
+			if r.URL.Query().Get("industry_id") == "99" {
+				// 刻意回 stocks:null,驗證 client 對外防禦性轉成 []。
+				_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":null}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":[{"rank":1,"stock_symbol":"2330","name":"台積電","market_id":2,"industry_id":24,"qfii_shares_held":19000000000,"qfii_share_holding_percentage":73.2,"issued_share":25930000000}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	// --- 指數歷史:完整欄位與 null 語意 ---
+	index, err := client.MarketIndexHistory(t.Context(), IndexHistoryOptions{From: "2026-06-01", To: "2026-07-17", Limit: 30})
+	if err != nil || index == nil || len(index.Points) != 2 {
+		t.Fatalf("MarketIndexHistory() = %#v, %v", index, err)
+	}
+	if index.DataAsOf == nil || *index.DataAsOf != "2026-07-17" {
+		t.Fatalf("data_as_of 應來自伺服器 envelope:%#v", index.DataAsOf)
+	}
+	latest := index.Points[0]
+	if *latest.Index != 23000.5 || *latest.Change != 120.3 || latest.Transaction != nil || latest.TradingVolume != nil {
+		t.Fatalf("指數欄位/null 語意解析錯誤:%#v", latest)
+	}
+	if gotQuery != "from=2026-06-01&limit=30&to=2026-07-17" {
+		t.Fatalf("index-history query string 錯誤:%q", gotQuery)
+	}
+
+	// 選填 from/to 未提供時不可出現在 query string。
+	if _, err := client.MarketIndexHistory(t.Context(), IndexHistoryOptions{Limit: 30}); err != nil {
+		t.Fatalf("MarketIndexHistory() 不應失敗:%v", err)
+	}
+	if gotQuery != "limit=30" {
+		t.Fatalf("未提供的日期不應出現在 query string:%q", gotQuery)
+	}
+
+	// 合法條件查無資料:200 空陣列不是錯誤,data_as_of 為 nil。
+	emptyIndex, err := client.MarketIndexHistory(t.Context(), IndexHistoryOptions{From: "2030-01-01", Limit: 30})
+	if err != nil || emptyIndex.Points == nil || len(emptyIndex.Points) != 0 || emptyIndex.DataAsOf != nil {
+		t.Fatalf("指數空資料語意錯誤:%#v, %v", emptyIndex, err)
+	}
+
+	// --- 股利行事曆:完整欄位與 data_as_of null ---
+	calendar, err := client.DividendCalendar(t.Context(), CalendarOptions{From: "2026-07-01", To: "2026-07-31", EventType: "all", Limit: 50})
+	if err != nil || calendar == nil || len(calendar.Events) != 1 {
+		t.Fatalf("DividendCalendar() = %#v, %v", calendar, err)
+	}
+	if calendar.DataAsOf != nil {
+		t.Fatalf("行事曆 data_as_of 依契約固定為 null:%#v", calendar.DataAsOf)
+	}
+	event := calendar.Events[0]
+	if event.StockSymbol != "2330" || event.EventType != "ex_dividend" || event.EventDate != "2026-07-20" ||
+		event.DividendYear != 2025 || event.Quarter != "A" || *event.CashDividend != 17 || *event.StockDividend != 0 {
+		t.Fatalf("行事曆事件欄位解析錯誤:%#v", event)
+	}
+	if gotQuery != "event_type=all&from=2026-07-01&limit=50&to=2026-07-31" {
+		t.Fatalf("dividend-calendar query string 錯誤:%q", gotQuery)
+	}
+
+	// 選填 from/to 未提供時不出現;event_type 由 tool 層保證有值,固定送出。
+	emptyCalendar, err := client.DividendCalendar(t.Context(), CalendarOptions{EventType: "ex_rights", Limit: 50})
+	if err != nil || emptyCalendar.Events == nil || len(emptyCalendar.Events) != 0 {
+		t.Fatalf("行事曆空資料語意錯誤:%#v, %v", emptyCalendar, err)
+	}
+	if gotQuery != "event_type=ex_rights&limit=50" {
+		t.Fatalf("未提供的日期不應出現在 query string:%q", gotQuery)
+	}
+
+	// --- QFII 排行:完整欄位、int64 股數與 data_as_of null ---
+	ranking, err := client.QfiiHoldingRanking(t.Context(), QfiiRankingOptions{Market: "twse", IndustryID: 24, SortBy: "percentage", Limit: 20})
+	if err != nil || ranking == nil || len(ranking.Stocks) != 1 {
+		t.Fatalf("QfiiHoldingRanking() = %#v, %v", ranking, err)
+	}
+	if ranking.DataAsOf != nil {
+		t.Fatalf("QFII 排行 data_as_of 依契約固定為 null:%#v", ranking.DataAsOf)
+	}
+	top := ranking.Stocks[0]
+	if top.Rank != 1 || top.StockSymbol != "2330" || *top.QfiiSharesHeld != 19000000000 ||
+		*top.QfiiShareHoldingPercentage != 73.2 || *top.IssuedShare != 25930000000 {
+		t.Fatalf("QFII 欄位解析錯誤:%#v", top)
+	}
+	if gotQuery != "industry_id=24&limit=20&market=twse&sort_by=percentage" {
+		t.Fatalf("qfii-holding-ranking query string 錯誤:%q", gotQuery)
+	}
+
+	// 選填 industry_id 為 0(未提供)時不出現;stocks:null 防禦性轉成 []。
+	emptyRanking, err := client.QfiiHoldingRanking(t.Context(), QfiiRankingOptions{Market: "all", IndustryID: 99, SortBy: "shares", Limit: 20})
+	if err != nil || emptyRanking.Stocks == nil || len(emptyRanking.Stocks) != 0 {
+		t.Fatalf("QFII 空資料語意錯誤:%#v, %v", emptyRanking, err)
+	}
+	if _, err := client.QfiiHoldingRanking(t.Context(), QfiiRankingOptions{Market: "all", SortBy: "percentage", Limit: 20}); err != nil {
+		t.Fatalf("QfiiHoldingRanking() 不應失敗:%v", err)
+	}
+	if gotQuery != "limit=20&market=all&sort_by=percentage" {
+		t.Fatalf("未提供的 industry_id 不應出現在 query string:%q", gotQuery)
+	}
+}
+
+// TestAPIClientMarketDataErrors 覆蓋 Phase 4 三個 endpoint 的 404、401、
+// 422、500、timeout 與無效 JSON。三個都是市場層級 endpoint,契約上沒有
+// 404 語意——404 代表部署異常,必須與其他非 2xx 一樣是一般 error,
+// 不得轉成 ErrStockNotFound 或 ErrMarketDataNotFound。
+func TestAPIClientMarketDataErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 以 limit 值挑選要模擬的故障情境,讓同一個 handler 服務三個 path。
+		switch r.URL.Query().Get("limit") {
+		case "1":
+			w.WriteHeader(http.StatusNotFound)
+		case "2":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "3":
+			w.WriteHeader(http.StatusUnprocessableEntity)
+		case "4":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "5":
+			w.Header().Set("content-type", "application/json")
+			_, _ = w.Write([]byte(`{not-json`))
+		case "6":
+			// 等 client timeout 取消 request context,不用 time.Sleep 猜測
+			// goroutine 排程,因此測試快速且 deterministic。
+			<-r.Context().Done()
+		}
+	}))
+	defer server.Close()
+
+	endpoints := map[string]func(*APIClient, int) error{
+		"index-history": func(c *APIClient, limit int) error {
+			_, err := c.MarketIndexHistory(t.Context(), IndexHistoryOptions{Limit: limit})
+			return err
+		},
+		"dividend-calendar": func(c *APIClient, limit int) error {
+			_, err := c.DividendCalendar(t.Context(), CalendarOptions{EventType: "all", Limit: limit})
+			return err
+		},
+		"qfii-holding-ranking": func(c *APIClient, limit int) error {
+			_, err := c.QfiiHoldingRanking(t.Context(), QfiiRankingOptions{Market: "all", SortBy: "percentage", Limit: limit})
+			return err
+		},
+	}
+	scenarios := []struct {
+		name  string
+		limit int
+	}{
+		{"404", 1}, {"401", 2}, {"422", 3}, {"500", 4}, {"invalid JSON", 5},
+	}
+	for name, call := range endpoints {
+		t.Run(name, func(t *testing.T) {
+			client := NewAPIClient(server.URL, "secret", time.Second)
+			for _, sc := range scenarios {
+				t.Run(sc.name, func(t *testing.T) {
+					err := call(client, sc.limit)
+					if err == nil {
+						t.Fatal("預期錯誤,實際成功")
+					}
+					if errors.Is(err, ErrStockNotFound) || errors.Is(err, ErrMarketDataNotFound) {
+						t.Fatalf("市場輔助 endpoint 的錯誤不得帶個股/市場 404 語意:%v", err)
+					}
+				})
+			}
+			t.Run("timeout", func(t *testing.T) {
+				shortClient := NewAPIClient(server.URL, "secret", 10*time.Millisecond)
+				if err := call(shortClient, 6); err == nil {
+					t.Fatal("timeout 必須回傳 error")
+				}
+			})
+		})
+	}
+}

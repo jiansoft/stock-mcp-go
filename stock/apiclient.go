@@ -272,6 +272,85 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Stock
 	return &body, nil
 }
 
+// MarketIndexHistory 查詢台股大盤 TAIEX 指數歷史並回傳完整 envelope。
+//
+// 這是市場層級 endpoint,契約上沒有 404 語意(查無資料回 200 空陣列),
+// 因此使用 c.get:404 反而代表路由不存在等部署異常,必須是一般 error,
+// 交由 tool 層記 log 並回安全通用訊息。
+func (c *APIClient) MarketIndexHistory(ctx context.Context, opt IndexHistoryOptions) (*MarketIndexHistory, error) {
+	values := url.Values{"limit": []string{fmt.Sprint(opt.Limit)}}
+	// From/To 空字串代表「未提供」,不放進 query string,讓伺服器端套用
+	// 「不限制區間」的預設語意。
+	if opt.From != "" {
+		values.Set("from", opt.From)
+	}
+	if opt.To != "" {
+		values.Set("to", opt.To)
+	}
+	var body MarketIndexHistory
+	if err := c.get(ctx, "/api/v1/market/index-history?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	// 防禦性保證:即使伺服器端序列化出 null,對外也永遠是空陣列——
+	// 「查無資料」在 JSON 輸出必須是 [] 而非 null(計畫 §3.4)。
+	if body.Points == nil {
+		body.Points = []IndexPoint{}
+	}
+	return &body, nil
+}
+
+// DividendCalendar 查詢日期區間內的除權息與股利發放行事曆,回傳完整
+// envelope。同為市場層級 endpoint,404 即異常,使用 c.get。
+func (c *APIClient) DividendCalendar(ctx context.Context, opt CalendarOptions) (*DividendCalendar, error) {
+	// EventType 由 tool 層保證已套用預設值 "all",固定送出;From/To 空
+	// 字串代表未提供,交由伺服器端套用「查詢當日起 30 天」的預設區間。
+	values := url.Values{
+		"event_type": []string{opt.EventType},
+		"limit":      []string{fmt.Sprint(opt.Limit)},
+	}
+	if opt.From != "" {
+		values.Set("from", opt.From)
+	}
+	if opt.To != "" {
+		values.Set("to", opt.To)
+	}
+	var body DividendCalendar
+	if err := c.get(ctx, "/api/v1/market/dividend-calendar?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	if body.Events == nil {
+		body.Events = []DividendEvent{}
+	}
+	return &body, nil
+}
+
+// QfiiHoldingRanking 查詢外資(QFII)持股排行,回傳完整 envelope。
+//
+// 這是 stocks 表最近一次每日更新的「當前快照」,沒有歷史序列;契約
+// (§4.10)因此規定 data_as_of 固定為 null,client 原樣保留,由 tool 層
+// 以文字說明快照語意。市場層級 endpoint,404 即異常,使用 c.get。
+func (c *APIClient) QfiiHoldingRanking(ctx context.Context, opt QfiiRankingOptions) (*QfiiHoldingRanking, error) {
+	// Market/SortBy 由 tool 層保證已套用預設值,固定送出;IndustryID 的
+	// 0 值代表未提供,不放進 query string(產業代碼從 1 起算,0 不是
+	// 合法代碼,不會與真實條件混淆)。
+	values := url.Values{
+		"market":  []string{opt.Market},
+		"sort_by": []string{opt.SortBy},
+		"limit":   []string{fmt.Sprint(opt.Limit)},
+	}
+	if opt.IndustryID != 0 {
+		values.Set("industry_id", fmt.Sprint(opt.IndustryID))
+	}
+	var body QfiiHoldingRanking
+	if err := c.get(ctx, "/api/v1/market/qfii-holding-ranking?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	if body.Stocks == nil {
+		body.Stocks = []QfiiHolding{}
+	}
+	return &body, nil
+}
+
 // get 執行成功必為 200 的 GET 請求。
 func (c *APIClient) get(ctx context.Context, path string, output any) error {
 	found, err := c.getFound(ctx, path, output)

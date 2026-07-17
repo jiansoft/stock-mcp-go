@@ -20,7 +20,7 @@
                     │         3. MCP StreamableHTTPHandler(SDK)   │
                     │              │                                │
                     │       stock/(領域層)                        │
-                    │         tools.go   ── 12 個 MCP tool(api 模式)│
+                    │         tools.go   ── 15 個 MCP tool(api 模式)│
                     │         repository ── 參數化 SQL(唯讀)      │
                     │              │                                │
                     └──────────────┼────────────────────────────────┘
@@ -237,6 +237,38 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 ```
 
 回應的 `data_kind` 為 `stock_screening_result`，混合指標沒有單一正確資料日，所以最外層 `data_as_of` 固定為 `null`；查無符合項目時 `stocks` 為空陣列。結果只描述歷史資料符合情形，不替使用者做投資決策。
+
+### `get_market_index_history`
+
+僅在 `DATA_SOURCE=api` 出現。查詢台股大盤 TAIEX 加權指數的歷史走勢（收盤指數、漲跌點數、成交金額/筆數/股數），依日期新到舊排序，與 `get_market_breadth` 互補（前者看指數點位，後者看市場內部強弱）。`from`/`to` 為 `YYYY-MM-DD` 日期區間（選填，`from` 不可晚於 `to`），`limit` 預設 30（1–365）。查無資料回傳空陣列且 `data_as_of` 為 `null`（大盤指數沒有「代號不存在」的 404 語意）。
+
+```json
+{"name": "get_market_index_history", "arguments": {"from": "2026-06-01", "to": "2026-07-17", "limit": 30}}
+```
+
+回應的 `data_kind` 為 `market_index_history`，`data_as_of` 取實際回傳資料最新一筆的日期；`index`、`change`、`trade_value`、`transaction`、`trading_volume` 缺值一律為 `null`。
+
+### `get_dividend_calendar`
+
+僅在 `DATA_SOURCE=api` 出現。查詢日期區間內的除權息與股利發放行事曆，依事件日期由近到遠（`event_date ASC`）排序。`event_type` 可選 `ex_dividend`（除息）、`ex_rights`（除權）、`cash_payable`（現金股利發放）、`stock_payable`（股票股利發放）或 `all`（預設）；`from` 未提供時預設查詢當日、`to` 預設 `from` 加 30 天，兩者都提供時 `from` 不可晚於 `to` 且區間不可超過 92 天；`limit` 預設 50（1–200）。同一筆股利若有多個日期落在區間內會輸出多筆事件（每筆一個 `event_type`）。
+
+```json
+{"name": "get_dividend_calendar", "arguments": {"from": "2026-07-01", "to": "2026-07-31", "event_type": "all", "limit": 50}}
+```
+
+回應的 `data_kind` 為 `dividend_calendar`；混合事件沒有單一統計日期，最外層 `data_as_of` 固定為 `null`，各事件日期在每筆 `event_date` 內。查無事件時 `events` 為空陣列。
+
+### `get_qfii_holding_ranking`
+
+僅在 `DATA_SOURCE=api` 出現。查詢外資（QFII）持股比例或持股數排行，可依市場與正整數 `industry_id` 篩選；`market=all` 只包含上市與上櫃。`sort_by` 可選 `percentage`（外資持股比例，預設）或 `shares`（外資持股數），一律由高到低；`limit` 預設 20（1–50）。已排除暫停上市與外資零持股的股票。
+
+> **快照限制**：這是**最近一次每日更新的當前快照**，資料庫沒有歷史序列，因此**無法回答「外資最近增持/減持了哪些股票」這類趨勢問題**；`data_as_of` 也因為沒有列級更新日期而固定為 `null`，摘要文字會明確標示快照語意。
+
+```json
+{"name": "get_qfii_holding_ranking", "arguments": {"market": "twse", "industry_id": 24, "sort_by": "percentage", "limit": 20}}
+```
+
+回應的 `data_kind` 為 `qfii_holding_ranking`；`qfii_shares_held` 與 `issued_share` 為整數股數，缺值為 `null`。查無資料時 `stocks` 為空陣列。
 
 ## 安全設計
 

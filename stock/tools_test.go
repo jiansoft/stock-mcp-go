@@ -173,6 +173,43 @@ func newScreenToolset(f *fakeStockScreener) *screenToolset {
 	return &screenToolset{screener: f, logf: func(string, ...any) {}}
 }
 
+// fakeMarketDataQuerier 內嵌 fakeQuerier 並多實作 Phase 4 三個市場輔助
+// 查詢方法,同時滿足 Querier 與 MarketDataQuerier——用來測試 AddTools
+// 依型別斷言註冊三個工具,以及 marketDataToolset 各 handler 的邏輯。
+type fakeMarketDataQuerier struct {
+	fakeQuerier
+	index    *MarketIndexHistory
+	calendar *DividendCalendar
+	qfii     *QfiiHoldingRanking
+	err      error
+
+	// gotIndexOpt / gotCalendarOpt / gotQfiiOpt 記錄最後一次呼叫實際
+	// 收到的參數,驗證正規化與預設值真的有被套用。
+	gotIndexOpt    IndexHistoryOptions
+	gotCalendarOpt CalendarOptions
+	gotQfiiOpt     QfiiRankingOptions
+}
+
+func (f *fakeMarketDataQuerier) MarketIndexHistory(_ context.Context, opt IndexHistoryOptions) (*MarketIndexHistory, error) {
+	f.gotIndexOpt = opt
+	return f.index, f.err
+}
+
+func (f *fakeMarketDataQuerier) DividendCalendar(_ context.Context, opt CalendarOptions) (*DividendCalendar, error) {
+	f.gotCalendarOpt = opt
+	return f.calendar, f.err
+}
+
+func (f *fakeMarketDataQuerier) QfiiHoldingRanking(_ context.Context, opt QfiiRankingOptions) (*QfiiHoldingRanking, error) {
+	f.gotQfiiOpt = opt
+	return f.qfii, f.err
+}
+
+// newMarketDataToolset 建立不輸出測試 log 的 Phase 4 toolset。
+func newMarketDataToolset(f *fakeMarketDataQuerier) *marketDataToolset {
+	return &marketDataToolset{marketData: f, logf: func(string, ...any) {}}
+}
+
 // newToolset 用給定的 fakeQuerier 建立一個 *toolset,logf 傳入一個
 // 「什麼都不做」的空函式——測試不需要檢查 log 內容,只需要確保錯誤
 // 記錄不會導致測試本身出錯或印出多餘的雜訊。
@@ -599,6 +636,34 @@ func TestAddToolsRegistersRealtimeSnapshotOnlyWhenSupported(t *testing.T) {
 		}
 		if got["get_monthly_revenue_history"] {
 			t.Fatal("僅實作 AnalyticsQuerier 時不應連帶註冊 Phase 1 工具")
+		}
+	})
+
+	t.Run("同時實作 MarketDataQuerier 時只新增三個 Phase 4 工具", func(t *testing.T) {
+		names := toolNames(t, &fakeMarketDataQuerier{})
+		// fakeMarketDataQuerier 只多實作 MarketDataQuerier,因此是 4 + 3 = 7。
+		if len(names) != 7 {
+			t.Fatalf("預期 4+3 個工具,實際為 %d:%v", len(names), names)
+		}
+		got := map[string]bool{}
+		for _, name := range names {
+			got[name] = true
+		}
+		for _, want := range []string{"get_market_index_history", "get_dividend_calendar", "get_qfii_holding_ranking"} {
+			if !got[want] {
+				t.Errorf("預期註冊 %s,實際工具清單:%v", want, names)
+			}
+		}
+		if got["get_monthly_revenue_history"] || got["get_stock_valuation"] || got["screen_stocks"] {
+			t.Fatal("僅實作 MarketDataQuerier 時不應連帶註冊其他 Phase 的工具")
+		}
+	})
+
+	t.Run("僅實作 Querier 時不註冊市場輔助工具", func(t *testing.T) {
+		for _, name := range toolNames(t, &fakeQuerier{}) {
+			if name == "get_market_index_history" || name == "get_dividend_calendar" || name == "get_qfii_holding_ranking" {
+				t.Fatalf("db 模式不應註冊 %s", name)
+			}
 		}
 	})
 
@@ -1243,5 +1308,323 @@ func TestScreenStocksIsReadOnly(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("tools/list 缺少 screen_stocks")
+	}
+}
+
+// TestMarketDataTools 驗證 Phase 4 三個市場輔助工具的輸入驗證、預設值、
+// 繁中摘要、structuredContent 契約、空陣列/null 語意與安全錯誤分層。
+func TestMarketDataTools(t *testing.T) {
+	// 三個「已知條件合法但查無資料」的空 envelope,對應市場層級 endpoint
+	// 的 200 空陣列語意。
+	emptyIndex := &MarketIndexHistory{Points: []IndexPoint{}}
+	emptyCalendar := &DividendCalendar{Events: []DividendEvent{}}
+	emptyQfii := &QfiiHoldingRanking{Stocks: []QfiiHolding{}}
+
+	t.Run("輸入驗證:非法參數在觸及查詢之前被擋下", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			call    func(f *fakeMarketDataQuerier) error
+			keyword string
+		}{
+			{"指數 from 格式錯誤", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).marketIndexHistory(t.Context(), nil, IndexHistoryInput{From: "2026/06/01"})
+				return err
+			}, "from"},
+			{"指數 from 日期不存在", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).marketIndexHistory(t.Context(), nil, IndexHistoryInput{From: "2026-13-40"})
+				return err
+			}, "from"},
+			{"指數 from 晚於 to", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).marketIndexHistory(t.Context(), nil, IndexHistoryInput{From: "2026-07-17", To: "2026-06-01"})
+				return err
+			}, "不可晚於"},
+			{"指數 limit 超界", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).marketIndexHistory(t.Context(), nil, IndexHistoryInput{Limit: 366})
+				return err
+			}, "limit"},
+			{"行事曆 to 格式錯誤", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{To: "20260731"})
+				return err
+			}, "to"},
+			{"行事曆 from 晚於 to", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{From: "2026-07-31", To: "2026-07-01"})
+				return err
+			}, "不可晚於"},
+			{"行事曆區間超過 92 天", func(f *fakeMarketDataQuerier) error {
+				// 2026-07-01 到 2026-10-02 是 93 天,必須被擋下。
+				_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{From: "2026-07-01", To: "2026-10-02"})
+				return err
+			}, "92 天"},
+			{"行事曆 event_type 非法", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{EventType: "dividend"})
+				return err
+			}, "event_type"},
+			{"行事曆 limit 超界", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{Limit: 201})
+				return err
+			}, "limit"},
+			{"QFII market 非法", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{Market: "otc"})
+				return err
+			}, "market"},
+			{"QFII industry_id 為負", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{IndustryID: -1})
+				return err
+			}, "industry_id"},
+			{"QFII sort_by 非法", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{SortBy: "amount"})
+				return err
+			}, "sort_by"},
+			{"QFII limit 超界", func(f *fakeMarketDataQuerier) error {
+				_, _, err := newMarketDataToolset(f).qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{Limit: 51})
+				return err
+			}, "limit"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f := &fakeMarketDataQuerier{index: emptyIndex, calendar: emptyCalendar, qfii: emptyQfii}
+				err := tc.call(f)
+				if err == nil || !strings.Contains(err.Error(), tc.keyword) {
+					t.Fatalf("預期含 %q 的驗證錯誤,實際為:%v", tc.keyword, err)
+				}
+				// 驗證失敗時不可觸及查詢(options 應維持零值)。
+				if f.gotIndexOpt.Limit != 0 || f.gotCalendarOpt.Limit != 0 || f.gotQfiiOpt.Limit != 0 {
+					t.Fatal("驗證失敗時不應觸及查詢")
+				}
+			})
+		}
+	})
+
+	t.Run("預設值:三個工具未提供選填參數時套用契約預設", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{index: emptyIndex, calendar: emptyCalendar, qfii: emptyQfii}
+		mts := newMarketDataToolset(f)
+		if _, _, err := mts.marketIndexHistory(t.Context(), nil, IndexHistoryInput{}); err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotIndexOpt.Limit != 30 || f.gotIndexOpt.From != "" || f.gotIndexOpt.To != "" {
+			t.Fatalf("指數預設值錯誤:%+v", f.gotIndexOpt)
+		}
+		if _, _, err := mts.dividendCalendar(t.Context(), nil, DividendCalendarInput{}); err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotCalendarOpt.EventType != "all" || f.gotCalendarOpt.Limit != 50 || f.gotCalendarOpt.From != "" || f.gotCalendarOpt.To != "" {
+			t.Fatalf("行事曆預設值錯誤:%+v", f.gotCalendarOpt)
+		}
+		if _, _, err := mts.qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{}); err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotQfiiOpt.Market != "all" || f.gotQfiiOpt.SortBy != "percentage" || f.gotQfiiOpt.Limit != 20 || f.gotQfiiOpt.IndustryID != 0 {
+			t.Fatalf("QFII 預設值錯誤:%+v", f.gotQfiiOpt)
+		}
+	})
+
+	t.Run("行事曆:恰好 92 天的區間是合法的邊界值", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{calendar: emptyCalendar}
+		// 2026-07-01 到 2026-10-01 恰為 92 天,契約允許(不可「超過」92 天)。
+		_, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{From: "2026-07-01", To: "2026-10-01"})
+		if err != nil {
+			t.Fatalf("92 天邊界應合法:%v", err)
+		}
+		if f.gotCalendarOpt.From != "2026-07-01" || f.gotCalendarOpt.To != "2026-10-01" {
+			t.Fatalf("日期傳遞錯誤:%+v", f.gotCalendarOpt)
+		}
+	})
+
+	t.Run("指數歷史:摘要含最新點位,structuredContent 契約完整", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{index: &MarketIndexHistory{
+			DataAsOf: ptr("2026-07-17"),
+			Points: []IndexPoint{
+				{Date: "2026-07-17", Index: ptr(23000.5), Change: ptr(120.3), TradeValue: ptr(412345678901.0)},
+				{Date: "2026-07-16", Index: ptr(22880.2), Change: ptr(-50.1)},
+			},
+		}}
+		res, out, err := newMarketDataToolset(f).marketIndexHistory(t.Context(), nil, IndexHistoryInput{From: "2026-06-01", To: "2026-07-17"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"TAIEX", "2026-07-17", "23000.5", "120.3", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "market_index_history" || got["is_realtime"] != false || got["data_as_of"] != "2026-07-17" || got["disclaimer"] != AnalysisDisclaimer {
+			t.Errorf("structuredContent 共通欄位不正確:%v", got)
+		}
+		points, ok := got["points"].([]any)
+		if !ok || len(points) != 2 {
+			t.Fatalf("points 必須是 JSON 陣列:%#v", got["points"])
+		}
+		latest := points[0].(map[string]any)
+		if latest["index"] != 23000.5 || latest["transaction"] != nil {
+			t.Errorf("指數 fixture/null 未原樣保留:%v", latest)
+		}
+	})
+
+	t.Run("行事曆:摘要含最近事件與中文事件名稱,data_as_of 為 null", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{calendar: &DividendCalendar{
+			Events: []DividendEvent{{
+				StockSymbol: "2330", Name: "台積電", EventType: "ex_dividend", EventDate: "2026-07-20",
+				DividendYear: 2025, Quarter: "A", CashDividend: ptr(17.0), StockDividend: ptr(0.0), TotalDividend: ptr(17.0),
+			}},
+		}}
+		res, out, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{From: "2026-07-01", To: "2026-07-31"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"2026-07-20", "2330", "台積電", "除息", "17", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "dividend_calendar" || got["is_realtime"] != false || got["data_as_of"] != nil {
+			t.Errorf("structuredContent 共通欄位不正確:%v", got)
+		}
+		events := got["events"].([]any)
+		event := events[0].(map[string]any)
+		// structuredContent 內維持英文事件代碼,不因摘要翻譯而改變契約欄位。
+		if event["event_type"] != "ex_dividend" || event["cash_dividend"] != 17.0 || event["stock_dividend"] != 0.0 {
+			t.Errorf("行事曆 fixture 未原樣保留:%v", event)
+		}
+	})
+
+	t.Run("QFII:摘要標明快照語意,data_as_of 為 null 且股數保留精度", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{qfii: &QfiiHoldingRanking{
+			Stocks: []QfiiHolding{{
+				Rank: 1, StockSymbol: "2330", Name: "台積電", MarketID: 2, IndustryID: 24,
+				QfiiSharesHeld: ptr(int64(19000000000)), QfiiShareHoldingPercentage: ptr(73.2), IssuedShare: ptr(int64(25930000000)),
+			}},
+		}}
+		res, out, err := newMarketDataToolset(f).qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{Market: "twse", IndustryID: 24})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		// §4.10 硬性要求:摘要必須標示快照、無歷史序列。
+		for _, want := range []string{"快照", "無歷史序列", "2330", "台積電", "73.2", "19000000000", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "qfii_holding_ranking" || got["is_realtime"] != false || got["data_as_of"] != nil || got["disclaimer"] != AnalysisDisclaimer {
+			t.Errorf("structuredContent 共通欄位不正確:%v", got)
+		}
+		stock := got["stocks"].([]any)[0].(map[string]any)
+		// JSON number 經 map[string]any 解析後是 float64;190 億在 float64
+		// 可精確表示的整數範圍內,直接比較不會有精度問題。
+		if stock["qfii_shares_held"] != 19000000000.0 || stock["qfii_share_holding_percentage"] != 73.2 || stock["issued_share"] != 25930000000.0 {
+			t.Errorf("QFII fixture 未原樣保留:%v", stock)
+		}
+	})
+
+	t.Run("查無資料:空陣列序列化為 [],摘要誠實說明且 QFII 仍標快照", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{index: emptyIndex, calendar: emptyCalendar, qfii: emptyQfii}
+		mts := newMarketDataToolset(f)
+
+		res, out, err := mts.marketIndexHistory(t.Context(), nil, IndexHistoryInput{})
+		if err != nil {
+			t.Fatalf("指數空資料不是錯誤:%v", err)
+		}
+		raw, _ := json.Marshal(out)
+		if !strings.Contains(string(raw), `"points":[]`) || !strings.Contains(string(raw), `"data_as_of":null`) {
+			t.Errorf("指數空資料語意錯誤:%s", raw)
+		}
+		if !strings.Contains(summaryOf(t, res), "沒有台股大盤指數資料") {
+			t.Errorf("指數空資料摘要不誠實:%q", summaryOf(t, res))
+		}
+
+		res, out, err = mts.dividendCalendar(t.Context(), nil, DividendCalendarInput{})
+		if err != nil {
+			t.Fatalf("行事曆空資料不是錯誤:%v", err)
+		}
+		raw, _ = json.Marshal(out)
+		if !strings.Contains(string(raw), `"events":[]`) {
+			t.Errorf("行事曆空清單必須序列化為 []:%s", raw)
+		}
+		if !strings.Contains(summaryOf(t, res), "沒有股利行事曆事件") {
+			t.Errorf("行事曆空資料摘要不誠實:%q", summaryOf(t, res))
+		}
+
+		res, out, err = mts.qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{})
+		if err != nil {
+			t.Fatalf("QFII 空資料不是錯誤:%v", err)
+		}
+		raw, _ = json.Marshal(out)
+		if !strings.Contains(string(raw), `"stocks":[]`) || !strings.Contains(string(raw), `"data_as_of":null`) {
+			t.Errorf("QFII 空資料語意錯誤:%s", raw)
+		}
+		if !strings.Contains(summaryOf(t, res), "快照") {
+			t.Errorf("QFII 空資料摘要仍必須標明快照語意:%q", summaryOf(t, res))
+		}
+	})
+
+	t.Run("底層錯誤只回安全通用訊息,不外洩內部細節", func(t *testing.T) {
+		f := &fakeMarketDataQuerier{err: errors.New("dial tcp 10.0.0.1:9002: secret")}
+		mts := newMarketDataToolset(f)
+		calls := map[string]func() error{
+			"index": func() error {
+				_, _, err := mts.marketIndexHistory(t.Context(), nil, IndexHistoryInput{})
+				return err
+			},
+			"calendar": func() error {
+				_, _, err := mts.dividendCalendar(t.Context(), nil, DividendCalendarInput{})
+				return err
+			},
+			"qfii": func() error {
+				_, _, err := mts.qfiiHoldingRanking(t.Context(), nil, QfiiRankingInput{})
+				return err
+			},
+		}
+		for name, call := range calls {
+			t.Run(name, func(t *testing.T) {
+				err := call()
+				if err == nil || err.Error() != errInternal || strings.Contains(err.Error(), "10.0.0.1") {
+					t.Fatalf("內部錯誤必須安全:%v", err)
+				}
+			})
+		}
+	})
+}
+
+// TestMarketDataToolsAreReadOnly 經由真正 tools/list 驗證 Phase 4 每個
+// 工具都帶 ReadOnlyHint,並確認 QFII 工具描述含快照限制(§4.10 要求
+// 「寫入 tool 描述」,單測 handler 無法覆蓋註冊 metadata)。
+func TestMarketDataToolsAreReadOnly(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "0.0.1"}, nil)
+	AddTools(server, &fakeMarketDataQuerier{}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(t.Context(), t1, nil); err != nil {
+		t.Fatalf("server.Connect:%v", err)
+	}
+	cs, err := client.Connect(t.Context(), t2, nil)
+	if err != nil {
+		t.Fatalf("client.Connect:%v", err)
+	}
+	defer cs.Close()
+	wants := map[string]bool{"get_market_index_history": false, "get_dividend_calendar": false, "get_qfii_holding_ranking": false}
+	for tool, err := range cs.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("列出工具:%v", err)
+		}
+		if _, ok := wants[tool.Name]; !ok {
+			continue
+		}
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s 必須有 ReadOnlyHint=true", tool.Name)
+		}
+		if tool.Name == "get_qfii_holding_ranking" && (!strings.Contains(tool.Description, "快照") || !strings.Contains(tool.Description, "歷史序列")) {
+			t.Errorf("QFII 工具描述必須標明快照與無歷史序列限制:%q", tool.Description)
+		}
+		wants[tool.Name] = true
+	}
+	for name, found := range wants {
+		if !found {
+			t.Errorf("tools/list 缺少 %s", name)
+		}
 	}
 }
