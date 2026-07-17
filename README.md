@@ -20,7 +20,7 @@
                     │         3. MCP StreamableHTTPHandler(SDK)   │
                     │              │                                │
                     │       stock/(領域層)                        │
-                    │         tools.go   ── 4 個 MCP tool           │
+                    │         tools.go   ── 8 個 MCP tool(api 模式)│
                     │         repository ── 參數化 SQL(唯讀)      │
                     │              │                                │
                     └──────────────┼────────────────────────────────┘
@@ -173,6 +173,32 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 ### `get_realtime_snapshot`
 
 僅在 `DATA_SOURCE=api` 出現。資料來自第三方站點採集的快照，`is_realtime` 固定為 `false`，並以 `updated_at` 作為 `data_as_of`；非交易時段或個股無快照時會回 tool error，建議改查 `get_latest_daily_quote`。
+
+### `get_monthly_revenue_history`
+
+僅在 `DATA_SOURCE=api` 出現。查詢單一股票的月營收歷史（當月/累計營收、月增率、年增率、當月股價高低均價），依月份新到舊排序。`from`/`to` 為 `YYYY-MM` 月份區間（選填），`limit` 預設 24（1–120）。查無資料回傳空陣列；股票不存在回傳 tool error「找不到股票代號:{symbol}」。
+
+```json
+{"name": "get_monthly_revenue_history", "arguments": {"symbol": "2330", "from": "2024-01", "to": "2026-06", "limit": 24}}
+```
+
+### `get_financial_statement_history`
+
+僅在 `DATA_SOURCE=api` 出現。查詢單一股票的季/年度財報（毛利率、營益率、稅前/稅後淨利率、每股淨值、每股營收、EPS、ROE、ROA）。`period_type` 可選 `quarterly`（預設）、`annual`、`all`；`quarter` 欄位以 `A` 代表年度資料、`Q1`–`Q4` 代表季度。`limit` 預設 12（1–40）。
+
+```json
+{"name": "get_financial_statement_history", "arguments": {"symbol": "2330", "period_type": "quarterly", "limit": 12}}
+```
+
+### `get_dividend_history`
+
+僅在 `DATA_SOURCE=api` 出現。查詢單一股票的歷年股利（現金/股票股利與其盈餘/公積細項、盈餘分配率、除息日/除權日/發放日）。`from_year`/`to_year` 依**股利所屬年度**（`dividend_year`）篩選，範圍 1990 至目前年度加一；`limit` 預設 20（1–80）。尚未公布的日期一律為 `null`。
+
+```json
+{"name": "get_dividend_history", "arguments": {"symbol": "2330", "from_year": 2020, "to_year": 2026, "limit": 30}}
+```
+
+> 三個歷史財務工具的免責聲明與價格工具不同：`本資料來自 stock_rust 已蒐集與計算的歷史資料,可能有延遲,僅供資訊參考,不構成投資建議。`
 
 ## 安全設計
 

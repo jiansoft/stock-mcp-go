@@ -86,6 +86,79 @@ func (c *APIClient) RealtimeSnapshot(ctx context.Context, symbol string) (*Realt
 	return &body, nil
 }
 
+// MonthlyRevenueHistory 查詢月營收歷史;404 轉為 ErrStockNotFound。
+//
+// 回傳完整 envelope(而非只有內層清單),讓 data_as_of 維持「由
+// stock_rust 伺服器端單一來源決定」的原則,MCP 端不自行重算。
+func (c *APIClient) MonthlyRevenueHistory(ctx context.Context, symbol string, opt RevenueHistoryOptions) (*MonthlyRevenueHistory, error) {
+	values := url.Values{"limit": []string{fmt.Sprint(opt.Limit)}}
+	if opt.From != "" {
+		values.Set("from", opt.From)
+	}
+	if opt.To != "" {
+		values.Set("to", opt.To)
+	}
+	var body MonthlyRevenueHistory
+	found, err := c.getFound(ctx, "/api/v1/stocks/"+url.PathEscape(symbol)+"/monthly-revenues?"+values.Encode(), &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrStockNotFound
+	}
+	// 防禦性保證:即使伺服器端序列化出 null,對外也永遠是空陣列——
+	// 「查無資料」在 JSON 輸出必須是 [] 而非 null(計畫 §3.4)。
+	if body.Revenues == nil {
+		body.Revenues = []MonthlyRevenue{}
+	}
+	return &body, nil
+}
+
+// FinancialStatementHistory 查詢季/年度財報歷史;404 轉為 ErrStockNotFound。
+func (c *APIClient) FinancialStatementHistory(ctx context.Context, symbol string, opt StatementHistoryOptions) (*FinancialStatementHistory, error) {
+	values := url.Values{"limit": []string{fmt.Sprint(opt.Limit)}}
+	if opt.PeriodType != "" {
+		values.Set("period_type", opt.PeriodType)
+	}
+	var body FinancialStatementHistory
+	found, err := c.getFound(ctx, "/api/v1/stocks/"+url.PathEscape(symbol)+"/financial-statements?"+values.Encode(), &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrStockNotFound
+	}
+	if body.Statements == nil {
+		body.Statements = []FinancialStatement{}
+	}
+	return &body, nil
+}
+
+// DividendHistory 查詢股利發放歷史;404 轉為 ErrStockNotFound。
+func (c *APIClient) DividendHistory(ctx context.Context, symbol string, opt DividendHistoryOptions) (*DividendHistory, error) {
+	values := url.Values{"limit": []string{fmt.Sprint(opt.Limit)}}
+	// FromYear/ToYear 的 0 值代表「未提供」,不放進 query string,讓
+	// 伺服器端自行套用「不限制年度」的預設語意。
+	if opt.FromYear != 0 {
+		values.Set("from_year", fmt.Sprint(opt.FromYear))
+	}
+	if opt.ToYear != 0 {
+		values.Set("to_year", fmt.Sprint(opt.ToYear))
+	}
+	var body DividendHistory
+	found, err := c.getFound(ctx, "/api/v1/stocks/"+url.PathEscape(symbol)+"/dividends?"+values.Encode(), &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrStockNotFound
+	}
+	if body.Dividends == nil {
+		body.Dividends = []Dividend{}
+	}
+	return &body, nil
+}
+
 // get 執行成功必為 200 的 GET 請求。
 func (c *APIClient) get(ctx context.Context, path string, output any) error {
 	found, err := c.getFound(ctx, path, output)

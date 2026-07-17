@@ -79,6 +79,45 @@ func (f *fakeSnapshotQuerier) RealtimeSnapshot(_ context.Context, symbol string)
 	return f.snapshot, f.err
 }
 
+// fakeFinancialQuerier 內嵌 fakeQuerier 並多實作三個歷史財務查詢方法,
+// 同時滿足 Querier 與 FinancialQuerier——用來測試 AddTools 依型別斷言
+// 註冊三個 Phase 1 工具,以及 financialToolset 各 handler 的邏輯。
+type fakeFinancialQuerier struct {
+	fakeQuerier
+	revenues   *MonthlyRevenueHistory
+	statements *FinancialStatementHistory
+	dividends  *DividendHistory
+	err        error
+
+	// gotSymbol / gotRevenueOpt / gotStatementOpt / gotDividendOpt 記錄
+	// 最後一次呼叫實際收到的參數,驗證正規化與預設值真的有被套用。
+	gotSymbol       string
+	gotRevenueOpt   RevenueHistoryOptions
+	gotStatementOpt StatementHistoryOptions
+	gotDividendOpt  DividendHistoryOptions
+}
+
+func (f *fakeFinancialQuerier) MonthlyRevenueHistory(_ context.Context, symbol string, opt RevenueHistoryOptions) (*MonthlyRevenueHistory, error) {
+	f.gotSymbol, f.gotRevenueOpt = symbol, opt
+	return f.revenues, f.err
+}
+
+func (f *fakeFinancialQuerier) FinancialStatementHistory(_ context.Context, symbol string, opt StatementHistoryOptions) (*FinancialStatementHistory, error) {
+	f.gotSymbol, f.gotStatementOpt = symbol, opt
+	return f.statements, f.err
+}
+
+func (f *fakeFinancialQuerier) DividendHistory(_ context.Context, symbol string, opt DividendHistoryOptions) (*DividendHistory, error) {
+	f.gotSymbol, f.gotDividendOpt = symbol, opt
+	return f.dividends, f.err
+}
+
+// newFinancialToolset 用給定的 fake 建立 *financialToolset,logf 同樣
+// 傳入空函式。
+func newFinancialToolset(f *fakeFinancialQuerier) *financialToolset {
+	return &financialToolset{financials: f, logf: func(string, ...any) {}}
+}
+
 // newToolset 用給定的 fakeQuerier 建立一個 *toolset,logf 傳入一個
 // 「什麼都不做」的空函式——測試不需要檢查 log 內容,只需要確保錯誤
 // 記錄不會導致測試本身出錯或印出多餘的雜訊。
@@ -463,6 +502,274 @@ func TestAddToolsRegistersRealtimeSnapshotOnlyWhenSupported(t *testing.T) {
 			t.Fatalf("預期註冊 get_realtime_snapshot,實際工具清單:%v", names)
 		}
 	})
+
+	t.Run("同時實作 FinancialQuerier 時會多註冊三個歷史財務工具", func(t *testing.T) {
+		names := toolNames(t, &fakeFinancialQuerier{})
+		// fakeFinancialQuerier 沒有實作 SnapshotQuerier,因此是 4 + 3 = 7。
+		if len(names) != 7 {
+			t.Errorf("預期 7 個工具,實際為 %d 個:%v", len(names), names)
+		}
+		got := map[string]bool{}
+		for _, name := range names {
+			got[name] = true
+		}
+		for _, want := range []string{"get_monthly_revenue_history", "get_financial_statement_history", "get_dividend_history"} {
+			if !got[want] {
+				t.Errorf("預期註冊 %s,實際工具清單:%v", want, names)
+			}
+		}
+	})
+
+	t.Run("僅實作 Querier 時不註冊歷史財務工具", func(t *testing.T) {
+		for _, name := range toolNames(t, &fakeQuerier{}) {
+			if strings.HasPrefix(name, "get_monthly_revenue") || strings.HasPrefix(name, "get_financial_statement") || strings.HasPrefix(name, "get_dividend") {
+				t.Fatalf("db 模式不應註冊 %s", name)
+			}
+		}
+	})
+}
+
+// TestMonthlyRevenueHistoryTool 驗證月營收工具的輸入驗證、預設值、摘要
+// 與 structuredContent 組裝。
+func TestMonthlyRevenueHistoryTool(t *testing.T) {
+	// emptyHistory 是「已知股票但查無資料」的 envelope。
+	emptyHistory := &MonthlyRevenueHistory{StockSymbol: "2330", Revenues: []MonthlyRevenue{}}
+
+	t.Run("輸入驗證:非法參數在觸及查詢之前被擋下", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			in      MonthlyRevenueInput
+			keyword string
+		}{
+			{"symbol 空白", MonthlyRevenueInput{Symbol: "  "}, "symbol"},
+			{"from 格式錯誤", MonthlyRevenueInput{Symbol: "2330", From: "2026/06"}, "from"},
+			{"from 月份超界", MonthlyRevenueInput{Symbol: "2330", From: "2026-13"}, "from"},
+			{"to 格式錯誤", MonthlyRevenueInput{Symbol: "2330", To: "202606"}, "to"},
+			{"from 晚於 to", MonthlyRevenueInput{Symbol: "2330", From: "2026-06", To: "2026-01"}, "不可晚於"},
+			{"limit 超界", MonthlyRevenueInput{Symbol: "2330", Limit: 121}, "limit"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f := &fakeFinancialQuerier{revenues: emptyHistory}
+				_, _, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, tc.in)
+				if err == nil || !strings.Contains(err.Error(), tc.keyword) {
+					t.Fatalf("預期含 %q 的驗證錯誤,實際為:%v", tc.keyword, err)
+				}
+				if f.gotSymbol != "" {
+					t.Fatalf("驗證失敗時不應觸及查詢,實際查了 %q", f.gotSymbol)
+				}
+			})
+		}
+	})
+
+	t.Run("預設值:未提供 limit 時套用 24,代號正規化為大寫", func(t *testing.T) {
+		f := &fakeFinancialQuerier{revenues: emptyHistory}
+		_, _, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, MonthlyRevenueInput{Symbol: " 2330 "})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotSymbol != "2330" || f.gotRevenueOpt.Limit != 24 || f.gotRevenueOpt.From != "" {
+			t.Fatalf("參數傳遞錯誤:symbol=%q opt=%+v", f.gotSymbol, f.gotRevenueOpt)
+		}
+	})
+
+	t.Run("股票不存在時回傳含原始輸入的安全錯誤", func(t *testing.T) {
+		f := &fakeFinancialQuerier{err: ErrStockNotFound}
+		_, _, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, MonthlyRevenueInput{Symbol: "9999"})
+		if err == nil || !strings.Contains(err.Error(), "找不到股票代號:9999") {
+			t.Fatalf("預期找不到股票的錯誤,實際為:%v", err)
+		}
+	})
+
+	t.Run("底層錯誤時回傳通用訊息,不外洩內部細節", func(t *testing.T) {
+		f := &fakeFinancialQuerier{err: errors.New("dial tcp: 內網主機無法連線")}
+		_, _, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, MonthlyRevenueInput{Symbol: "2330"})
+		if err == nil || err.Error() != errInternal {
+			t.Fatalf("預期通用內部錯誤,實際為:%v", err)
+		}
+	})
+
+	t.Run("查詢成功:摘要含最新月份與年增率,structuredContent 契約完整", func(t *testing.T) {
+		f := &fakeFinancialQuerier{revenues: &MonthlyRevenueHistory{
+			StockSymbol: "2330",
+			DataAsOf:    ptr("2026-06"),
+			Revenues: []MonthlyRevenue{{
+				Month:               "2026-06",
+				MonthlyRevenue:      ptr(263712291.0),
+				YearOverYearPercent: ptr(26.9),
+			}},
+		}}
+		res, out, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, MonthlyRevenueInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"2026-06", "26.9", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "monthly_revenue_history" || got["is_realtime"] != false || got["data_as_of"] != "2026-06" || got["stock_symbol"] != "2330" {
+			t.Errorf("structuredContent 共通欄位不正確:%v", got)
+		}
+		if _, ok := got["revenues"].([]any); !ok {
+			t.Errorf("revenues 必須是 JSON 陣列:%#v", got["revenues"])
+		}
+	})
+
+	t.Run("查無資料:空陣列序列化為 [] 而非 null,data_as_of 為 null", func(t *testing.T) {
+		f := &fakeFinancialQuerier{revenues: emptyHistory}
+		_, out, err := newFinancialToolset(f).monthlyRevenueHistory(t.Context(), nil, MonthlyRevenueInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("查無資料不是錯誤:%v", err)
+		}
+		raw, _ := json.Marshal(out)
+		if !strings.Contains(string(raw), `"revenues":[]`) {
+			t.Errorf("空清單必須序列化為 []:%s", raw)
+		}
+		if !strings.Contains(string(raw), `"data_as_of":null`) {
+			t.Errorf("空清單的 data_as_of 必須為 null:%s", raw)
+		}
+	})
+}
+
+// TestFinancialStatementHistoryTool 驗證財報工具的 period_type 驗證與
+// 輸出組裝。
+func TestFinancialStatementHistoryTool(t *testing.T) {
+	t.Run("period_type 非法值回傳驗證錯誤", func(t *testing.T) {
+		f := &fakeFinancialQuerier{}
+		_, _, err := newFinancialToolset(f).financialStatementHistory(t.Context(), nil, StatementHistoryInput{Symbol: "2330", PeriodType: "monthly"})
+		if err == nil || !strings.Contains(err.Error(), "period_type") {
+			t.Fatalf("預期 period_type 驗證錯誤,實際為:%v", err)
+		}
+	})
+
+	t.Run("未提供 period_type 時預設 quarterly,limit 預設 12", func(t *testing.T) {
+		f := &fakeFinancialQuerier{statements: &FinancialStatementHistory{StockSymbol: "2330", Statements: []FinancialStatement{}}}
+		_, _, err := newFinancialToolset(f).financialStatementHistory(t.Context(), nil, StatementHistoryInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotStatementOpt.PeriodType != "quarterly" || f.gotStatementOpt.Limit != 12 {
+			t.Fatalf("預設值錯誤:%+v", f.gotStatementOpt)
+		}
+	})
+
+	t.Run("查詢成功:摘要含期間標記與 EPS,structuredContent 契約完整", func(t *testing.T) {
+		f := &fakeFinancialQuerier{statements: &FinancialStatementHistory{
+			StockSymbol: "2330",
+			DataAsOf:    ptr("2026-Q1"),
+			Statements: []FinancialStatement{{
+				Year:             2026,
+				Quarter:          "Q1",
+				EarningsPerShare: ptr(13.94),
+				ReturnOnEquity:   ptr(8.9),
+			}},
+		}}
+		res, out, err := newFinancialToolset(f).financialStatementHistory(t.Context(), nil, StatementHistoryInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"2026-Q1", "13.94", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "financial_statement_history" || got["data_as_of"] != "2026-Q1" {
+			t.Errorf("structuredContent 不正確:%v", got)
+		}
+	})
+}
+
+// TestDividendHistoryTool 驗證股利工具的年度驗證與輸出組裝。
+func TestDividendHistoryTool(t *testing.T) {
+	t.Run("年度驗證:超界與順序錯誤都被擋下", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			in      DividendHistoryInput
+			keyword string
+		}{
+			{"from_year 過早", DividendHistoryInput{Symbol: "2330", FromYear: 1889}, "1990"},
+			{"to_year 過晚", DividendHistoryInput{Symbol: "2330", ToYear: time.Now().Year() + 2}, "年度"},
+			{"from 晚於 to", DividendHistoryInput{Symbol: "2330", FromYear: 2024, ToYear: 2020}, "不可晚於"},
+			{"limit 超界", DividendHistoryInput{Symbol: "2330", Limit: 81}, "limit"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f := &fakeFinancialQuerier{}
+				_, _, err := newFinancialToolset(f).dividendHistory(t.Context(), nil, tc.in)
+				if err == nil || !strings.Contains(err.Error(), tc.keyword) {
+					t.Fatalf("預期含 %q 的驗證錯誤,實際為:%v", tc.keyword, err)
+				}
+			})
+		}
+	})
+
+	t.Run("查詢成功:摘要含所屬年度、現金股利與除息日,契約完整", func(t *testing.T) {
+		f := &fakeFinancialQuerier{dividends: &DividendHistory{
+			StockSymbol: "2330",
+			DataAsOf:    ptr("2025-A"),
+			Dividends: []Dividend{{
+				PaidYear:       2026,
+				DividendYear:   2025,
+				Quarter:        "A",
+				CashDividend:   ptr(17.0),
+				StockDividend:  ptr(0.0),
+				ExDividendDate: ptr("2026-06-18"),
+			}},
+		}}
+		res, out, err := newFinancialToolset(f).dividendHistory(t.Context(), nil, DividendHistoryInput{Symbol: "2330", FromYear: 2020, ToYear: 2026})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"2025-A", "17", "2026-06-18", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要應包含 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "dividend_history" || got["data_as_of"] != "2025-A" {
+			t.Errorf("structuredContent 不正確:%v", got)
+		}
+		if f.gotDividendOpt.FromYear != 2020 || f.gotDividendOpt.ToYear != 2026 || f.gotDividendOpt.Limit != 20 {
+			t.Fatalf("參數傳遞錯誤:%+v", f.gotDividendOpt)
+		}
+	})
+
+	t.Run("null 語意:未公布日期在 JSON 輸出為 null 而非空字串", func(t *testing.T) {
+		f := &fakeFinancialQuerier{dividends: &DividendHistory{
+			StockSymbol: "2330",
+			DataAsOf:    ptr("2025-A"),
+			Dividends:   []Dividend{{DividendYear: 2025, Quarter: "A"}},
+		}}
+		_, out, err := newFinancialToolset(f).dividendHistory(t.Context(), nil, DividendHistoryInput{Symbol: "2330"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		raw, _ := json.Marshal(out)
+		if !strings.Contains(string(raw), `"ex_dividend_date":null`) || !strings.Contains(string(raw), `"cash_dividend":null`) {
+			t.Errorf("缺值必須是 null:%s", raw)
+		}
+	})
+}
+
+// roundTripJSON 把 structuredContent 輸出經 JSON 序列化再解析成 map,
+// 讓測試以「呼叫端實際看到的 JSON 形狀」驗證欄位,而不是耦合 Go 型別。
+func roundTripJSON(t *testing.T, out any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("json.Marshal 失敗:%v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json.Unmarshal 失敗:%v", err)
+	}
+	return got
 }
 
 // summaryOf 取出工具結果(mcp.CallToolResult)裡第一段文字摘要的內容,
