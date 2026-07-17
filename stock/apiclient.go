@@ -159,6 +159,119 @@ func (c *APIClient) DividendHistory(ctx context.Context, symbol string, opt Divi
 	return &body, nil
 }
 
+// StockValuation 查詢個股估值並回傳完整 envelope；404 只代表股票不存在。
+// 股票存在但 31 天回溯窗口內沒有估值時，Data API 會以 200 回傳
+// valuation:null，client 會原樣保留而不把它誤判成錯誤。
+func (c *APIClient) StockValuation(ctx context.Context, symbol string, opt ValuationOptions) (*StockValuationEnvelope, error) {
+	values := url.Values{}
+	if opt.Date != "" {
+		values.Set("date", opt.Date)
+	}
+	path := "/api/v1/stocks/" + url.PathEscape(symbol) + "/valuation"
+	if query := values.Encode(); query != "" {
+		path += "?" + query
+	}
+	var body StockValuationEnvelope
+	found, err := c.getFound(ctx, path, &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrStockNotFound
+	}
+	return &body, nil
+}
+
+// MarketBreadth 查詢市場廣度序列並保留伺服器端決定的 data_as_of。
+func (c *APIClient) MarketBreadth(ctx context.Context, opt MarketBreadthOptions) (*MarketBreadth, error) {
+	values := url.Values{
+		"market": []string{opt.Market},
+		"days":   []string{fmt.Sprint(opt.Days)},
+	}
+	if opt.Date != "" {
+		values.Set("date", opt.Date)
+	}
+	var body MarketBreadth
+	found, err := c.getFound(ctx, "/api/v1/market/breadth?"+values.Encode(), &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrMarketDataNotFound
+	}
+	if body.History == nil {
+		body.History = []MarketBreadthPoint{}
+	}
+	return &body, nil
+}
+
+// DividendYieldRanking 查詢殖利率排行並回傳完整 envelope。
+// market=all 的「上市加上櫃、不含興櫃」語意由 Data API 統一實作，
+// client 只傳固定 enum，避免兩端各自維護市場 id 對映。
+func (c *APIClient) DividendYieldRanking(ctx context.Context, opt YieldRankingOptions) (*DividendYieldRanking, error) {
+	values := url.Values{
+		"market": []string{opt.Market},
+		"limit":  []string{fmt.Sprint(opt.Limit)},
+	}
+	if opt.Date != "" {
+		values.Set("date", opt.Date)
+	}
+	if opt.IndustryID != 0 {
+		values.Set("industry_id", fmt.Sprint(opt.IndustryID))
+	}
+	var body DividendYieldRanking
+	found, err := c.getFound(ctx, "/api/v1/market/dividend-yield-ranking?"+values.Encode(), &body)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrMarketDataNotFound
+	}
+	if body.Stocks == nil {
+		body.Stocks = []YieldRank{}
+	}
+	return &body, nil
+}
+
+// ScreenStocks 以固定白名單 query parameters 查詢條件選股，並回傳完整
+// envelope。浮點門檻只有非 nil 時才送出，因為 0 是合法條件，不能用
+// Go 零值把「未提供」與「門檻為 0」混為一談。
+func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*StockScreening, error) {
+	values := url.Values{
+		"market":     []string{opt.Market},
+		"sort_by":    []string{opt.SortBy},
+		"sort_order": []string{opt.SortOrder},
+		"limit":      []string{fmt.Sprint(opt.Limit)},
+	}
+	if opt.IndustryID != 0 {
+		values.Set("industry_id", fmt.Sprint(opt.IndustryID))
+	}
+	if opt.ValuationBand != "" {
+		values.Set("valuation_band", opt.ValuationBand)
+	}
+	if opt.MinRevenueYOYPercent != nil {
+		values.Set("min_revenue_yoy_percent", formatFloat(*opt.MinRevenueYOYPercent))
+	}
+	if opt.MinEPS != nil {
+		values.Set("min_eps", formatFloat(*opt.MinEPS))
+	}
+	if opt.MinROEPercent != nil {
+		values.Set("min_roe_percent", formatFloat(*opt.MinROEPercent))
+	}
+	if opt.MinDividendYieldPercent != nil {
+		values.Set("min_dividend_yield_percent", formatFloat(*opt.MinDividendYieldPercent))
+	}
+
+	var body StockScreening
+	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	if body.Stocks == nil {
+		body.Stocks = []ScreenedStock{}
+	}
+	return &body, nil
+}
+
 // get 執行成功必為 200 的 GET 請求。
 func (c *APIClient) get(ctx context.Context, path string, output any) error {
 	found, err := c.getFound(ctx, path, output)

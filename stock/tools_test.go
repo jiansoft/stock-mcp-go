@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,60 @@ func (f *fakeFinancialQuerier) DividendHistory(_ context.Context, symbol string,
 // 傳入空函式。
 func newFinancialToolset(f *fakeFinancialQuerier) *financialToolset {
 	return &financialToolset{financials: f, logf: func(string, ...any) {}}
+}
+
+// fakeAnalyticsQuerier 讓測試精確控制 Phase 2 三個完整 envelope，並記錄
+// handler 正規化後真正傳給 client 的 options。
+type fakeAnalyticsQuerier struct {
+	fakeQuerier
+	valuation *StockValuationEnvelope
+	breadth   *MarketBreadth
+	ranking   *DividendYieldRanking
+	err       error
+
+	gotSymbol       string
+	gotValuationOpt ValuationOptions
+	gotBreadthOpt   MarketBreadthOptions
+	gotRankingOpt   YieldRankingOptions
+}
+
+func (f *fakeAnalyticsQuerier) StockValuation(_ context.Context, symbol string, opt ValuationOptions) (*StockValuationEnvelope, error) {
+	f.gotSymbol, f.gotValuationOpt = symbol, opt
+	return f.valuation, f.err
+}
+
+func (f *fakeAnalyticsQuerier) MarketBreadth(_ context.Context, opt MarketBreadthOptions) (*MarketBreadth, error) {
+	f.gotBreadthOpt = opt
+	return f.breadth, f.err
+}
+
+func (f *fakeAnalyticsQuerier) DividendYieldRanking(_ context.Context, opt YieldRankingOptions) (*DividendYieldRanking, error) {
+	f.gotRankingOpt = opt
+	return f.ranking, f.err
+}
+
+// newAnalyticsToolset 建立不輸出測試 log 的 Phase 2 toolset。
+func newAnalyticsToolset(f *fakeAnalyticsQuerier) *analyticsToolset {
+	return &analyticsToolset{analytics: f, logf: func(string, ...any) {}}
+}
+
+// fakeStockScreener 實作 Querier 與 StockScreener，供 Phase 3 handler 與
+// AddTools 能力註冊測試使用。
+type fakeStockScreener struct {
+	fakeQuerier
+	result *StockScreening
+	err    error
+	gotOpt ScreenOptions
+}
+
+func (f *fakeStockScreener) ScreenStocks(_ context.Context, opt ScreenOptions) (*StockScreening, error) {
+	f.gotOpt = opt
+	return f.result, f.err
+}
+
+// newScreenToolset 建立不輸出測試 log 的 Phase 3 toolset。
+func newScreenToolset(f *fakeStockScreener) *screenToolset {
+	return &screenToolset{screener: f, logf: func(string, ...any) {}}
 }
 
 // newToolset 用給定的 fakeQuerier 建立一個 *toolset,logf 傳入一個
@@ -527,6 +582,44 @@ func TestAddToolsRegistersRealtimeSnapshotOnlyWhenSupported(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("同時實作 AnalyticsQuerier 時只新增三個 Phase 2 工具", func(t *testing.T) {
+		names := toolNames(t, &fakeAnalyticsQuerier{})
+		if len(names) != 7 {
+			t.Fatalf("預期 4+3 個工具,實際為 %d:%v", len(names), names)
+		}
+		got := map[string]bool{}
+		for _, name := range names {
+			got[name] = true
+		}
+		for _, want := range []string{"get_stock_valuation", "get_market_breadth", "get_dividend_yield_ranking"} {
+			if !got[want] {
+				t.Errorf("預期註冊 %s,實際工具清單:%v", want, names)
+			}
+		}
+		if got["get_monthly_revenue_history"] {
+			t.Fatal("僅實作 AnalyticsQuerier 時不應連帶註冊 Phase 1 工具")
+		}
+	})
+
+	t.Run("StockScreener 能力只新增 screen_stocks", func(t *testing.T) {
+		names := toolNames(t, &fakeStockScreener{})
+		if len(names) != 5 {
+			t.Fatalf("預期 4+1 個工具,實際為 %d:%v", len(names), names)
+		}
+		found := false
+		for _, name := range names {
+			if name == "screen_stocks" {
+				found = true
+			}
+			if name == "get_stock_valuation" {
+				t.Fatal("只實作 StockScreener 不應連帶註冊 Phase 2")
+			}
+		}
+		if !found {
+			t.Fatalf("tools/list 缺少 screen_stocks:%v", names)
+		}
+	})
 }
 
 // TestMonthlyRevenueHistoryTool 驗證月營收工具的輸入驗證、預設值、摘要
@@ -785,4 +878,370 @@ func summaryOf(t *testing.T, res *mcp.CallToolResult) string {
 		t.Fatalf("第一段內容應為文字,實際為 %T", res.Content[0])
 	}
 	return tc.Text
+}
+
+// TestAnalyticsTools 驗證 Phase 2 的輸入正規化、預設值、安全錯誤、繁中
+// 摘要，以及 Data API fixture 到 structuredContent 的數值/null/[] 一致性。
+func TestAnalyticsTools(t *testing.T) {
+	t.Run("估值:代號日期正規化且完整 envelope 原樣輸出", func(t *testing.T) {
+		fixture := &StockValuationEnvelope{
+			StockSymbol: "2330", DataAsOf: ptr("2026-07-16"),
+			Valuation: &StockValuation{StockSymbol: "2330", Date: "2026-07-16", ClosingPrice: ptr(1045.0), Percentage: ptr(50.0), YearCount: 5, Cheap: ptr(800.0), Fair: ptr(1000.0), Expensive: ptr(1200.0), ValuationBand: "overvalued"},
+		}
+		f := &fakeAnalyticsQuerier{valuation: fixture}
+		res, out, err := newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: " 2330 ", Date: "2026-07-16"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotSymbol != "2330" || f.gotValuationOpt.Date != "2026-07-16" {
+			t.Fatalf("正規化參數錯誤:%q %+v", f.gotSymbol, f.gotValuationOpt)
+		}
+		summary := summaryOf(t, res)
+		for _, want := range []string{"2026-07-16", "1045", "overvalued", "不是目標價", "不構成投資建議"} {
+			if !strings.Contains(summary, want) {
+				t.Errorf("摘要缺少 %q:%q", want, summary)
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "stock_valuation" || got["data_as_of"] != "2026-07-16" || got["is_realtime"] != false || got["disclaimer"] != AnalysisDisclaimer {
+			t.Errorf("估值共通欄位錯誤:%v", got)
+		}
+		valuation := got["valuation"].(map[string]any)
+		if valuation["closing_price"] != 1045.0 || valuation["percentage"] != 50.0 || valuation["valuation_band"] != "overvalued" {
+			t.Errorf("估值 fixture 未原樣保留:%v", valuation)
+		}
+	})
+
+	t.Run("估值:無資料保留 null且不存在股票/內部錯誤分層安全", func(t *testing.T) {
+		f := &fakeAnalyticsQuerier{valuation: &StockValuationEnvelope{StockSymbol: "4414"}}
+		_, out, err := newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: "4414"})
+		if err != nil {
+			t.Fatalf("查無估值不是錯誤:%v", err)
+		}
+		raw, _ := json.Marshal(out)
+		if !strings.Contains(string(raw), `"data_as_of":null`) || !strings.Contains(string(raw), `"valuation":null`) {
+			t.Fatalf("null 語意錯誤:%s", raw)
+		}
+
+		f.err = ErrStockNotFound
+		_, _, err = newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: "9999"})
+		if err == nil || !strings.Contains(err.Error(), "找不到股票代號:9999") {
+			t.Fatalf("404 應回可理解的 tool error:%v", err)
+		}
+		f.err = errors.New("dial tcp 10.0.0.1:5432: secret")
+		_, _, err = newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: "2330"})
+		if err == nil || err.Error() != errInternal || strings.Contains(err.Error(), "10.0.0.1") {
+			t.Fatalf("內部錯誤必須安全:%v", err)
+		}
+	})
+
+	t.Run("市場廣度:預設值、序列與 breadth 等於 history 首筆", func(t *testing.T) {
+		point := MarketBreadthPoint{Date: "2026-07-16", Market: "all", Undervalued: 100, FairValued: 200, Overvalued: 300, HighlyOvervalued: 50, StocksUp: 700, StocksDown: 400, StocksUnchanged: 100}
+		f := &fakeAnalyticsQuerier{breadth: &MarketBreadth{DataAsOf: "2026-07-16", Breadth: point, History: []MarketBreadthPoint{point}}}
+		res, out, err := newAnalyticsToolset(f).marketBreadth(t.Context(), nil, MarketBreadthInput{})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotBreadthOpt.Market != "all" || f.gotBreadthOpt.Days != 1 {
+			t.Fatalf("預設值錯誤:%+v", f.gotBreadthOpt)
+		}
+		for _, want := range []string{"2026-07-16", "上漲 700", "低估 100", "不構成投資建議"} {
+			if !strings.Contains(summaryOf(t, res), want) {
+				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "market_breadth" || got["data_as_of"] != "2026-07-16" || got["is_realtime"] != false {
+			t.Errorf("廣度共通欄位錯誤:%v", got)
+		}
+		breadth := got["breadth"].(map[string]any)
+		history := got["history"].([]any)[0].(map[string]any)
+		if breadth["stocks_up"] != history["stocks_up"] || breadth["stocks_up"] != 700.0 {
+			t.Errorf("breadth/history fixture 不一致:%v %v", breadth, history)
+		}
+	})
+
+	t.Run("殖利率排行:預設值、空陣列與 fixture 數值", func(t *testing.T) {
+		rank := YieldRank{Rank: 1, StockSymbol: "1234", Name: "測試公司", MarketID: 2, IndustryID: 24, Date: "2026-07-16", ClosingPrice: ptr(50.0), Dividend: ptr(5.0), DividendYieldPercent: ptr(10.0)}
+		f := &fakeAnalyticsQuerier{ranking: &DividendYieldRanking{DataAsOf: "2026-07-16", Stocks: []YieldRank{rank}}}
+		res, out, err := newAnalyticsToolset(f).dividendYieldRanking(t.Context(), nil, YieldRankingInput{IndustryID: 24})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		if f.gotRankingOpt.Market != "all" || f.gotRankingOpt.Limit != 20 || f.gotRankingOpt.IndustryID != 24 {
+			t.Fatalf("排行參數錯誤:%+v", f.gotRankingOpt)
+		}
+		for _, want := range []string{"1234", "測試公司", "10%", "不構成投資建議"} {
+			if !strings.Contains(summaryOf(t, res), want) {
+				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
+			}
+		}
+		got := roundTripJSON(t, out)
+		stocks := got["stocks"].([]any)
+		if got["data_kind"] != "dividend_yield_ranking" || stocks[0].(map[string]any)["dividend_yield_percent"] != 10.0 {
+			t.Errorf("排行 structuredContent 錯誤:%v", got)
+		}
+
+		f.ranking = &DividendYieldRanking{DataAsOf: "2026-07-16", Stocks: []YieldRank{}}
+		_, emptyOut, err := newAnalyticsToolset(f).dividendYieldRanking(t.Context(), nil, YieldRankingInput{})
+		if err != nil {
+			t.Fatalf("空排行不是錯誤:%v", err)
+		}
+		raw, _ := json.Marshal(emptyOut)
+		if !strings.Contains(string(raw), `"stocks":[]`) || !strings.Contains(string(raw), `"data_as_of":"2026-07-16"`) {
+			t.Errorf("空排行必須保留 [] 與伺服器選定的資料日:%s", raw)
+		}
+	})
+
+	t.Run("輸入上下界與 enum 在查詢前被擋下", func(t *testing.T) {
+		cases := []struct {
+			name string
+			call func() error
+		}{
+			{"估值日期", func() error {
+				_, _, err := newAnalyticsToolset(&fakeAnalyticsQuerier{}).stockValuation(t.Context(), nil, ValuationInput{Symbol: "2330", Date: "2026-13-40"})
+				return err
+			}},
+			{"廣度市場", func() error {
+				_, _, err := newAnalyticsToolset(&fakeAnalyticsQuerier{}).marketBreadth(t.Context(), nil, MarketBreadthInput{Market: "otc"})
+				return err
+			}},
+			{"廣度 days", func() error {
+				_, _, err := newAnalyticsToolset(&fakeAnalyticsQuerier{}).marketBreadth(t.Context(), nil, MarketBreadthInput{Days: 61})
+				return err
+			}},
+			{"排行產業", func() error {
+				_, _, err := newAnalyticsToolset(&fakeAnalyticsQuerier{}).dividendYieldRanking(t.Context(), nil, YieldRankingInput{IndustryID: -1})
+				return err
+			}},
+			{"排行 limit", func() error {
+				_, _, err := newAnalyticsToolset(&fakeAnalyticsQuerier{}).dividendYieldRanking(t.Context(), nil, YieldRankingInput{Limit: 51})
+				return err
+			}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := tc.call(); err == nil {
+					t.Fatal("預期驗證錯誤,實際成功")
+				}
+			})
+		}
+	})
+
+	t.Run("市場資料不存在時回可理解的 tool error", func(t *testing.T) {
+		f := &fakeAnalyticsQuerier{err: ErrMarketDataNotFound}
+		_, _, err := newAnalyticsToolset(f).marketBreadth(t.Context(), nil, MarketBreadthInput{})
+		if err == nil || !strings.Contains(err.Error(), "查無市場廣度資料") || err.Error() == errInternal {
+			t.Fatalf("廣度 404 應是可理解的資料錯誤:%v", err)
+		}
+		_, _, err = newAnalyticsToolset(f).dividendYieldRanking(t.Context(), nil, YieldRankingInput{})
+		if err == nil || !strings.Contains(err.Error(), "查無殖利率排行資料") || err.Error() == errInternal {
+			t.Fatalf("排行 404 應是可理解的資料錯誤:%v", err)
+		}
+	})
+}
+
+// TestAnalyticsToolsAreReadOnly 經由真正 tools/list 驗證 Phase 2 每個工具
+// 都帶 ReadOnlyHint，避免只測 handler 而漏掉註冊 metadata。
+func TestAnalyticsToolsAreReadOnly(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "0.0.1"}, nil)
+	AddTools(server, &fakeAnalyticsQuerier{}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(t.Context(), t1, nil); err != nil {
+		t.Fatalf("server.Connect:%v", err)
+	}
+	cs, err := client.Connect(t.Context(), t2, nil)
+	if err != nil {
+		t.Fatalf("client.Connect:%v", err)
+	}
+	defer cs.Close()
+	wants := map[string]bool{"get_stock_valuation": false, "get_market_breadth": false, "get_dividend_yield_ranking": false}
+	for tool, err := range cs.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("列出工具:%v", err)
+		}
+		if _, ok := wants[tool.Name]; !ok {
+			continue
+		}
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("%s 必須有 ReadOnlyHint=true", tool.Name)
+		}
+		wants[tool.Name] = true
+	}
+	for name, found := range wants {
+		if !found {
+			t.Errorf("tools/list 缺少 %s", name)
+		}
+	}
+}
+
+// TestScreenStocksTool 驗證 Phase 3 的實質 filter、固定排序白名單、預設值、
+// structuredContent、null/[] 與安全錯誤分層。
+func TestScreenStocksTool(t *testing.T) {
+	empty := &StockScreening{Stocks: []ScreenedStock{}}
+
+	t.Run("market all 單獨或只有排序不算實質篩選", func(t *testing.T) {
+		for _, in := range []ScreenStocksInput{{}, {Market: "all"}, {Market: "all", SortBy: "eps", SortOrder: "desc", Limit: 10}} {
+			_, _, err := newScreenToolset(&fakeStockScreener{result: empty}).screenStocks(t.Context(), nil, in)
+			if err == nil || !strings.Contains(err.Error(), "實質篩選條件") {
+				t.Fatalf("應拒絕無篩選查詢,輸入 %+v,錯誤 %v", in, err)
+			}
+		}
+	})
+
+	t.Run("市場產業估值或任一 min 都可作實質篩選", func(t *testing.T) {
+		zero := 0.0
+		cases := []ScreenStocksInput{
+			{Market: "twse"}, {Market: "tpex"}, {IndustryID: 24}, {ValuationBand: "undervalued"},
+			{MinRevenueYOYPercent: &zero}, {MinEPS: &zero}, {MinROEPercent: &zero}, {MinDividendYieldPercent: &zero},
+		}
+		for _, in := range cases {
+			f := &fakeStockScreener{result: empty}
+			_, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, in)
+			if err != nil {
+				t.Errorf("合法實質篩選 %+v 不應失敗:%v", in, err)
+				continue
+			}
+			if f.gotOpt.SortBy != "stock_symbol" || f.gotOpt.SortOrder != "asc" || f.gotOpt.Limit != 20 {
+				t.Errorf("預設排序/筆數錯誤:%+v", f.gotOpt)
+			}
+		}
+	})
+
+	t.Run("六個 sort 欄位與兩方向固定白名單", func(t *testing.T) {
+		for _, sortBy := range []string{"stock_symbol", "revenue_yoy", "eps", "roe", "dividend_yield", "valuation_percentage"} {
+			for _, order := range []string{"asc", "desc"} {
+				f := &fakeStockScreener{result: empty}
+				_, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", SortBy: sortBy, SortOrder: order})
+				if err != nil || f.gotOpt.SortBy != sortBy || f.gotOpt.SortOrder != order {
+					t.Errorf("sort %s/%s 傳遞錯誤:%+v, %v", sortBy, order, f.gotOpt, err)
+				}
+			}
+		}
+	})
+
+	t.Run("非法 enum 與數值上下界在呼叫 client 前被擋下", func(t *testing.T) {
+		cases := []struct {
+			name string
+			in   ScreenStocksInput
+		}{
+			{"market", ScreenStocksInput{Market: "otc", IndustryID: 24}},
+			{"industry", ScreenStocksInput{IndustryID: -1}},
+			{"valuation", ScreenStocksInput{ValuationBand: "cheap"}},
+			{"revenue low", ScreenStocksInput{MinRevenueYOYPercent: ptr(-100.1)}},
+			{"revenue high", ScreenStocksInput{MinRevenueYOYPercent: ptr(10000.1)}},
+			{"eps", ScreenStocksInput{MinEPS: ptr(10000.1)}},
+			{"roe", ScreenStocksInput{MinROEPercent: ptr(-10000.1)}},
+			{"yield", ScreenStocksInput{MinDividendYieldPercent: ptr(-0.1)}},
+			{"revenue NaN", ScreenStocksInput{MinRevenueYOYPercent: ptr(math.NaN())}},
+			{"eps positive infinity", ScreenStocksInput{MinEPS: ptr(math.Inf(1))}},
+			{"roe negative infinity", ScreenStocksInput{MinROEPercent: ptr(math.Inf(-1))}},
+			{"sort by", ScreenStocksInput{Market: "twse", SortBy: "name"}},
+			{"sort order", ScreenStocksInput{Market: "twse", SortOrder: "sideways"}},
+			{"limit", ScreenStocksInput{Market: "twse", Limit: 51}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				f := &fakeStockScreener{result: empty}
+				_, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, tc.in)
+				if err == nil {
+					t.Fatal("預期驗證錯誤,實際成功")
+				}
+				if f.gotOpt.Limit != 0 {
+					t.Fatal("驗證失敗不可觸及 client")
+				}
+			})
+		}
+	})
+
+	t.Run("breadth 與排行選股使用不同 market 說明", func(t *testing.T) {
+		breadth := breadthMarketSchema().Description
+		listedOTC := listedOTCMarketSchema().Description
+		if !strings.Contains(breadth, "id 0") || strings.Contains(breadth, "不含公開發行") {
+			t.Fatalf("breadth all 必須描述統計表 id 0 合併列:%q", breadth)
+		}
+		if !strings.Contains(listedOTC, "不含公開發行與興櫃") || breadth == listedOTC {
+			t.Fatalf("排行/選股 all 必須描述上市加上櫃邊界:%q", listedOTC)
+		}
+	})
+
+	t.Run("完整 fixture 原樣進入 structuredContent 且摘要揭露各指標日期", func(t *testing.T) {
+		fixture := &StockScreening{Stocks: []ScreenedStock{{
+			StockSymbol: "2330", Name: "台積電", MarketID: 2, IndustryID: 24,
+			RevenueYOYPercent: ptr(26.9), EarningsPerShare: ptr(13.94), ReturnOnEquity: ptr(8.9),
+			DividendYieldPercent: ptr(2.1), ValuationBand: ptr("fair_valued"), ValuationPercentage: ptr(130.6),
+			RevenueMonth: ptr("2026-06"), FinancialPeriod: ptr("2026-Q1"), ValuationDate: ptr("2026-07-16"), YieldDate: nil,
+		}}}
+		f := &fakeStockScreener{result: fixture}
+		res, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", IndustryID: 24, MinEPS: ptr(5.0), SortBy: "dividend_yield", SortOrder: "desc"})
+		if err != nil {
+			t.Fatalf("不應失敗:%v", err)
+		}
+		for _, want := range []string{"2330", "26.9", "13.94", "2026-06", "2026-Q1", "2026-07-16", "殖利率日 無", "不構成買賣建議", "不構成投資建議"} {
+			if !strings.Contains(summaryOf(t, res), want) {
+				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
+			}
+		}
+		got := roundTripJSON(t, out)
+		if got["data_kind"] != "stock_screening_result" || got["data_as_of"] != nil || got["is_realtime"] != false || got["disclaimer"] != AnalysisDisclaimer {
+			t.Errorf("screen 共通欄位錯誤:%v", got)
+		}
+		stock := got["stocks"].([]any)[0].(map[string]any)
+		if stock["revenue_yoy_percent"] != 26.9 || stock["earnings_per_share"] != 13.94 || stock["yield_date"] != nil {
+			t.Errorf("screen fixture/null 未原樣保留:%v", stock)
+		}
+		if f.gotOpt.Market != "twse" || f.gotOpt.IndustryID != 24 || f.gotOpt.MinEPS == nil || *f.gotOpt.MinEPS != 5 || f.gotOpt.Limit != 20 {
+			t.Errorf("client options 傳遞錯誤:%+v", f.gotOpt)
+		}
+	})
+
+	t.Run("空結果為 [] 且內部錯誤只回安全通用訊息", func(t *testing.T) {
+		f := &fakeStockScreener{result: empty}
+		_, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse"})
+		if err != nil {
+			t.Fatalf("空結果不是錯誤:%v", err)
+		}
+		raw, _ := json.Marshal(out)
+		if !strings.Contains(string(raw), `"stocks":[]`) || !strings.Contains(string(raw), `"data_as_of":null`) {
+			t.Errorf("空結果必須保留 []/null:%s", raw)
+		}
+
+		f.err = errors.New("dial tcp 10.0.0.1:5432: secret")
+		_, _, err = newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse"})
+		if err == nil || err.Error() != errInternal || strings.Contains(err.Error(), "10.0.0.1") {
+			t.Fatalf("內部錯誤必須安全:%v", err)
+		}
+	})
+}
+
+// TestScreenStocksIsReadOnly 經 tools/list 驗證能力註冊與 ReadOnlyHint。
+func TestScreenStocksIsReadOnly(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test-server", Version: "0.0.1"}, nil)
+	AddTools(server, &fakeStockScreener{}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(t.Context(), t1, nil); err != nil {
+		t.Fatalf("server.Connect:%v", err)
+	}
+	cs, err := client.Connect(t.Context(), t2, nil)
+	if err != nil {
+		t.Fatalf("client.Connect:%v", err)
+	}
+	defer cs.Close()
+	found := false
+	for tool, err := range cs.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("列出工具:%v", err)
+		}
+		if tool.Name == "screen_stocks" {
+			found = true
+			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+				t.Error("screen_stocks 必須有 ReadOnlyHint=true")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("tools/list 缺少 screen_stocks")
+	}
 }

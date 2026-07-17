@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -189,6 +190,44 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: dividendHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.dividendHistory)
+	}
+
+	// AnalyticsQuerier 與 FinancialQuerier 分開做能力偵測，讓部署期間可先
+	// 上線 Phase 1 而不提前暴露 Phase 2。只有注入的 client 三個方法都
+	// 實作完成時，tools/list 才會出現這組估值與市場分析工具。
+	if analytics, ok := q.(AnalyticsQuerier); ok {
+		ats := &analyticsToolset{analytics: analytics, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_stock_valuation",
+			Description: "查詢指定股票最新或指定日期以前最近一筆估值模型結果與估值區間；這些分界不是目標價或買賣建議。",
+			InputSchema: valuationSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ats.stockValuation)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_market_breadth",
+			Description: "查詢統計表既有市場列的漲跌家數、均線位置與估值分布；all 使用市場 id 0 的全市場合併統計列，可回傳最多 60 個資料日。",
+			InputSchema: marketBreadthSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ats.marketBreadth)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_dividend_yield_ranking",
+			Description: "查詢上市及/或上櫃股票的歷史殖利率排行，可依日期與產業篩選；結果僅描述歷史資料，不構成投資建議。",
+			InputSchema: yieldRankingSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ats.dividendYieldRanking)
+	}
+
+	// StockScreener 是獨立能力，避免為了單一 Phase 3 endpoint 擴大既有
+	// Querier。部署期間若 Data API client 尚未具備此方法，工具不會出現，
+	// 比註冊一個必然失敗的入口更能準確反映 server 能力。
+	if screener, ok := q.(StockScreener); ok {
+		sts := &screenToolset{screener: screener, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "screen_stocks",
+			Description: "依市場、產業、估值區間、營收年增率、EPS、ROE 或殖利率等固定白名單條件篩選股票；只描述符合條件的歷史資料，不替使用者做投資決策。",
+			InputSchema: screenStocksSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.screenStocks)
 	}
 }
 
@@ -977,6 +1016,11 @@ type DividendHistoryOutput struct {
 
 // monthlyRevenueHistory 執行 get_monthly_revenue_history:驗證輸入 →
 // 呼叫 Data API → 組出摘要與結構化輸出。
+//
+// MCP protocol-level error（例如不存在的工具）由 SDK 處理；此 handler
+// 回傳的 Go error 會成為 tool-level error。參數錯誤與股票不存在可安全
+// 告知使用者；認證、timeout、5xx、JSON 解析等內部錯誤只寫 server log，
+// MCP 一律收到通用訊息，避免暴露內網位址或實作細節。
 func (ts *financialToolset) monthlyRevenueHistory(ctx context.Context, _ *mcp.CallToolRequest, in MonthlyRevenueInput) (*mcp.CallToolResult, any, error) {
 	symbol, err := normalizeSymbol(in.Symbol)
 	if err != nil {
@@ -1029,6 +1073,10 @@ func (ts *financialToolset) monthlyRevenueHistory(ctx context.Context, _ *mcp.Ca
 }
 
 // financialStatementHistory 執行 get_financial_statement_history。
+//
+// SDK 會把本方法回傳的 Go error 包裝成 MCP tool-level error，而不是
+// protocol-level error。只有輸入驗證與 ErrStockNotFound 可直接回給
+// 呼叫端；API 認證、timeout、5xx 或解析錯誤只記錄並改回安全通用訊息。
 func (ts *financialToolset) financialStatementHistory(ctx context.Context, _ *mcp.CallToolRequest, in StatementHistoryInput) (*mcp.CallToolResult, any, error) {
 	symbol, err := normalizeSymbol(in.Symbol)
 	if err != nil {
@@ -1077,6 +1125,10 @@ func (ts *financialToolset) financialStatementHistory(ctx context.Context, _ *mc
 }
 
 // dividendHistory 執行 get_dividend_history。
+//
+// MCP protocol-level error 由 SDK 負責；本 handler 的 error 屬於
+// tool-level error。可修正的年度/筆數輸入與股票不存在會回明確訊息，
+// 其餘 Data API 細節只進 server log，對外固定使用安全通用錯誤。
 func (ts *financialToolset) dividendHistory(ctx context.Context, _ *mcp.CallToolRequest, in DividendHistoryInput) (*mcp.CallToolResult, any, error) {
 	symbol, err := normalizeSymbol(in.Symbol)
 	if err != nil {
@@ -1117,4 +1169,459 @@ func (ts *financialToolset) dividendHistory(ctx context.Context, _ *mcp.CallTool
 		Dividends:   history.Dividends,
 	}
 	return textResult(summary), out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2:估值與市場分析工具
+// ---------------------------------------------------------------------------
+
+// analyticsToolset 將 Phase 2 小介面與安全記錄函式綁在一起。
+// 工具 handler 只把可理解的驗證/查無股票訊息交給呼叫端；連線、認證、
+// timeout、5xx 與 JSON 解析細節只寫入 server log，避免洩漏內網資訊。
+type analyticsToolset struct {
+	analytics AnalyticsQuerier
+	logf      func(string, ...any)
+}
+
+// ValuationInput 是 get_stock_valuation 的輸入。
+type ValuationInput struct {
+	Symbol string `json:"symbol"`
+	Date   string `json:"date,omitempty"`
+}
+
+// MarketBreadthInput 是 get_market_breadth 的輸入。
+type MarketBreadthInput struct {
+	Market string `json:"market,omitempty"`
+	Date   string `json:"date,omitempty"`
+	Days   int    `json:"days,omitempty"`
+}
+
+// YieldRankingInput 是 get_dividend_yield_ranking 的輸入。
+type YieldRankingInput struct {
+	Date       string `json:"date,omitempty"`
+	Market     string `json:"market,omitempty"`
+	IndustryID int    `json:"industry_id,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+// valuationSchema 描述個股估值工具的必要代號與選填日期。
+func valuationSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"symbol": symbolSchema(),
+			"date": {
+				Type:        "string",
+				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
+				Description: "查詢截止日期(YYYY-MM-DD,選填；取該日以前最近資料)",
+			},
+		},
+		Required: []string{"symbol"},
+	}
+}
+
+// marketBreadthSchema 描述市場與最多 60 個資料日的查詢條件。
+func marketBreadthSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"market": breadthMarketSchema(),
+			"date": {
+				Type:        "string",
+				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
+				Description: "查詢截止日期(YYYY-MM-DD,選填)",
+			},
+			"days": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(60.0),
+				Default:     []byte("1"),
+				Description: "回傳最近有統計資料的交易日數(預設 1,範圍 1 至 60)",
+			},
+		},
+	}
+}
+
+// yieldRankingSchema 描述殖利率排行的日期、市場、產業與筆數限制。
+func yieldRankingSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"date": {
+				Type:        "string",
+				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
+				Description: "查詢截止日期(YYYY-MM-DD,選填)",
+			},
+			"market": listedOTCMarketSchema(),
+			"industry_id": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Description: "產業代碼(正整數,選填；未知代碼回空陣列)",
+			},
+			"limit": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(50.0),
+				Default:     []byte("20"),
+				Description: "最大回傳筆數(預設 20,範圍 1 至 50)",
+			},
+		},
+	}
+}
+
+// breadthMarketSchema 描述市場廣度統計表本身的市場列。
+//
+// `all` 必須忠實描述 Data API 查詢的 id 0 合併列；它和排行／選股直接
+// 過濾 stocks 表的 `IN (2, 4)` 不是同一種底層語意，因此不可共用說明。
+func breadthMarketSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:        "string",
+		Enum:        []any{"all", "twse", "tpex"},
+		Default:     []byte(`"all"`),
+		Description: "統計列:all(市場 id 0 的全市場合併列)、twse(上市 id 2)或 tpex(上櫃 id 4)",
+	}
+}
+
+// listedOTCMarketSchema 描述直接過濾股票主檔的上市櫃市場範圍。
+// `all` 固定為上市 id 2 加上櫃 id 4，不包含公開發行與興櫃。
+func listedOTCMarketSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:        "string",
+		Enum:        []any{"all", "twse", "tpex"},
+		Default:     []byte(`"all"`),
+		Description: "市場:all(上市+上櫃，不含公開發行與興櫃)、twse(上市)或 tpex(上櫃)",
+	}
+}
+
+// ValuationOutput 是估值 Data API envelope 加上 MCP 分析中繼資料。
+type ValuationOutput struct {
+	DataKind    string          `json:"data_kind"`
+	IsRealtime  bool            `json:"is_realtime"`
+	Disclaimer  string          `json:"disclaimer"`
+	StockSymbol string          `json:"stock_symbol"`
+	DataAsOf    *string         `json:"data_as_of"`
+	Valuation   *StockValuation `json:"valuation"`
+}
+
+// MarketBreadthOutput 是市場廣度 envelope 加上 MCP 分析中繼資料。
+type MarketBreadthOutput struct {
+	DataKind   string               `json:"data_kind"`
+	IsRealtime bool                 `json:"is_realtime"`
+	Disclaimer string               `json:"disclaimer"`
+	DataAsOf   string               `json:"data_as_of"`
+	Breadth    MarketBreadthPoint   `json:"breadth"`
+	History    []MarketBreadthPoint `json:"history"`
+}
+
+// YieldRankingOutput 是殖利率排行 envelope 加上 MCP 分析中繼資料。
+type YieldRankingOutput struct {
+	DataKind   string      `json:"data_kind"`
+	IsRealtime bool        `json:"is_realtime"`
+	Disclaimer string      `json:"disclaimer"`
+	DataAsOf   string      `json:"data_as_of"`
+	Stocks     []YieldRank `json:"stocks"`
+}
+
+// normalizeMarket 套用預設市場並拒絕固定白名單以外的值。
+func normalizeMarket(raw string) (string, error) {
+	if raw == "" {
+		return "all", nil
+	}
+	market := strings.ToLower(strings.TrimSpace(raw))
+	if market != "all" && market != "twse" && market != "tpex" {
+		return "", fmt.Errorf("參數 market 必須為 all、twse 或 tpex,收到了 %q", raw)
+	}
+	return market, nil
+}
+
+// parseOptionalDate 驗證日期並保留 Data API 需要的 YYYY-MM-DD 字串。
+func parseOptionalDate(raw, field string) (string, error) {
+	parsed, err := parseDateArg(raw, field)
+	if err != nil || parsed == nil {
+		return raw, err
+	}
+	return parsed.Format("2006-01-02"), nil
+}
+
+// stockValuation 執行個股估值查詢。
+func (ts *analyticsToolset) stockValuation(ctx context.Context, _ *mcp.CallToolRequest, in ValuationInput) (*mcp.CallToolResult, any, error) {
+	symbol, err := normalizeSymbol(in.Symbol)
+	if err != nil {
+		return nil, nil, err
+	}
+	date, err := parseOptionalDate(in.Date, "date")
+	if err != nil {
+		return nil, nil, err
+	}
+	envelope, err := ts.analytics.StockValuation(ctx, symbol, ValuationOptions{Date: date})
+	if err != nil {
+		if errors.Is(err, ErrStockNotFound) {
+			return nil, nil, fmt.Errorf("找不到股票代號:%s", in.Symbol)
+		}
+		ts.logf("工具 get_stock_valuation 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+
+	summary := fmt.Sprintf("股票 %s 在指定日期的 31 天回溯窗口內沒有估值資料。\n免責聲明:%s", symbol, AnalysisDisclaimer)
+	if envelope.Valuation != nil {
+		v := envelope.Valuation
+		summary = fmt.Sprintf("股票 %s 於 %s 的收盤價為 %s 元,估值區間為 %s；加權模型分界為便宜 %s、公允 %s、昂貴 %s。這是歷史模型計算結果,不是目標價。\n免責聲明:%s",
+			symbol, v.Date, displayFloat(v.ClosingPrice), v.ValuationBand,
+			displayFloat(v.Cheap), displayFloat(v.Fair), displayFloat(v.Expensive), AnalysisDisclaimer)
+	}
+	return textResult(summary), ValuationOutput{
+		DataKind: "stock_valuation", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
+		StockSymbol: envelope.StockSymbol, DataAsOf: envelope.DataAsOf, Valuation: envelope.Valuation,
+	}, nil
+}
+
+// marketBreadth 執行市場廣度序列查詢。
+func (ts *analyticsToolset) marketBreadth(ctx context.Context, _ *mcp.CallToolRequest, in MarketBreadthInput) (*mcp.CallToolResult, any, error) {
+	market, err := normalizeMarket(in.Market)
+	if err != nil {
+		return nil, nil, err
+	}
+	date, err := parseOptionalDate(in.Date, "date")
+	if err != nil {
+		return nil, nil, err
+	}
+	days, err := rangedLimit(in.Days, 1, 1, 60)
+	if err != nil {
+		return nil, nil, fmt.Errorf("參數 days 必須介於 1 到 60 之間")
+	}
+	envelope, err := ts.analytics.MarketBreadth(ctx, MarketBreadthOptions{Market: market, Date: date, Days: days})
+	if err != nil {
+		if errors.Is(err, ErrMarketDataNotFound) {
+			return nil, nil, fmt.Errorf("指定條件下查無市場廣度資料")
+		}
+		ts.logf("工具 get_market_breadth 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+
+	b := envelope.Breadth
+	summary := fmt.Sprintf("%s 市場最新統計日 %s:上漲 %d 家、下跌 %d 家、平盤 %d 家；低估 %d 家、公允 %d 家、高估 %d 家、極高估 %d 家。共回傳 %d 個交易日。\n免責聲明:%s",
+		market, b.Date, b.StocksUp, b.StocksDown, b.StocksUnchanged,
+		b.Undervalued, b.FairValued, b.Overvalued, b.HighlyOvervalued, len(envelope.History), AnalysisDisclaimer)
+	return textResult(summary), MarketBreadthOutput{
+		DataKind: "market_breadth", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
+		DataAsOf: envelope.DataAsOf, Breadth: envelope.Breadth, History: envelope.History,
+	}, nil
+}
+
+// dividendYieldRanking 執行殖利率排行查詢。
+func (ts *analyticsToolset) dividendYieldRanking(ctx context.Context, _ *mcp.CallToolRequest, in YieldRankingInput) (*mcp.CallToolResult, any, error) {
+	market, err := normalizeMarket(in.Market)
+	if err != nil {
+		return nil, nil, err
+	}
+	date, err := parseOptionalDate(in.Date, "date")
+	if err != nil {
+		return nil, nil, err
+	}
+	if in.IndustryID < 0 {
+		return nil, nil, fmt.Errorf("參數 industry_id 必須是正整數")
+	}
+	limit, err := rangedLimit(in.Limit, 20, 1, 50)
+	if err != nil {
+		return nil, nil, err
+	}
+	envelope, err := ts.analytics.DividendYieldRanking(ctx, YieldRankingOptions{
+		Date: date, Market: market, IndustryID: in.IndustryID, Limit: limit,
+	})
+	if err != nil {
+		if errors.Is(err, ErrMarketDataNotFound) {
+			return nil, nil, fmt.Errorf("指定條件下查無殖利率排行資料")
+		}
+		ts.logf("工具 get_dividend_yield_ranking 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+
+	summary := fmt.Sprintf("指定條件下沒有殖利率排行資料。\n免責聲明:%s", AnalysisDisclaimer)
+	if len(envelope.Stocks) > 0 {
+		top := envelope.Stocks[0]
+		summary = fmt.Sprintf("取得 %s 市場 %d 檔股票的殖利率排行(資料日 %s)；第 1 名為 %s %s,殖利率 %s%%。\n免責聲明:%s",
+			market, len(envelope.Stocks), envelope.DataAsOf, top.StockSymbol, top.Name,
+			displayFloat(top.DividendYieldPercent), AnalysisDisclaimer)
+	}
+	return textResult(summary), YieldRankingOutput{
+		DataKind: "dividend_yield_ranking", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
+		DataAsOf: envelope.DataAsOf, Stocks: envelope.Stocks,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3:固定白名單條件選股
+// ---------------------------------------------------------------------------
+
+// screenToolset 綁定 StockScreener 與安全記錄函式。
+type screenToolset struct {
+	screener StockScreener
+	logf     func(string, ...any)
+}
+
+// ScreenStocksInput 是 screen_stocks 工具的輸入。
+// 浮點條件使用指標，讓 JSON 未提供欄位時是 nil，而明確提供 0 時仍保留
+// 這個有效門檻；若使用 float64 值型別，兩種情況都會變成 Go 零值 0。
+type ScreenStocksInput struct {
+	Market                  string   `json:"market,omitempty"`
+	IndustryID              int      `json:"industry_id,omitempty"`
+	ValuationBand           string   `json:"valuation_band,omitempty"`
+	MinRevenueYOYPercent    *float64 `json:"min_revenue_yoy_percent,omitempty"`
+	MinEPS                  *float64 `json:"min_eps,omitempty"`
+	MinROEPercent           *float64 `json:"min_roe_percent,omitempty"`
+	MinDividendYieldPercent *float64 `json:"min_dividend_yield_percent,omitempty"`
+	SortBy                  string   `json:"sort_by,omitempty"`
+	SortOrder               string   `json:"sort_order,omitempty"`
+	Limit                   int      `json:"limit,omitempty"`
+}
+
+// screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
+// SQL 片段。Schema 提供呼叫端第一層提示，handler 仍會再次驗證，因為
+// 不可信 client 可能繞過 schema 直接送出 JSON-RPC 請求。
+func screenStocksSchema() *jsonschema.Schema {
+	number := func(minimum, maximum float64, desc string) *jsonschema.Schema {
+		return &jsonschema.Schema{Type: "number", Minimum: ptr(minimum), Maximum: ptr(maximum), Description: desc}
+	}
+	return &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"market":      listedOTCMarketSchema(),
+			"industry_id": {Type: "integer", Minimum: ptr(1.0), Description: "產業代碼(正整數,選填)"},
+			"valuation_band": {
+				Type:        "string",
+				Enum:        []any{"undervalued", "fair_valued", "overvalued", "highly_overvalued"},
+				Description: "估值區間(選填)",
+			},
+			"min_revenue_yoy_percent":    number(-100, 10000, "最低月營收年增率百分比"),
+			"min_eps":                    number(-10000, 10000, "最低每股盈餘 EPS"),
+			"min_roe_percent":            number(-10000, 10000, "最低股東權益報酬率百分比"),
+			"min_dividend_yield_percent": number(0, 1000, "最低殖利率百分比"),
+			"sort_by": {
+				Type:        "string",
+				Enum:        []any{"stock_symbol", "revenue_yoy", "eps", "roe", "dividend_yield", "valuation_percentage"},
+				Default:     []byte(`"stock_symbol"`),
+				Description: "固定白名單排序欄位",
+			},
+			"sort_order": {
+				Type:        "string",
+				Enum:        []any{"asc", "desc"},
+				Default:     []byte(`"asc"`),
+				Description: "排序方向",
+			},
+			"limit": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(50.0),
+				Default:     []byte("20"),
+				Description: "最大回傳筆數(預設 20,範圍 1 至 50)",
+			},
+		},
+	}
+}
+
+// StockScreeningOutput 是 Data API envelope 加上 MCP 分析型共通欄位。
+type StockScreeningOutput struct {
+	DataKind   string          `json:"data_kind"`
+	IsRealtime bool            `json:"is_realtime"`
+	Disclaimer string          `json:"disclaimer"`
+	DataAsOf   *string         `json:"data_as_of"`
+	Stocks     []ScreenedStock `json:"stocks"`
+}
+
+// validateOptionalFloat 驗證選填數值的閉區間；nil 代表沒有提供，不檢查。
+func validateOptionalFloat(field string, value *float64, minimum, maximum float64) error {
+	// IEEE 754 的 NaN 與任何數比較都會是 false；若只寫上下界比較，NaN
+	// 會同時通過「不小於最小值」與「不大於最大值」。Inf 雖會被一般
+	// 上下界攔住，仍明確拒絕所有非有限數，讓驗證規則不依賴目前邊界。
+	if value != nil && (math.IsNaN(*value) || math.IsInf(*value, 0) || *value < minimum || *value > maximum) {
+		return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", field, formatFloat(minimum), formatFloat(maximum))
+	}
+	return nil
+}
+
+// screenStocks 執行固定條件選股：驗證白名單 → 呼叫 Data API → 組裝
+// 繁中摘要與 structuredContent。
+//
+// MCP 的 protocol-level error（例如不存在的工具）由 SDK 處理；本 handler
+// 回傳的 Go error 會成為 tool-level error。輸入錯誤可安全原樣告知使用者，
+// 但 API 認證、timeout、5xx 或解析錯誤只能記錄在 server log，對 MCP
+// 一律回通用訊息，避免內網位址、憑證狀態或實作細節外洩。
+func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolRequest, in ScreenStocksInput) (*mcp.CallToolResult, any, error) {
+	market, err := normalizeMarket(in.Market)
+	if err != nil {
+		return nil, nil, err
+	}
+	if in.IndustryID < 0 {
+		return nil, nil, fmt.Errorf("參數 industry_id 必須是正整數")
+	}
+	valuationBand := strings.ToLower(strings.TrimSpace(in.ValuationBand))
+	if valuationBand != "" && valuationBand != "undervalued" && valuationBand != "fair_valued" && valuationBand != "overvalued" && valuationBand != "highly_overvalued" {
+		return nil, nil, fmt.Errorf("參數 valuation_band 必須為 undervalued、fair_valued、overvalued 或 highly_overvalued")
+	}
+	for _, check := range []struct {
+		field        string
+		value        *float64
+		minimum, max float64
+	}{
+		{"min_revenue_yoy_percent", in.MinRevenueYOYPercent, -100, 10000},
+		{"min_eps", in.MinEPS, -10000, 10000},
+		{"min_roe_percent", in.MinROEPercent, -10000, 10000},
+		{"min_dividend_yield_percent", in.MinDividendYieldPercent, 0, 1000},
+	} {
+		if err := validateOptionalFloat(check.field, check.value, check.minimum, check.max); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
+	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
+	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
+		in.MinRevenueYOYPercent != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil
+	if !hasFilter {
+		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
+	}
+
+	sortBy := strings.ToLower(strings.TrimSpace(in.SortBy))
+	if sortBy == "" {
+		sortBy = "stock_symbol"
+	}
+	validSort := map[string]bool{"stock_symbol": true, "revenue_yoy": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true}
+	if !validSort[sortBy] {
+		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
+	}
+	sortOrder := strings.ToLower(strings.TrimSpace(in.SortOrder))
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		return nil, nil, fmt.Errorf("參數 sort_order 必須為 asc 或 desc")
+	}
+	limit, err := rangedLimit(in.Limit, 20, 1, 50)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	envelope, err := ts.screener.ScreenStocks(ctx, ScreenOptions{
+		Market: market, IndustryID: in.IndustryID, ValuationBand: valuationBand,
+		MinRevenueYOYPercent: in.MinRevenueYOYPercent, MinEPS: in.MinEPS,
+		MinROEPercent: in.MinROEPercent, MinDividendYieldPercent: in.MinDividendYieldPercent,
+		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+	})
+	if err != nil {
+		ts.logf("工具 screen_stocks 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+
+	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
+	if len(envelope.Stocks) > 0 {
+		first := envelope.Stocks[0]
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s%%、EPS %s、ROE %s%%、殖利率 %s%%；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+			len(envelope.Stocks), first.StockSymbol, first.Name,
+			displayFloat(first.RevenueYOYPercent), displayFloat(first.EarningsPerShare), displayFloat(first.ReturnOnEquity), displayFloat(first.DividendYieldPercent),
+			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate), AnalysisDisclaimer)
+	}
+	return textResult(summary), StockScreeningOutput{
+		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
+		DataAsOf: envelope.DataAsOf, Stocks: envelope.Stocks,
+	}, nil
 }

@@ -20,7 +20,7 @@
                     │         3. MCP StreamableHTTPHandler(SDK)   │
                     │              │                                │
                     │       stock/(領域層)                        │
-                    │         tools.go   ── 8 個 MCP tool(api 模式)│
+                    │         tools.go   ── 12 個 MCP tool(api 模式)│
                     │         repository ── 參數化 SQL(唯讀)      │
                     │              │                                │
                     └──────────────┼────────────────────────────────┘
@@ -199,6 +199,44 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 ```
 
 > 三個歷史財務工具的免責聲明與價格工具不同：`本資料來自 stock_rust 已蒐集與計算的歷史資料,可能有延遲,僅供資訊參考,不構成投資建議。`
+
+### `get_stock_valuation`
+
+僅在 `DATA_SOURCE=api` 出現。查詢個股最新或指定日期以前最近一筆估值模型結果；指定日期採 31 天回溯窗口，股票存在但窗口內沒有資料時 `valuation` 與 `data_as_of` 都是 `null`。`cheap`、`fair`、`expensive` 是歷史模型算出的估值分界，`valuation_band` 為 `undervalued`、`fair_valued`、`overvalued` 或 `highly_overvalued`，不是目標價或買賣建議。
+
+```json
+{"name": "get_stock_valuation", "arguments": {"symbol": "2330", "date": "2026-07-16"}}
+```
+
+### `get_market_breadth`
+
+僅在 `DATA_SOURCE=api` 出現。查詢市場漲跌家數、5/20/60/120/240 日均線上下家數及估值分布。`market` 可選 `all`（預設）、`twse`、`tpex`；`days` 預設 1、範圍 1–60，回傳最近有統計資料的交易日，不補非交易日。`history` 固定由新到舊，`breadth` 固定等於 `history[0]`。
+
+```json
+{"name": "get_market_breadth", "arguments": {"market": "all", "date": "2026-07-16", "days": 20}}
+```
+
+### `get_dividend_yield_ranking`
+
+僅在 `DATA_SOURCE=api` 出現。查詢指定日期以前最近資料日的殖利率排行，可依市場與正整數 `industry_id` 篩選，`limit` 預設 20（1–50）。`market=all` 只包含上市與上櫃，不包含公開發行及興櫃；未知產業或合法條件查無資料時 `stocks` 為空陣列。
+
+```json
+{"name": "get_dividend_yield_ranking", "arguments": {"date": "2026-07-16", "market": "twse", "industry_id": 24, "limit": 20}}
+```
+
+> 三個分析工具都回傳繁體中文摘要與完整 `structuredContent`，並包含 `data_kind`、Data API 決定的 `data_as_of`、`is_realtime: false` 與分析型免責聲明；工具不提供買進、賣出、目標價或報酬保證。
+
+### `screen_stocks`
+
+僅在 `DATA_SOURCE=api` 出現。用固定白名單條件篩選股票：單一市場（`twse`/`tpex`）、產業、估值區間、最低營收年增率、EPS、ROE 或殖利率。至少要有一個實質條件；預設範圍 `market=all`、排序與 `limit` 不算篩選條件，避免把工具當成全市場資料匯出。
+
+`sort_by` 只允許 `stock_symbol`、`revenue_yoy`、`eps`、`roe`、`dividend_yield`、`valuation_percentage`，`sort_order` 只允許 `asc`/`desc`，`limit` 預設 20（1–50）。每檔股票採自己最新且仍在新鮮度期限內的資料，因此結果分別附 `revenue_month`、`financial_period`、`valuation_date`、`yield_date`；過期或缺失指標維持 `null`，不可假設所有指標來自同一天。
+
+```json
+{"name": "screen_stocks", "arguments": {"market": "twse", "industry_id": 24, "valuation_band": "undervalued", "min_revenue_yoy_percent": 10, "min_eps": 5, "min_roe_percent": 10, "min_dividend_yield_percent": 3, "sort_by": "dividend_yield", "sort_order": "desc", "limit": 20}}
+```
+
+回應的 `data_kind` 為 `stock_screening_result`，混合指標沒有單一正確資料日，所以最外層 `data_as_of` 固定為 `null`；查無符合項目時 `stocks` 為空陣列。結果只描述歷史資料符合情形，不替使用者做投資決策。
 
 ## 安全設計
 

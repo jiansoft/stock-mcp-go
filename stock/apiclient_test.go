@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -243,5 +244,301 @@ func TestAPIClientFinancialHistoryServerError(t *testing.T) {
 	}
 	if _, err := client.DividendHistory(t.Context(), "BADJSON", DividendHistoryOptions{Limit: 20}); err == nil || errors.Is(err, ErrStockNotFound) {
 		t.Fatalf("無效 JSON 應回傳解析錯誤:%v", err)
+	}
+}
+
+// TestAPIClientFinancialHistoryStatusMatrix 逐一驗證三個 Phase 1 endpoint 的
+// 401、422 與 timeout。這些都不是「股票不存在」，因此不得轉成
+// ErrStockNotFound；tool 層會把詳細 error 留在 log 並回安全通用訊息。
+func TestAPIClientFinancialHistoryStatusMatrix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/401/"):
+			w.WriteHeader(http.StatusUnauthorized)
+		case strings.Contains(r.URL.Path, "/422/"):
+			w.WriteHeader(http.StatusUnprocessableEntity)
+		case strings.Contains(r.URL.Path, "/slow/"):
+			// 等 client timeout 取消 request context，不用 time.Sleep 猜測
+			// goroutine 排程，因此測試快速且 deterministic。
+			<-r.Context().Done()
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	type endpoint struct {
+		name string
+		call func(*APIClient, string) error
+	}
+	endpoints := []endpoint{
+		{"monthly-revenues", func(c *APIClient, symbol string) error {
+			_, err := c.MonthlyRevenueHistory(t.Context(), symbol, RevenueHistoryOptions{Limit: 24})
+			return err
+		}},
+		{"financial-statements", func(c *APIClient, symbol string) error {
+			_, err := c.FinancialStatementHistory(t.Context(), symbol, StatementHistoryOptions{PeriodType: "quarterly", Limit: 12})
+			return err
+		}},
+		{"dividends", func(c *APIClient, symbol string) error {
+			_, err := c.DividendHistory(t.Context(), symbol, DividendHistoryOptions{Limit: 20})
+			return err
+		}},
+	}
+	for _, endpoint := range endpoints {
+		t.Run(endpoint.name, func(t *testing.T) {
+			for _, status := range []string{"401", "422"} {
+				t.Run(status, func(t *testing.T) {
+					err := endpoint.call(NewAPIClient(server.URL, "secret", time.Second), status)
+					if err == nil || errors.Is(err, ErrStockNotFound) {
+						t.Fatalf("%s 不可轉成 ErrStockNotFound:%v", status, err)
+					}
+				})
+			}
+			t.Run("timeout", func(t *testing.T) {
+				err := endpoint.call(NewAPIClient(server.URL, "secret", 10*time.Millisecond), "slow")
+				if err == nil || errors.Is(err, ErrStockNotFound) {
+					t.Fatalf("timeout 必須是一般 error:%v", err)
+				}
+			})
+		})
+	}
+}
+
+// TestAPIClientAnalytics 驗證 Phase 2 三個 endpoint 的完整 envelope、query
+// 組裝、空陣列與 null 語意。測試 fixture 也會在 tool 測試重用相同數值，
+// 固定 Data API 到 MCP structuredContent 之間不做重新計算。
+func TestAPIClientAnalytics(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/stocks/2330/valuation":
+			_, _ = w.Write([]byte(`{"stock_symbol":"2330","data_as_of":"2026-07-16","valuation":{"stock_symbol":"2330","date":"2026-07-16","closing_price":1045,"percentage":50,"year_count":5,"cheap":800,"fair":1000,"expensive":1200,"valuation_band":"overvalued"}}`))
+		case "/api/v1/stocks/4414/valuation":
+			_, _ = w.Write([]byte(`{"stock_symbol":"4414","data_as_of":null,"valuation":null}`))
+		case "/api/v1/market/breadth":
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-16","breadth":{"date":"2026-07-16","market":"all","undervalued":100,"fair_valued":200,"overvalued":300,"highly_overvalued":50,"stocks_up":700,"stocks_down":400,"stocks_unchanged":100,"updated_at":null},"history":[{"date":"2026-07-16","market":"all","undervalued":100,"fair_valued":200,"overvalued":300,"highly_overvalued":50,"stocks_up":700,"stocks_down":400,"stocks_unchanged":100,"updated_at":null}]}`))
+		case "/api/v1/market/dividend-yield-ranking":
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-16","stocks":[{"rank":1,"stock_symbol":"1234","name":"測試公司","market_id":2,"industry_id":24,"date":"2026-07-16","closing_price":50,"dividend":5,"dividend_yield_percent":10}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	valuation, err := client.StockValuation(t.Context(), "2330", ValuationOptions{Date: "2026-07-16"})
+	if err != nil || valuation.Valuation == nil || valuation.DataAsOf == nil || *valuation.DataAsOf != "2026-07-16" {
+		t.Fatalf("StockValuation() = %#v, %v", valuation, err)
+	}
+	if valuation.Valuation.ValuationBand != "overvalued" || *valuation.Valuation.ClosingPrice != 1045 {
+		t.Fatalf("估值欄位解析錯誤:%#v", valuation.Valuation)
+	}
+	if gotQuery != "date=2026-07-16" {
+		t.Fatalf("valuation query string 錯誤:%q", gotQuery)
+	}
+
+	empty, err := client.StockValuation(t.Context(), "4414", ValuationOptions{})
+	if err != nil || empty.Valuation != nil || empty.DataAsOf != nil {
+		t.Fatalf("估值空資料應保留 null:%#v, %v", empty, err)
+	}
+
+	breadth, err := client.MarketBreadth(t.Context(), MarketBreadthOptions{Market: "all", Date: "2026-07-16", Days: 20})
+	if err != nil || len(breadth.History) != 1 {
+		t.Fatalf("MarketBreadth() = %#v, %v", breadth, err)
+	}
+	if breadth.Breadth.StocksUp != 700 || breadth.History[0].StocksUp != breadth.Breadth.StocksUp {
+		t.Fatalf("breadth 必須等於 history[0]:%#v", breadth)
+	}
+	if gotQuery != "date=2026-07-16&days=20&market=all" {
+		t.Fatalf("breadth query string 錯誤:%q", gotQuery)
+	}
+
+	ranking, err := client.DividendYieldRanking(t.Context(), YieldRankingOptions{Date: "2026-07-16", Market: "twse", IndustryID: 24, Limit: 20})
+	if err != nil || len(ranking.Stocks) != 1 || ranking.Stocks[0].DividendYieldPercent == nil || *ranking.Stocks[0].DividendYieldPercent != 10 {
+		t.Fatalf("DividendYieldRanking() = %#v, %v", ranking, err)
+	}
+	if gotQuery != "date=2026-07-16&industry_id=24&limit=20&market=twse" {
+		t.Fatalf("ranking query string 錯誤:%q", gotQuery)
+	}
+}
+
+// TestAPIClientAnalyticsErrors 以 table-driven 測試固定 404、401、422、
+// 500、timeout 與無效 JSON 的分層語意。只有個股估值 404 會轉成
+// ErrStockNotFound；其餘錯誤都必須維持一般 error，交由 tool 隱藏細節。
+func TestAPIClientAnalyticsErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/stocks/404/valuation":
+			w.WriteHeader(http.StatusNotFound)
+		case "/api/v1/stocks/401/valuation":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/api/v1/market/breadth":
+			switch r.URL.Query().Get("market") {
+			case "slow":
+				// client timeout 取消 request context 後 handler 立即退出，不用
+				// time.Sleep 猜測排程時間，因此測試快速且不會偶發失敗。
+				<-r.Context().Done()
+				return
+			case "notfound":
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusUnprocessableEntity)
+		case "/api/v1/market/dividend-yield-ranking":
+			switch r.URL.Query().Get("market") {
+			case "badjson":
+				_, _ = w.Write([]byte(`{not-json`))
+			case "notfound":
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL, "secret", time.Second)
+	tests := []struct {
+		name         string
+		call         func(*APIClient) error
+		wantNotFound bool
+	}{
+		{"valuation 404", func(c *APIClient) error {
+			_, err := c.StockValuation(t.Context(), "404", ValuationOptions{})
+			return err
+		}, true},
+		{"valuation 401", func(c *APIClient) error {
+			_, err := c.StockValuation(t.Context(), "401", ValuationOptions{})
+			return err
+		}, false},
+		{"breadth 422", func(c *APIClient) error {
+			_, err := c.MarketBreadth(t.Context(), MarketBreadthOptions{Market: "all", Days: 61})
+			return err
+		}, false},
+		{"ranking 500", func(c *APIClient) error {
+			_, err := c.DividendYieldRanking(t.Context(), YieldRankingOptions{Market: "all", Limit: 20})
+			return err
+		}, false},
+		{"ranking invalid JSON", func(c *APIClient) error {
+			_, err := c.DividendYieldRanking(t.Context(), YieldRankingOptions{Market: "badjson", Limit: 20})
+			return err
+		}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(client)
+			if err == nil {
+				t.Fatal("預期錯誤,實際成功")
+			}
+			if errors.Is(err, ErrStockNotFound) != tc.wantNotFound {
+				t.Fatalf("ErrStockNotFound 語意錯誤:%v", err)
+			}
+		})
+	}
+
+	shortClient := NewAPIClient(server.URL, "secret", 10*time.Millisecond)
+	if _, err := shortClient.MarketBreadth(t.Context(), MarketBreadthOptions{Market: "slow", Days: 1}); err == nil {
+		t.Fatal("timeout 必須回傳 error")
+	}
+	for name, call := range map[string]func() error{
+		"breadth": func() error {
+			_, err := client.MarketBreadth(t.Context(), MarketBreadthOptions{Market: "notfound", Days: 1})
+			return err
+		},
+		"ranking": func() error {
+			_, err := client.DividendYieldRanking(t.Context(), YieldRankingOptions{Market: "notfound", Limit: 20})
+			return err
+		},
+	} {
+		t.Run(name+" 404", func(t *testing.T) {
+			if err := call(); !errors.Is(err, ErrMarketDataNotFound) {
+				t.Fatalf("市場資料 404 應轉為 ErrMarketDataNotFound:%v", err)
+			}
+		})
+	}
+}
+
+// TestAPIClientScreenStocks 驗證 Phase 3 endpoint 的完整 envelope、固定 query
+// 白名單、零值門檻與 null/空陣列語意。
+func TestAPIClientScreenStocks(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Query().Get("industry_id") {
+		case "24":
+			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":[{"stock_symbol":"2330","name":"台積電","market_id":2,"industry_id":24,"revenue_yoy_percent":26.9,"earnings_per_share":13.94,"return_on_equity":8.9,"dividend_yield_percent":2.1,"valuation_band":"fair_valued","valuation_percentage":130.6,"revenue_month":"2026-06","financial_period":"2026-Q1","valuation_date":"2026-07-16","yield_date":null}]}`))
+		default:
+			// 刻意回 stocks:null，驗證 client 對外防禦性轉成 []。
+			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":null}`))
+		}
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+	zero := 0.0
+	result, err := client.ScreenStocks(t.Context(), ScreenOptions{
+		Market: "twse", IndustryID: 24, ValuationBand: "fair_valued",
+		MinRevenueYOYPercent: &zero, MinEPS: ptr(5.0), MinROEPercent: ptr(8.0), MinDividendYieldPercent: ptr(2.0),
+		SortBy: "dividend_yield", SortOrder: "desc", Limit: 20,
+	})
+	if err != nil || result == nil || len(result.Stocks) != 1 {
+		t.Fatalf("ScreenStocks() = %#v, %v", result, err)
+	}
+	stock := result.Stocks[0]
+	if result.DataAsOf != nil || stock.StockSymbol != "2330" || stock.YieldDate != nil || *stock.RevenueYOYPercent != 26.9 {
+		t.Fatalf("screen envelope/null 欄位解析錯誤:%#v", result)
+	}
+	wantQuery := "industry_id=24&limit=20&market=twse&min_dividend_yield_percent=2&min_eps=5&min_revenue_yoy_percent=0&min_roe_percent=8&sort_by=dividend_yield&sort_order=desc&valuation_band=fair_valued"
+	if gotQuery != wantQuery {
+		t.Fatalf("screen query string 錯誤:\n got %q\nwant %q", gotQuery, wantQuery)
+	}
+
+	empty, err := client.ScreenStocks(t.Context(), ScreenOptions{Market: "tpex", SortBy: "stock_symbol", SortOrder: "asc", Limit: 20})
+	if err != nil || empty.Stocks == nil || len(empty.Stocks) != 0 || empty.DataAsOf != nil {
+		t.Fatalf("空結果必須保留 []/null:%#v, %v", empty, err)
+	}
+}
+
+// TestAPIClientScreenStocksErrors 覆蓋 screen endpoint 的 404、401、422、
+// 500、timeout 與無效 JSON。選股沒有「個股不存在」語意，因此所有
+// 非 200 狀態都是一般 error，不能轉成 ErrStockNotFound。
+func TestAPIClientScreenStocksErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("market") {
+		case "notfound":
+			w.WriteHeader(http.StatusNotFound)
+		case "unauthorized":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "invalid":
+			w.WriteHeader(http.StatusUnprocessableEntity)
+		case "broken":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "badjson":
+			_, _ = w.Write([]byte(`{not-json`))
+		case "slow":
+			<-r.Context().Done()
+		default:
+			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":[]}`))
+		}
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL, "secret", time.Second)
+	for _, market := range []string{"notfound", "unauthorized", "invalid", "broken", "badjson"} {
+		t.Run(market, func(t *testing.T) {
+			_, err := client.ScreenStocks(t.Context(), ScreenOptions{Market: market, SortBy: "stock_symbol", SortOrder: "asc", Limit: 20})
+			if err == nil || errors.Is(err, ErrStockNotFound) {
+				t.Fatalf("%s 必須是一般 error:%v", market, err)
+			}
+		})
+	}
+	shortClient := NewAPIClient(server.URL, "secret", 10*time.Millisecond)
+	if _, err := shortClient.ScreenStocks(t.Context(), ScreenOptions{Market: "slow", SortBy: "stock_symbol", SortOrder: "asc", Limit: 20}); err == nil {
+		t.Fatal("timeout 必須回傳 error")
 	}
 }
