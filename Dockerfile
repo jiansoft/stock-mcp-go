@@ -20,4 +20,17 @@ ENV HOST=0.0.0.0
 EXPOSE 3000
 
 USER nonroot
+
+# distroless image 裡沒有 shell、curl 或 wget,無法用常見的
+# `CMD curl -f http://localhost:3000/readyz` 寫法做健康檢查。改由執行檔
+# 自己提供 -health-check 模式(見 main.go 的 runHealthCheck):它會呼叫
+# 本機的 /readyz 並以結束碼回報結果,不需要在 image 裡多裝任何工具,
+# 也就不會破壞 distroless 的最小攻擊面。
+#
+# 必須用 exec 形式(JSON 陣列),因為 shell 形式需要 /bin/sh。
+# start-period 給服務啟動與首次連上資料來源的緩衝時間,這段期間檢查
+# 失敗不會計入 retries。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["/stock-mcp", "-health-check"]
+
 ENTRYPOINT ["/stock-mcp"]

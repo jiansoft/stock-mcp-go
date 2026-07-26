@@ -13,7 +13,7 @@
                     │                  stock-mcp(Go)               │
  AI client          │                                               │
  (MCP over ─ HTTPS ─▶ 反向代理 ─▶ web/(HTTP 層)                    │
-  Streamable HTTP)  │       GET /healthz(免驗證)                  │
+  Streamable HTTP)  │       GET /healthz、/readyz(免驗證)         │
                     │       {MCP_PATH}:                             │
                     │         1. API key 驗證(401)                │
                     │         2. rate limit(429)                  │
@@ -109,8 +109,12 @@ docker compose -f docker-compose.example.yml up --build
 健康檢查(不需 API key):
 
 ```bash
-curl http://127.0.0.1:3000/healthz
+curl http://127.0.0.1:3000/healthz   # liveness:進程是否活著
 # {"status":"ok"}
+
+curl http://127.0.0.1:3000/readyz    # readiness:資料來源是否可用
+# {"status":"ok"}        資料來源正常
+# {"status":"unavailable","reason":"資料來源目前不可用"}   → HTTP 503
 ```
 
 ## MCP endpoint 與驗證
@@ -332,6 +336,14 @@ X-Forwarded-For: <用戶端自己填的內容>, <連到 Nginx 的真實來源 IP
 兩者都不需要 API key。負載平衡器與 k8s 應使用 `/readyz` 決定是否把流量導向這個實例,`/healthz` 則用於判斷是否需要重啟容器。`/readyz` 的檢查結果會快取 2 秒,避免高頻探測本身變成後端的額外負載;回應內容不含任何底層錯誤細節(這個端點不需認證,而底層錯誤可能包含內網位址)。
 
 兩個端點的請求 log 為 `debug` 等級,不會在預設的 `info` 等級產生洗版。
+
+執行檔本身也提供健康檢查模式,供容器 `HEALTHCHECK` 使用:
+
+```bash
+stock-mcp -health-check   # 呼叫本機 /readyz,結束碼 0 = 就緒,1 = 未就緒
+```
+
+之所以需要這個模式,是因為執行階段 image 用的是 `gcr.io/distroless/static`——裡面沒有 shell、curl 或 wget,無法用常見的 `HEALTHCHECK CMD curl -f ...` 寫法。讓執行檔自己提供檢查模式是 distroless 的標準解法,不需要為了健康檢查而在 image 裡多裝任何工具。`Dockerfile` 與 `docker-compose.example.yml` 都已接上。
 
 ### 跨來源保護
 

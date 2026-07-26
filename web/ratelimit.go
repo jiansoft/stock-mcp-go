@@ -256,13 +256,31 @@ func clientIP(r *http.Request, trustProxy bool, hops int) string {
 // 這種情況的原因包含:清單項目數少於 hops(代表代理層數設定與實際部署
 // 不符,或某一層把 header 洗掉了)、或取出的值根本不是合法 IP。這兩種
 // 情況都不能猜,因為猜錯的方向就是「採信一個攻擊者可控的值」。
+// 實作上刻意「從右往左掃描」而不是先 strings.Split 整個字串:X-Forwarded-For
+// 的長度上限由 http.Server.MaxHeaderBytes(預設 1 MiB)決定,對一個 1 MiB
+// 的 header 做 Split 會一次配置出數十萬個 string header,而我們其實只需要
+// 其中一段。改用 LastIndexByte 由右往左找,無論 header 多長都只會切出
+// hops 段,配置量與輸入長度無關。
 func forwardedFor(xff string, hops int) string {
-	parts := strings.Split(xff, ",")
-	idx := len(parts) - hops
-	if idx < 0 || idx >= len(parts) {
-		return ""
+	// end 是目前候選片段的結束位置(不含);每往左跳一層代理就往前推。
+	end := len(xff)
+	var candidate string
+	for k := 1; k <= hops; k++ {
+		i := strings.LastIndexByte(xff[:end], ',')
+		if i < 0 {
+			// 已經到最左邊一段了。若這時還沒數滿 hops 層,代表清單項目數
+			// 少於設定的代理層數(設定與實際部署不符,或某一層把 header
+			// 洗掉了),不能猜,交給呼叫端退回 RemoteAddr。
+			if k < hops {
+				return ""
+			}
+			candidate = xff[:end]
+			break
+		}
+		candidate = xff[i+1 : end]
+		end = i
 	}
-	candidate := strings.TrimSpace(parts[idx])
+	candidate = strings.TrimSpace(candidate)
 	// 明確驗證是合法 IP:XFF 的內容終究來自 HTTP header,即使是受信任
 	// 代理寫入的位置也應該驗過再用,避免把畸形字串拿去當 map 的 key。
 	// net.ParseIP 同時接受 IPv4 與 IPv6 兩種表示法。

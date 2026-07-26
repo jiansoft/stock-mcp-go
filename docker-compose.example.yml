@@ -18,3 +18,13 @@ services:
     ports:
       # 對外 port 9004 → 容器內 3000;只綁定本機迴環位址,由反向代理對外提供 HTTPS
       - "127.0.0.1:9004:3000"
+    # image 本身已內建 HEALTHCHECK(見 Dockerfile),這裡明確再寫一次是為了
+    # 讓這份範例可以獨立閱讀,也方便依實際環境調整間隔。它呼叫的是
+    # /readyz(就緒檢查,會確認資料來源真的可用),而不是 /healthz(只確認
+    # 進程活著)——對「這個實例現在能不能服務請求」而言,前者才是正解。
+    healthcheck:
+      test: ["CMD", "/stock-mcp", "-health-check"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

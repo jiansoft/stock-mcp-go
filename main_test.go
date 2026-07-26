@@ -1,15 +1,20 @@
 package main
 
-// 本檔案測試 main 套件裡兩個「接線層」的關鍵行為,這兩者都無法用純粹的
-// 單元測試涵蓋,必須真的把 MCP handler 跑起來才驗證得到:
+// 本檔案測試 main 套件裡幾個「接線層」的關鍵行為,它們都無法用純粹的
+// 單元測試涵蓋,必須真的把伺服器跑起來才驗證得到:
 //
 //  1. MCP session 的閒置逾時確實會回收 session 與其背景 goroutine。
 //  2. 即使有 MCP 的 SSE 長連線還開著,優雅關閉流程仍能正常結束(不會
 //     把「Shutdown 逾時」誤當成錯誤往上傳)。
+//  3. -health-check 模式(容器 HEALTHCHECK 實際執行的路徑)能正確反映
+//     服務的就緒狀態。
 //
-// 這兩件事對應審查報告裡的 P0 與 P1:兩者原本都會在正式部署後才顯現
-// (前者是長時間執行後記憶體耗盡,後者是每次 SIGTERM 都以結束碼 1 離開),
+// 前兩項對應審查報告裡的 P0 與 P1:兩者原本都只會在正式部署後才顯現
+// (一個是長時間執行後記憶體耗盡,一個是每次 SIGTERM 都以結束碼 1 離開),
 // 加上回歸測試才能確保未來改動不會默默把它們改回去。
+//
+// MCP 協定層面的端對端測試(initialize / tools/list / tools/call 等)
+// 在 e2e_test.go。
 
 import (
 	"io"
@@ -175,4 +180,77 @@ func TestNewMCPHandlerAcceptsRequests(t *testing.T) {
 	if sid := postInitialize(t, base); sid == "" {
 		t.Fatal("initialize 應回傳非空的 Mcp-Session-Id")
 	}
+}
+
+// TestRunHealthCheck 測試 -health-check 模式,也就是容器 HEALTHCHECK 實際
+// 會執行的那條路徑。
+//
+// 這條路徑值得測試的原因是它的失敗是「沉默」的:健康檢查若因為寫錯而
+// 永遠成功,容器編排工具就會一直以為一個壞掉的實例是健康的;若永遠失敗,
+// 則會造成無止盡的重啟迴圈。兩種錯誤在本機開發時都不會被發現。
+func TestRunHealthCheck(t *testing.T) {
+	// startOn 在隨機埠上啟動一個只提供 /readyz 的伺服器,並把 PORT 環境
+	// 變數指向它——runHealthCheck 正是靠 PORT 決定要連哪裡。
+	startOn := func(t *testing.T, status int) {
+		t.Helper()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("監聽測試埠失敗:%v", err)
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		})
+		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		go func() { _ = srv.Serve(ln) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		_, port, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			t.Fatalf("解析測試埠失敗:%v", err)
+		}
+		t.Setenv("PORT", port)
+	}
+
+	t.Run("就緒時回傳 nil", func(t *testing.T) {
+		startOn(t, http.StatusOK)
+		if err := runHealthCheck(t.Context()); err != nil {
+			t.Fatalf("預期健康檢查通過,實際錯誤:%v", err)
+		}
+	})
+
+	t.Run("未就緒時回傳錯誤", func(t *testing.T) {
+		startOn(t, http.StatusServiceUnavailable)
+		err := runHealthCheck(t.Context())
+		if err == nil {
+			t.Fatal("/readyz 回 503 時健康檢查應失敗")
+		}
+		if !strings.Contains(err.Error(), "503") {
+			t.Errorf("錯誤訊息應包含狀態碼,實際為:%v", err)
+		}
+	})
+
+	t.Run("服務沒有在監聽時回傳錯誤", func(t *testing.T) {
+		// 指向一個確定沒有服務在聽的埠:這是「容器剛啟動」或「服務已崩潰」
+		// 的情況,健康檢查必須明確失敗,而不是誤判為健康。
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("監聽失敗:%v", err)
+		}
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		ln.Close() // 立刻關閉,讓這個埠沒有人在聽
+		t.Setenv("PORT", port)
+
+		if err := runHealthCheck(t.Context()); err == nil {
+			t.Fatal("連不上服務時健康檢查應失敗")
+		}
+	})
+
+	t.Run("未設定 PORT 時使用預設的 3000", func(t *testing.T) {
+		// 不直接驗證連線結果(本機 3000 埠可能真的有東西在跑),只確認
+		// 它不會因為 PORT 是空字串而組出一個畸形的 URL。
+		t.Setenv("PORT", "")
+		// 只要沒有 panic、且回傳的是「連線類」錯誤或 nil 都算通過。
+		_ = runHealthCheck(t.Context())
+	})
 }

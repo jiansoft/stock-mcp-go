@@ -156,11 +156,23 @@ func parseMonthArg(raw, field string) (string, error) {
 	return raw, nil
 }
 
-// validateDividendYears 驗證股利年度區間:合法範圍是 1990 到「目前年度
-// 加一」(股利政策常於年初公布下一年度配息,允許查到明年),且 from 不可
-// 晚於 to。0 值代表未提供,不檢查。
-func validateDividendYears(fromYear, toYear int) error {
-	maxYear := time.Now().Year() + 1
+// maxDividendYear 回傳目前允許查詢的最大股利年度:今年加一。
+//
+// 股利政策常於年初就公布下一年度的配息,因此允許查到明年;這個上限是
+// 動態值,JSON Schema 無法表達,只能在程式碼裡檢查。
+func maxDividendYear() int {
+	return time.Now().Year() + 1
+}
+
+// validateDividendYears 驗證股利年度區間:合法範圍是 1990 到 maxYear,
+// 且 from 不可晚於 to。0 值代表未提供,不檢查。
+//
+// maxYear 由呼叫端傳入(而不是在函式內部呼叫 time.Now()),讓這個函式
+// 成為一個沒有任何外部相依的純函式:給定相同輸入永遠得到相同結果。
+// 這對驗證邏輯特別有價值——測試可以精確指定邊界年度、直接驗證「剛好
+// 等於上限」與「超過上限一年」這兩個關鍵案例,而不需要依賴測試執行當下
+// 是西元幾年(那種測試會在跨年時莫名其妙地開始失敗或失去意義)。
+func validateDividendYears(fromYear, toYear, maxYear int) error {
 	for _, year := range []int{fromYear, toYear} {
 		if year != 0 && (year < 1990 || year > maxYear) {
 			return fmt.Errorf("參數年度必須介於 1990 到 %d 之間,收到了 %d", maxYear, year)
@@ -325,7 +337,7 @@ func (ts *financialToolset) dividendHistory(ctx context.Context, _ *mcp.CallTool
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := validateDividendYears(in.FromYear, in.ToYear); err != nil {
+	if err := validateDividendYears(in.FromYear, in.ToYear, maxDividendYear()); err != nil {
 		return nil, nil, err
 	}
 	limit, err := rangedLimit(in.Limit, 20, 1, 80)

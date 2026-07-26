@@ -10,8 +10,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,15 +31,32 @@ import (
 	"stockmcp/web"
 )
 
+// healthCheckMode 讓這支執行檔除了「啟動伺服器」之外,還能當作一個一次性
+// 的健康檢查工具:以 -health-check 執行時,它會去打自己的 /readyz,依結果
+// 決定結束碼(0 = 就緒,1 = 未就緒),然後立刻結束。
+//
+// ## 為什麼要用這種方式,而不是在 Dockerfile 裡寫 curl?
+//
+// 本專案的執行階段 image 是 gcr.io/distroless/static——裡面沒有 shell、
+// 沒有 curl、也沒有 wget,這正是它安全性的來源(攻擊者即使取得執行權限
+// 也沒有工具可用)。因此 Docker 的 HEALTHCHECK 無法用常見的
+// `CMD curl -f http://localhost:3000/readyz` 寫法。
+//
+// 讓應用程式自己提供健康檢查模式是 distroless 的標準解法:HEALTHCHECK 用
+// exec 形式直接呼叫同一個執行檔,不需要引入任何額外的工具,也不會為了
+// 健康檢查而破壞 distroless 的最小攻擊面。
+var healthCheckMode = flag.Bool("health-check", false,
+	"以健康檢查模式執行:呼叫本機的 /readyz 後立刻結束(0=就緒,1=未就緒),供容器 HEALTHCHECK 使用")
+
 // main 是 Go 程式真正的執行進入點:每個 `package main` 都必須有且只能
 // 有一個 main 函式,程式啟動時會自動呼叫它,不需要(也不能)自己
 // 呼叫它。
 //
-// main 本身刻意寫得很薄:只做「載入 .env」跟「呼叫 run,把結果錯誤印
-// 出來並決定結束碼」這兩件事,真正的啟動邏輯都放在 run 函式裡。這樣
-// 拆分的好處是 run 回傳一般的 error(而不是自己呼叫 os.Exit),測試或
-// 未來想重複利用「啟動流程」時,可以直接呼叫 run 並檢查它的回傳值,
-// 不會因為呼叫到 os.Exit 而把整個測試程序也一起關掉。
+// main 本身刻意寫得很薄:只做「解析旗標、載入 .env」跟「呼叫 run,把
+// 結果錯誤印出來並決定結束碼」這兩件事,真正的啟動邏輯都放在 run 函式
+// 裡。這樣拆分的好處是 run 回傳一般的 error(而不是自己呼叫 os.Exit),
+// 測試或未來想重複利用「啟動流程」時,可以直接呼叫 run 並檢查它的回傳
+// 值,不會因為呼叫到 os.Exit 而把整個測試程序也一起關掉。
 func main() {
 	// godotenv.Load() 會嘗試讀取當前目錄的 .env 檔案,把裡面定義的
 	// KEY=VALUE 逐行載入成環境變數(只在該環境變數「尚未存在」時才會
@@ -45,7 +65,16 @@ func main() {
 	// 注入,不依賴 .env 檔案。呼叫端刻意忽略回傳的 error(用 _ 接住)
 	// ——.env 檔案不存在是完全正常的情況(例如正式環境根本不會有這個
 	// 檔案),不應該因為找不到 .env 就讓程式啟動失敗。
+	flag.Parse()
 	_ = godotenv.Load()
+
+	if *healthCheckMode {
+		if err := runHealthCheck(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, "健康檢查失敗:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if err := run(context.Background()); err != nil {
 		// 這裡刻意用 fmt.Fprintln 寫到 os.Stderr,而不是用 slog——此時
@@ -62,11 +91,6 @@ func main() {
 	}
 }
 
-// run 執行完整的啟動流程:載入設定 → 建立資料庫連線池 → 註冊 MCP
-// 工具 → 啟動 HTTP 伺服器 → 等待關閉訊號並優雅關閉。
-//
-// 回傳 error 而非直接讓程式結束,方便未來若有需要,可以在測試或其他
-// 呼叫情境中取得明確的錯誤結果(而不是整個測試程序被 os.Exit 中斷)。
 // mcpSessionTimeout 是 MCP session 的閒置逾時:超過這段時間沒有收到該
 // session 任何 HTTP 請求,go-sdk 就會自動關閉它並釋放對應資源。
 //
@@ -80,6 +104,11 @@ const mcpSessionTimeout = 5 * time.Minute
 // shutdownTimeout 是收到停止訊號後,等待進行中請求自然結束的最長時間。
 const shutdownTimeout = 10 * time.Second
 
+// run 執行完整的啟動流程:載入設定 → 建立資料來源 → 註冊 MCP 工具 →
+// 啟動 HTTP 伺服器 → 等待關閉訊號並優雅關閉。
+//
+// 回傳 error 而非直接讓程式結束,方便未來若有需要,可以在測試或其他
+// 呼叫情境中取得明確的錯誤結果(而不是整個測試程序被 os.Exit 中斷)。
 func run(ctx context.Context) error {
 	// signal.NotifyContext 回傳一個「衍生自 ctx」的新 context,以及一個
 	// stop 函式。這個新 context 會在收到作業系統送來的 os.Interrupt
@@ -211,6 +240,49 @@ func run(ctx context.Context) error {
 		logger.Info("收到停止訊號,開始優雅關閉")
 		return shutdownServer(logger, srv, shutdownTimeout)
 	}
+}
+
+// healthCheckTimeout 是健康檢查模式願意等待回應的最長時間。容器的
+// HEALTHCHECK 本身也有 timeout,這裡設得比它短,讓失敗原因是「服務沒有
+// 及時回應」而不是「檢查工具被 Docker 殺掉」,前者的錯誤訊息有用得多。
+const healthCheckTimeout = 3 * time.Second
+
+// runHealthCheck 呼叫本機的 /readyz,就緒時回傳 nil。
+//
+// 刻意不呼叫 config.Load():健康檢查只需要知道要連哪個 port,而 Load 會
+// 驗證一整套環境變數(DATABASE_URL、MCP_API_KEY 等)。若因為某個與網路
+// 無關的設定問題導致 Load 失敗,健康檢查會回報一個與「服務到底有沒有在
+// 服務」毫不相干的錯誤,反而誤導排查方向。
+//
+// 位址固定用 127.0.0.1 而不是 HOST 環境變數:容器內 HOST 通常設成
+// 0.0.0.0(代表「監聽所有介面」),那是一個合法的監聽位址,卻不是一個可以
+// 連線過去的目標位址。健康檢查是從容器內部連向自己,迴環位址永遠正確。
+func runHealthCheck(ctx context.Context) error {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "9005"
+	}
+	url := "http://" + net.JoinHostPort("127.0.0.1", port) + "/readyz"
+
+	ctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	// 讀完並關閉 body:這個行程馬上就要結束,實際影響有限,但保持與
+	// stock/apiclient.go 一致的習慣,不留下「用完不讀完就關」的壞範例。
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("/readyz 回應狀態 %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // newMCPHandler 把 *mcp.Server 包裝成標準的 http.Handler,讓它可以直接

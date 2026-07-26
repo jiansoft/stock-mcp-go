@@ -390,7 +390,9 @@ func (r *Repository) SearchStock(ctx context.Context, query string, limit int) (
 	// "%關鍵字%" 樣式字串。TrimSpace 去除前後空白,避免使用者不小心多打的
 	// 空格影響「完全符合」的判斷。
 	exact := strings.TrimSpace(query)
-	wildcard := "%" + exact + "%"
+	// exact 用於 = 比對,原樣使用;wildcard 用於 ILIKE 模糊比對,必須先
+	// 轉義使用者輸入裡的萬用字元(見 escapeLike)。
+	wildcard := "%" + escapeLike(exact) + "%"
 
 	rows, err := r.pool.Query(ctx, searchStockSQL, exact, wildcard, limit)
 	if err != nil {
@@ -428,6 +430,39 @@ func (r *Repository) SearchStock(ctx context.Context, query string, limit int) (
 		return nil, fmt.Errorf("讀取 stocks 查詢結果:%w", err)
 	}
 	return stocks, nil
+}
+
+// likeEscaper 轉義 SQL LIKE/ILIKE 樣式裡具有特殊意義的字元。
+//
+// 順序很重要:反斜線本身必須先被轉義,否則後面加上的那些反斜線會被
+// 這一步二次處理。strings.NewReplacer 保證「每個位置只會被替換一次、
+// 不會對替換結果再做替換」,因此這裡放在同一個 Replacer 裡是安全的,
+// 但仍把反斜線寫在第一個位置以符合閱讀直覺。
+//
+// 這個 Replacer 是不可變的,建立一次即可重複使用(strings.Replacer 明確
+// 保證可安全地被多個 goroutine 同時使用),不需要每次查詢都重建。
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLike 讓使用者輸入的關鍵字在 ILIKE 樣式中被當成「字面文字」。
+//
+// ## 這不是在防 SQL Injection
+//
+// 必須說清楚:SQL Injection 在本專案早已被參數化查詢從根本上擋住了——
+// 關鍵字是透過 $2 傳給 pgx 的獨立參數,無論內容是什麼都只會被當成資料。
+// 這裡處理的是另一個層次的問題:**萬用字元語意外洩**。
+//
+// LIKE/ILIKE 樣式裡,% 代表「任意長度的任意字元」、_ 代表「任意一個
+// 字元」。若不轉義,使用者送出關鍵字 "%" 時,樣式會變成 "%%%",意思是
+// 「比對所有資料」——一次「搜尋」就變成了全表掃描。使用者輸入 "_" 也
+// 會得到與預期完全不同的結果。
+//
+// 轉義之後,搜尋 "%" 就真的是在找名稱裡含有百分比符號的股票,語意與
+// 使用者的直覺一致,也避免了讓人用單一字元觸發昂貴查詢的可能。
+//
+// PostgreSQL 的 LIKE 預設就以反斜線作為跳脫字元,因此 SQL 端不需要額外
+// 寫 ESCAPE 子句。
+func escapeLike(s string) string {
+	return likeEscaper.Replace(s)
 }
 
 // LatestDailyQuote 查詢指定股票代號的最新日報價。
