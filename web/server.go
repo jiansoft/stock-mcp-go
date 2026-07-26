@@ -1,8 +1,13 @@
 package web
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"stockmcp/config"
@@ -12,8 +17,10 @@ import (
 // http.Server(NewServer),並提供請求層級的 log middleware。
 
 // NewHandler 組出完整的 HTTP 路由:
-//   - GET /healthz:健康檢查,不需要 API key,任何人都能呼叫,用來讓
-//     監控系統或負載平衡器確認服務是否存活。
+//   - GET /healthz(liveness,存活檢查):只要 HTTP 伺服器還能回應就回
+//     200,不碰任何外部相依。不需要 API key。
+//   - GET /readyz(readiness,就緒檢查):額外確認資料來源(Data API 或
+//     資料庫)目前真的可用,不可用時回 503。不需要 API key。
 //   - {MCP_PATH}(對應 config.Config.MCPPath,預設 "/mcp";依 MCP
 //     Streamable HTTP 規格,同一個路徑要處理 POST/GET/DELETE 三種
 //     方法):依序套用「API key 驗證 → rate limit → 實際的 MCP
@@ -26,7 +33,9 @@ import (
 // StreamableHTTPHandler 還是其他什麼東西——這正是「transport 與工具
 // 邏輯解耦」的具體實踐:web 套件只負責「HTTP 層該做的事」(驗證、限流、
 // log),不管背後接的是什麼協定。
-func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler) http.Handler {
+// readiness 由呼叫端注入,用來檢查資料來源是否可用;傳 nil 代表不檢查,
+// 此時 /readyz 的行為與 /healthz 相同。
+func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, readiness func(context.Context) error) http.Handler {
 	// http.NewServeMux() 是 Go 標準函式庫內建的 HTTP 路由器(從 Go 1.22
 	// 起原生支援依 HTTP 方法(GET/POST/...)搭配路徑做路由,不需要再
 	// 額外引入 gorilla/mux 之類的第三方套件)。
@@ -36,6 +45,7 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	mux.Handle("GET /readyz", newReadyHandler(readiness))
 
 	// 這裡示範了 middleware 的「洋蔥式包裝」寫法:從裡到外依序讀,
 	// mcpHandler 被 rateLimit 包住,rateLimit 又被 requireAPIKey 包住。
@@ -44,10 +54,169 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler
 	// rateLimit(超過額度就在這裡被攔下),兩者都通過才會真正呼叫
 	// mcpHandler。
 	limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
-	protected := requireAPIKey(cfg.APIKey, rateLimit(limiter, cfg.TrustProxy, mcpHandler))
+	protected := requireAPIKey(cfg.APIKey,
+		rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops,
+			limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))))
 	mux.Handle(cfg.MCPPath, protected)
 
 	return withRequestLog(logger, mux)
+}
+
+const (
+	// readyCheckTimeout 是單次就緒檢查允許花費的最長時間。超過就視為
+	// 不就緒——一個要花五秒才回應的後端,對使用者來說跟掛掉沒有兩樣。
+	readyCheckTimeout = 3 * time.Second
+	// readyCacheTTL 是就緒檢查結果的快取時間。
+	//
+	// 負載平衡器與 k8s 通常每 5–10 秒探測一次,而且可能有多個探測來源;
+	// 若每次探測都真的去打一次後端,就緒檢查本身就變成了額外負載,甚至
+	// 可能在後端已經吃緊時補上最後一根稻草。快取 2 秒能把探測頻率壓到
+	// 上限每秒一次,同時仍能在數秒內反映真實狀態變化。
+	readyCacheTTL = 2 * time.Second
+)
+
+// readyHandler 是 /readyz 的處理器,帶有一層短期結果快取。
+type readyHandler struct {
+	check func(context.Context) error
+
+	// mu 保護 checkedAt 與 lastErr:多個探測請求會由不同 goroutine 並行
+	// 進入,沒有鎖保護會造成資料競爭。
+	mu        sync.Mutex
+	checkedAt time.Time
+	lastErr   error
+	now       func() time.Time
+}
+
+func newReadyHandler(check func(context.Context) error) *readyHandler {
+	return &readyHandler{check: check, now: time.Now}
+}
+
+func (h *readyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	err := h.probe(r.Context())
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err != nil {
+		// 503 Service Unavailable 是「暫時無法服務」的標準語意,負載平衡器
+		// 看到它會把這個實例移出輪替,等它恢復後再放回來。
+		w.WriteHeader(http.StatusServiceUnavailable)
+		// 回應內容刻意只說「資料來源目前不可用」,不含底層錯誤訊息:
+		// /readyz 不需要認證,任何人都能呼叫,而底層錯誤可能包含內網
+		// 位址、資料庫主機名稱或認證狀態等不該對外洩漏的資訊。真正的
+		// 錯誤細節只會出現在伺服器端的 log 裡。
+		_, _ = w.Write([]byte(`{"status":"unavailable","reason":"資料來源目前不可用"}`))
+		return
+	}
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// probe 回傳目前的就緒狀態,必要時才真的執行一次檢查。
+func (h *readyHandler) probe(ctx context.Context) error {
+	// 沒有注入檢查函式時(例如測試,或未來某種不需要外部相依的部署),
+	// 就緒與存活等價,一律視為就緒。
+	if h.check == nil {
+		return nil
+	}
+
+	h.mu.Lock()
+	if !h.checkedAt.IsZero() && h.now().Sub(h.checkedAt) < readyCacheTTL {
+		err := h.lastErr
+		h.mu.Unlock()
+		return err
+	}
+	h.mu.Unlock()
+
+	// 刻意在「沒有持有鎖」的狀態下執行真正的檢查:這是一次網路 I/O,
+	// 持鎖期間做 I/O 會讓所有並行的探測請求全部卡住等同一把鎖,而這正是
+	// 後端變慢時最不該發生的事。代價是極端情況下可能有幾個請求同時發出
+	// 檢查(而不是嚴格只有一個),對一個每 2 秒最多跑一次的檢查來說,
+	// 這個取捨完全划算。
+	checkCtx, cancel := context.WithTimeout(ctx, readyCheckTimeout)
+	defer cancel()
+	err := h.check(checkCtx)
+
+	h.mu.Lock()
+	h.checkedAt, h.lastErr = h.now(), err
+	h.mu.Unlock()
+	return err
+}
+
+// maxRequestBody 是單一 MCP 請求 body 的大小上限。
+//
+// ## 為什麼一定要有這個限制?
+//
+// MCP go-sdk 的 streamable handler 在內部是用 io.ReadAll(req.Body) 一次
+// 把整個請求 body 讀進記憶體才開始解析,它本身沒有設定任何上限;
+// http.Server 的 ReadTimeout 只限制「讀多久」而不限制「讀多少」,在區域
+// 網路裡 30 秒足以送進好幾 GB 的資料。若不在這一層先攔下來,一個持有
+// 合法金鑰的用戶端(或一支寫壞的程式)只要送出一個超大請求,就能把
+// 伺服器的記憶體吃光,導致整個服務不可用。
+//
+// 1 MiB 是刻意選得非常寬鬆的數字:實際的 MCP JSON-RPC 訊息(即使是
+// 參數最多的 screen_stocks 呼叫)都只有數百位元組到數 KB,離這個上限
+// 還有三個數量級的餘裕,不會誤擋任何合法請求。
+const maxRequestBody = 1 << 20
+
+// limitBody 是限制請求 body 大小的 middleware,分兩道防線:
+//
+//  1. 用戶端有聲明 Content-Length 且已經超過上限時,直接回 413,連一個
+//     位元組都不讀。這是最常見的情況,而且能給出語意最精確的狀態碼。
+//  2. 沒有聲明長度(例如 chunked 傳輸)或聲明了假的長度時,改用
+//     http.MaxBytesReader 在實際讀取的過程中攔截:一旦讀取量超過上限,
+//     後續的 Read 會回傳 *http.MaxBytesError,底層 handler 的讀取行為
+//     隨即失敗,請求被拒絕。
+//
+// 需要兩道是因為 Content-Length 是用戶端自行聲明的、完全不可信,而
+// MaxBytesReader 雖然可靠卻只能在「已經開始讀」之後才發揮作用、且最終
+// 的狀態碼取決於內層 handler 怎麼處理讀取錯誤(go-sdk 會回 400)。兩者
+// 相加才既有精確的狀態碼、又有不可繞過的實際上限。
+//
+// 這一層刻意放在 requireAPIKey 與 rateLimit 之後:未通過驗證的請求根本
+// 不會走到這裡,連 body 的第一個位元組都不會被讀取。
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxRequestBody {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			// 錯誤訊息附上上限值,讓呼叫端知道該把請求縮到多小;這個數字
+			// 是程式常數,不是敏感資訊,可以安全回傳。
+			fmt.Fprintf(w, `{"error":"請求內容過大,單一請求上限為 %d 位元組"}`, maxRequestBody)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// crossOrigin 套用 net/http 內建的跨來源(cross-origin)保護。
+//
+// ## 這一層在防什麼?
+//
+// MCP 規格的安全最佳實務要求 server 驗證請求的 Origin header,避免惡意
+// 網頁在使用者瀏覽器裡對本機或內網的 MCP server 發出請求(DNS rebinding
+// 與 CSRF 的組合攻擊)。http.CrossOriginProtection(Go 1.25 新增)實作
+// 的規則是:
+//   - 完全沒有 Origin header 的請求一律放行——這是所有非瀏覽器用戶端
+//     (Claude Desktop、Claude Code、curl 等)的情況,不受任何影響。
+//   - 有 Origin header 時,必須與請求的 Host 相符,或出現在信任清單裡,
+//     否則回 403。
+//
+// 本服務在最外層已經要求 Authorization: Bearer,而瀏覽器不會自動附帶
+// 這個 header,因此實際上很難構成可利用的 CSRF;這一層屬於縱深防禦,
+// 讓服務符合 MCP 安全最佳實務,而不是修補一個已知可被利用的漏洞。
+//
+// trustedOrigins 來自 config.Config.TrustedOrigins(環境變數
+// MCP_TRUSTED_ORIGINS),供「部署在會改寫 Host 的反向代理後方」或「需要
+// 讓特定網頁前端跨網域呼叫」的情境使用。
+func crossOrigin(trustedOrigins []string, next http.Handler) http.Handler {
+	protection := http.NewCrossOriginProtection()
+	for _, origin := range trustedOrigins {
+		// AddTrustedOrigin 只在 origin 格式不合法時回傳 error,而 config
+		// 套件在啟動時已經驗證過格式,這裡不可能失敗;即使真的失敗,也
+		// 只代表「少信任一個來源」(往安全的方向偏),不應該讓整個服務
+		// 起不來,因此明確忽略。
+		_ = protection.AddTrustedOrigin(origin)
+	}
+	return protection.Handler(next)
 }
 
 // NewServer 建立一個含逾時設定的 http.Server。
@@ -99,13 +268,54 @@ func withRequestLog(logger *slog.Logger, next http.Handler) http.Handler {
 		// handler 呼叫 WriteHeader 時傳入的數值。
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Info("http 請求",
+
+		// 健康/就緒探測降到 Debug 等級。負載平衡器或 k8s 通常每數秒就
+		// 探測一次,在 Info 等級記錄它們會產生每天數萬筆毫無資訊量的
+		// log,把真正需要被看見的 MCP 請求淹沒。它們仍然被記錄,只是
+		// 要把 LOG_LEVEL 調到 debug 才會出現。
+		level := slog.LevelInfo
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			level = slog.LevelDebug
+		}
+		if !logger.Enabled(r.Context(), level) {
+			return
+		}
+
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"duration", time.Since(start).String(),
-		)
+		}
+		if sid := sessionLogID(r); sid != "" {
+			attrs = append(attrs, "mcp_session", sid)
+		}
+		logger.Log(r.Context(), level, "http 請求", attrs...)
 	})
+}
+
+// sessionLogID 把請求的 Mcp-Session-Id 轉成一個可安全寫進 log 的短識別碼;
+// 沒有這個 header 時回傳空字串。
+//
+// ## 為什麼記雜湊而不是直接記 session id?
+//
+// 記錄 session 識別碼的目的是「關聯」:能在一大堆 log 裡把同一個用戶端
+// 的一連串請求串起來,這是排查 MCP 問題時最有用的一個欄位。要達成這個
+// 目的,只需要一個「同一個 session 永遠對應同一個值」的識別碼,並不需要
+// 原始的 session id 本身。
+//
+// 而 session id 在 MCP Streamable HTTP 裡是有安全意義的:它是伺服器端
+// 用來辨識 session 的憑據。log 經常被送到集中式系統、被更多人看到、
+// 保存更久,把原始憑據寫進去等於擴大了它的暴露面。取 SHA-256 的前 6 個
+// byte(12 個十六進位字元)已經遠遠足夠避免實務上的碰撞,又完全無法
+// 反推回原值——這與 ratelimit.go 對 API key 的處理是同一套原則。
+func sessionLogID(r *http.Request) string {
+	sid := r.Header.Get("Mcp-Session-Id")
+	if sid == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(sid))
+	return hex.EncodeToString(sum[:6])
 }
 
 // statusRecorder 包裝(嵌入)標準的 http.ResponseWriter,攔截
@@ -158,4 +368,25 @@ func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Unwrap 回傳被包裝的原始 http.ResponseWriter。
+//
+// ## 為什麼需要這個方法?
+//
+// 上面的 Flush 方法只解決了「Flush」這一個能力的透傳問題。實務上
+// http.ResponseWriter 的實作還可能額外支援 SetReadDeadline、
+// SetWriteDeadline、Hijack 等能力,每一個都要像 Flush 那樣手寫一次
+// 轉發方法顯然不切實際。
+//
+// Go 1.20 起提供的 http.ResponseController 就是為了解決這個問題:它在
+// 找不到某個能力時,會呼叫包裝型別的 Unwrap() 方法拿到「裡面那一層」
+// 的 ResponseWriter 再找一次,如此一層一層往內剝,直到找到真正支援該
+// 能力的實作為止。只要包裝型別提供 Unwrap,就自動支援「所有現在與
+// 未來」的 ResponseWriter 能力,不需要為每個能力各寫一個轉發方法。
+//
+// go-sdk 的 SSE 串流實作正是用 http.NewResponseController(w) 來 flush
+// 資料的,提供 Unwrap 能讓這類機制在經過本型別包裝後仍完整運作。
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }

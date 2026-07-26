@@ -48,6 +48,22 @@ type RateLimiter struct {
 
 	lastSweep time.Time
 
+	// maxBuckets 是 buckets 這個 map 同時能容納的 key 數量上限。
+	//
+	// sweepLocked 只會在「距離上次清理已經超過一整個視窗」時才真的執行
+	// 清理,這代表在單一視窗之內,buckets 完全沒有成長上限。正常流量下
+	// 這不是問題(來源 IP 數量有限),但如果本服務部署在 TRUST_PROXY=true
+	// 的環境,攻擊者可以在每個請求裡塞入一個不同的偽造 X-Forwarded-For
+	// 值,讓每個請求都產生一個全新的 key——rate limiter 本身反而變成了
+	// 記憶體耗盡攻擊的入口。
+	//
+	// 加上這個上限後,達到上限時會先強制清理一次過期 bucket;若清理後
+	// 仍然滿載,新的 key 一律拒絕(回 429)。選擇「拒絕」而不是「放行」
+	// 是刻意的:map 已經滿載代表正在遭受異常流量,此時放行等於讓攻擊
+	// 繼續擴大;拒絕雖然可能誤傷少數正常使用者,但能保住服務本身不被
+	// 打垮,是這種情境下正確的取捨。
+	maxBuckets int
+
 	// now 預設是 time.Now,但設計成「可替換的函式」而不是直接呼叫
 	// time.Now(),是為了讓測試可以注入一個固定或可控制前進的假時鐘
 	// (見 web_test.go),這樣測試「視窗過期後重新計數」這種依賴時間
@@ -63,14 +79,22 @@ type bucket struct {
 	count       int
 }
 
+// defaultMaxBuckets 是 buckets map 的預設容量上限。
+//
+// 10 萬個 key 對應約數 MB 的記憶體(每個 bucket 是一個小 struct 加上
+// map 本身的負擔),對任何正常的部署規模都綽綽有餘——即使是面向公網的
+// 服務,單一視窗內出現十萬個不同來源 IP 也已經是異常流量了。
+const defaultMaxBuckets = 100_000
+
 // NewRateLimiter 建立一個 rate limiter:每個 key 在 window 這段時間內
 // 最多允許 max 次請求。
 func NewRateLimiter(window time.Duration, max int) *RateLimiter {
 	return &RateLimiter{
-		window:  window,
-		max:     max,
-		buckets: make(map[string]*bucket),
-		now:     time.Now,
+		window:     window,
+		max:        max,
+		buckets:    make(map[string]*bucket),
+		now:        time.Now,
+		maxBuckets: defaultMaxBuckets,
 	}
 }
 
@@ -88,11 +112,25 @@ func (l *RateLimiter) Allow(key string) bool {
 	l.sweepLocked(now)
 
 	b, ok := l.buckets[key]
-	if !ok || now.Sub(b.windowStart) >= l.window {
-		// 這個 key 從沒出現過,或者它上次的視窗已經過期——不論是哪一種
-		// 情況,都等同於「重新開始一個新視窗」,把計數歸 1(這次請求
-		// 本身)並記錄新視窗的起始時間。
+	if !ok {
+		// 這是一個從沒出現過的 key,需要在 map 裡新增一筆。先確認 map
+		// 沒有滿載:如果已達上限,強制清理一次過期 bucket(忽略「每個
+		// 視窗最多清一次」的節流限制,因為此刻的記憶體壓力比省下這次
+		// 掃描的成本重要得多),清完仍然滿載就拒絕這次請求。
+		if len(l.buckets) >= l.maxBuckets {
+			l.sweepAllLocked(now)
+			if len(l.buckets) >= l.maxBuckets {
+				return false
+			}
+		}
 		l.buckets[key] = &bucket{windowStart: now, count: 1}
+		return true
+	}
+	if now.Sub(b.windowStart) >= l.window {
+		// 這個 key 上次的視窗已經過期,等同於「重新開始一個新視窗」。
+		// 直接就地改寫既有的 bucket,而不是配置一個新的 struct 再覆蓋
+		// map——省下一次堆積配置,語意也完全相同。
+		b.windowStart, b.count = now, 1
 		return true
 	}
 	b.count++
@@ -119,6 +157,17 @@ func (l *RateLimiter) sweepLocked(now time.Time) {
 	if now.Sub(l.lastSweep) < l.window {
 		return
 	}
+	l.sweepAllLocked(now)
+}
+
+// sweepAllLocked 無條件掃過整個 buckets map,刪掉所有視窗已過期的項目,
+// 並更新 lastSweep。呼叫端必須已經持有 l.mu。
+//
+// 與 sweepLocked 的差別是這裡「不檢查距離上次清理多久」:它同時被兩種
+// 情境呼叫——sweepLocked 判斷時間到了之後轉呼叫,以及 Allow 發現 map
+// 已達 maxBuckets 上限時的緊急清理。後者必須能繞過時間節流,否則在一個
+// 視窗內被灌爆的 map 就沒有任何自救機會。
+func (l *RateLimiter) sweepAllLocked(now time.Time) {
 	l.lastSweep = now
 	for key, b := range l.buckets {
 		if now.Sub(b.windowStart) >= l.window {
@@ -136,10 +185,10 @@ func (l *RateLimiter) sweepLocked(now time.Time) {
 // (memory dump)或除錯工具意外外洩的風險);只取雜湊值的前 8 byte
 // (而非完整 32 byte)是因為這裡只是用來當作限流的分桶依據,不需要
 // 密碼學等級的完整雜湊長度,節省一點記憶體。
-func rateLimit(l *RateLimiter, trustProxy bool, next http.Handler) http.Handler {
+func rateLimit(l *RateLimiter, trustProxy bool, hops int, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256([]byte(bearerToken(r)))
-		key := hex.EncodeToString(sum[:8]) + "|" + clientIP(r, trustProxy)
+		key := hex.EncodeToString(sum[:8]) + "|" + clientIP(r, trustProxy, hops)
 		if !l.Allow(key) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -152,24 +201,37 @@ func rateLimit(l *RateLimiter, trustProxy bool, next http.Handler) http.Handler 
 
 // clientIP 取得這次請求的「來源 IP」,用來當作限流分桶的依據之一。
 //
-// 只有在 trustProxy 為 true 時,才會信任請求裡的 X-Forwarded-For
-// header(取其中第一個值,代表最原始的用戶端 IP——這個 header 可能是
-// 逗號分隔的一串 IP,因為請求可能經過好幾層代理伺服器轉發,每經過一層
-// 就會在後面附加一個 IP);trustProxy 為 false(或本服務沒有部署在反向
-// 代理後方)時,一律使用 TCP 連線本身的 RemoteAddr。
+// 只有在 trustProxy 為 true 時,才會參考請求裡的 X-Forwarded-For header;
+// trustProxy 為 false(本服務沒有部署在反向代理後方)時,一律使用 TCP
+// 連線本身的 RemoteAddr——那是作業系統網路層記錄下來的實際連線來源,
+// 無法被應用層的 HTTP 內容偽造。
 //
-// 這個區分很重要:如果服務沒有部署在受信任的反向代理後方,卻無條件
-// 信任 X-Forwarded-For,惡意用戶端可以在自己發出的 HTTP 請求裡直接
-// 塞入任意的 X-Forwarded-For 值(這個 header 本來就只是請求的一部分,
-// 任何人都能自由填寫內容),偽裝成別人的 IP 位址來繞過限流機制——
-// 每次偽造一個新的假 IP,就能重新獲得一整份限流額度。TCP 連線本身的
-// RemoteAddr 則是作業系統網路層記錄下來的實際連線來源,無法被應用層的
-// HTTP 內容偽造。
-func clientIP(r *http.Request, trustProxy bool) string {
+// ## 為什麼是「從右邊數回來」而不是取第一個值?
+//
+// X-Forwarded-For 是逗號分隔的清單,每經過一層代理就在最右邊附加一個
+// IP。以 README 記載的 Nginx 設定($proxy_add_x_forwarded_for)為例,
+// 送到本服務的值會是:
+//
+//	X-Forwarded-For: <用戶端自己送來的內容>, <連到 Nginx 的真實來源 IP>
+//
+// 也就是說,清單「左邊」的部分是用戶端自己填的,任何人都能任意偽造;
+// 只有「最右邊那幾個由受信任代理親手附加的值」才可信。
+//
+// 取第一個值是很常見但錯誤的寫法:那正好是攻擊者完全可控的位置。實測
+// 顯示在 TRUST_PROXY=true 加上述 Nginx 設定的環境下,只要每個請求都送出
+// 一個不同的偽造 X-Forwarded-For,rate limit 就會 100% 被繞過——同一個
+// 真實用戶端可以取得無限份額度,讓限流形同虛設。
+//
+// 正確作法是從右邊往左數,跳過 hops-1 個代理自己的位址,取索引
+// len(清單)-hops 的那一項。任何異常情況(清單長度不足、取出的值不是
+// 合法 IP)一律退回 RemoteAddr,寧可把同一個代理後的所有用戶算成同一個
+// 來源(過度限流),也不採信一個可能被偽造的值(完全不限流)。
+func clientIP(r *http.Request, trustProxy bool, hops int) string {
 	if trustProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			first, _, _ := strings.Cut(xff, ",")
-			return strings.TrimSpace(first)
+			if ip := forwardedFor(xff, hops); ip != "" {
+				return ip
+			}
 		}
 	}
 	// net.SplitHostPort 把 "1.2.3.4:5678" 這種形式拆成 host 與 port
@@ -182,4 +244,30 @@ func clientIP(r *http.Request, trustProxy bool) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// forwardedFor 從 X-Forwarded-For 的值裡取出「由最內層受信任代理親手
+// 寫入」的那一項,也就是本服務所能確認的真實用戶端 IP。
+//
+// hops 是前方受信任代理的層數:hops=1(單一 Nginx)取最右邊一項,
+// hops=2(Nginx 前面還有一層 CDN/LB)取右邊數來第二項,依此類推。
+//
+// 回傳空字串代表「無法安全判定」,呼叫端應退回使用 RemoteAddr。會發生
+// 這種情況的原因包含:清單項目數少於 hops(代表代理層數設定與實際部署
+// 不符,或某一層把 header 洗掉了)、或取出的值根本不是合法 IP。這兩種
+// 情況都不能猜,因為猜錯的方向就是「採信一個攻擊者可控的值」。
+func forwardedFor(xff string, hops int) string {
+	parts := strings.Split(xff, ",")
+	idx := len(parts) - hops
+	if idx < 0 || idx >= len(parts) {
+		return ""
+	}
+	candidate := strings.TrimSpace(parts[idx])
+	// 明確驗證是合法 IP:XFF 的內容終究來自 HTTP header,即使是受信任
+	// 代理寫入的位置也應該驗過再用,避免把畸形字串拿去當 map 的 key。
+	// net.ParseIP 同時接受 IPv4 與 IPv6 兩種表示法。
+	if net.ParseIP(candidate) == nil {
+		return ""
+	}
+	return candidate
 }

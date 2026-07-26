@@ -53,7 +53,11 @@ func main() {
 		// 等級,直接寫標準錯誤輸出是最保險、不依賴任何尚未初始化元件的
 		// 方式。err 訊息由 config 套件與其他底層邏輯保證不含敏感資訊
 		// (資料庫密碼、API key 等),可以放心直接印出。
-		fmt.Fprintln(os.Stderr, "啟動失敗:", err)
+		//
+		// 訊息用「結束於錯誤」而不是「啟動失敗」:run 回傳的 error 也
+		// 可能來自關閉階段(例如 Close 失敗),寫死成「啟動失敗」會在
+		// 排查問題時把人引導到完全錯誤的方向。
+		fmt.Fprintln(os.Stderr, "stock-mcp 結束於錯誤:", err)
 		os.Exit(1)
 	}
 }
@@ -63,6 +67,19 @@ func main() {
 //
 // 回傳 error 而非直接讓程式結束,方便未來若有需要,可以在測試或其他
 // 呼叫情境中取得明確的錯誤結果(而不是整個測試程序被 os.Exit 中斷)。
+// mcpSessionTimeout 是 MCP session 的閒置逾時:超過這段時間沒有收到該
+// session 任何 HTTP 請求,go-sdk 就會自動關閉它並釋放對應資源。
+//
+// 5 分鐘遠大於任何正常 MCP 用戶端的請求間隔(用戶端會維持一條 GET SSE
+// 長連線,只要連線還在就不算閒置),但又能保證異常斷線的 session 一定
+// 在可預期的時間內被回收。依 MCP Streamable HTTP 規格,server 本來就
+// 可以隨時終止 session,用戶端下一次請求會收到 404 並自動重新 initialize,
+// 這是規範定義的正常流程,不會造成資料遺失(本服務全部工具皆為唯讀)。
+const mcpSessionTimeout = 5 * time.Minute
+
+// shutdownTimeout 是收到停止訊號後,等待進行中請求自然結束的最長時間。
+const shutdownTimeout = 10 * time.Second
+
 func run(ctx context.Context) error {
 	// signal.NotifyContext 回傳一個「衍生自 ctx」的新 context,以及一個
 	// stop 函式。這個新 context 會在收到作業系統送來的 os.Interrupt
@@ -85,7 +102,15 @@ func run(ctx context.Context) error {
 	// 是套件內部沒有明確拿到 logger 參數的地方,呼叫 slog 套件層級的
 	// 函式時也會用到這個設定(不過本專案的慣例是盡量明確傳遞 logger,
 	// 只在極少數無法傳遞的地方依賴這個預設值)。
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	//
+	// log 一律寫到 os.Stderr 而不是 os.Stdout,這是 MCP server 的重要
+	// 慣例:MCP 的 stdio transport 規定 stdout 只能出現有效的 JSON-RPC
+	// 訊息,任何一行 log 混進去都會讓用戶端解析失敗、連線直接斷掉。
+	// 本服務目前只提供 Streamable HTTP transport,stdout 還沒有這層
+	// 約束,但 README 已經把「未來新增 stdio adapter」列為規劃方向;
+	// 現在就把 log 導向 stderr,屆時不需要再回頭找這個坑,也符合一般
+	// 「診斷輸出走 stderr、程式產出走 stdout」的 Unix 慣例。
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
 	var repo stock.Querier
@@ -121,22 +146,32 @@ func run(ctx context.Context) error {
 	// 的錯誤訊息當成一般文字格式化後,用結構化 log 的 Error 等級記錄
 	// 下來。
 	stock.AddTools(server, repo, func(format string, args ...any) {
-		logger.Error(fmt.Sprintf(format, args...))
+		// 先問 logger 這個等級是否會被輸出,再決定要不要做字串格式化:
+		// 如果 LOG_LEVEL 設得比 error 高,Sprintf 的成本就完全省下來了。
+		if !logger.Enabled(ctx, slog.LevelError) {
+			return
+		}
+		// 訊息本體用一句固定的文字,把會變動的內容放進 detail 屬性,而
+		// 不是把整段格式化結果直接當成訊息。結構化 log 的價值來自「同
+		// 一類事件永遠有相同的 msg」——這樣才能在 log 系統裡用
+		// msg="MCP 工具執行失敗" 一次撈出所有工具錯誤;若把股票代號、
+		// 錯誤內容都拼進 msg,每一筆的 msg 都不一樣,等於退化成純文字
+		// log,失去了當初選用 slog 的意義。
+		logger.Error("MCP 工具執行失敗", "detail", fmt.Sprintf(format, args...))
 	})
 
-	// mcp.NewStreamableHTTPHandler 是 go-sdk 提供的轉接器:把上面建好
-	// 的 *mcp.Server 包裝成一個標準的 http.Handler,讓它可以直接掛進
-	// web 套件的路由裡。第一個參數是一個「依照每次 HTTP 請求動態決定
-	// 要用哪個 *mcp.Server」的函式——這裡因為整個程式只有一個 server
-	// 實例,所以不論傳進來的 *http.Request 是什麼,一律回傳同一個
-	// server;這個彈性主要是給需要「依請求內容切換不同伺服器實例」的
-	// 進階情境使用,本專案用不到。
-	mcpHandler := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return server },
-		nil,
-	)
+	mcpHandler := newMCPHandler(server, mcpSessionTimeout)
 
-	srv := web.NewServer(cfg, web.NewHandler(cfg, logger, mcpHandler))
+	// 把資料來源的健康檢查能力交給 web 層當作 /readyz 的判斷依據。用型別
+	// 斷言偵測(而不是擴充 Querier 介面)的原則與 stock.AddTools 一致;
+	// stock/assertions.go 有編譯期斷言保證兩種資料來源都實作了這個介面,
+	// 所以這裡實務上一定會成功,判斷 ok 只是為了不對未來的實作做硬性要求。
+	var readiness func(context.Context) error
+	if hc, ok := repo.(stock.HealthChecker); ok {
+		readiness = hc.Health
+	}
+
+	srv := web.NewServer(cfg, web.NewHandler(cfg, logger, mcpHandler, readiness))
 
 	// 這裡用一個「容量為 1 的 channel」搭配一個獨立的 goroutine 啟動
 	// HTTP 伺服器,而不是直接在目前這個 goroutine 呼叫
@@ -174,15 +209,67 @@ func run(ctx context.Context) error {
 		// 立刻粗暴地砍斷所有連線,而是呼叫 srv.Shutdown,它會停止接受
 		// 新連線、但讓正在處理中的請求有機會正常完成。
 		logger.Info("收到停止訊號,開始優雅關閉")
-		// 這裡刻意用 context.Background()(全新的、沒有已被取消的
-		// context)搭配一個新的 10 秒逾時,而不是繼續沿用外層已經被
-		// 取消的 ctx——如果沿用已取消的 ctx,srv.Shutdown 內部一檢查
-		// context 狀態就會立刻判定「已經取消」,完全沒有機會等待
-		// 進行中的請求完成,graceful shutdown 就形同虛設了。
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		return shutdownServer(logger, srv, shutdownTimeout)
 	}
+}
+
+// newMCPHandler 把 *mcp.Server 包裝成標準的 http.Handler,讓它可以直接
+// 掛進 web 套件的路由裡。
+//
+// 第一個參數是一個「依照每次 HTTP 請求動態決定要用哪個 *mcp.Server」的
+// 函式——這裡因為整個程式只有一個 server 實例,所以不論傳進來的
+// *http.Request 是什麼,一律回傳同一個 server;這個彈性主要是給需要
+// 「依請求內容切換不同伺服器實例」的進階情境使用,本專案用不到。
+//
+// ## sessionTimeout 為什麼是必要的、而不是可有可無的調校選項
+//
+// 這個函式過去直接傳 nil 給 SDK(全部採用預設值),但
+// StreamableHTTPOptions.SessionTimeout 的零值,依 SDK 文件的定義是
+// 「閒置的 session 永遠不關閉」。每一次 initialize 都會在 handler 內部
+// 留下一個 session 與對應的背景 goroutine,而 SDK 並未提供任何從外部
+// 主動回收 session 的方法(它只有一個註解寫明「for tests」的未匯出
+// closeAll)。用戶端若沒有送出 DELETE 就離線——Claude Desktop、
+// Claude Code 在重啟或崩潰時正是如此——那個 session 就會永久滯留。
+//
+// 實測連續送出 200 次 initialize 會讓 goroutine 數量增加 200,且 GC 後
+// 完全不回收,長時間執行必然耗盡記憶體。因此這個參數刻意設計成「必填」
+// 而不是可選:呼叫端必須明確決定一個逾時值,無法再不小心退回到那個會
+// 洩漏資源的預設行為。
+func newMCPHandler(server *mcp.Server, sessionTimeout time.Duration) http.Handler {
+	return mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout},
+	)
+}
+
+// shutdownServer 執行優雅關閉:先給進行中的請求 timeout 這麼久的時間
+// 自然結束,逾時後強制切斷剩餘連線。回傳 nil 代表關閉流程正常完成。
+//
+// ## 為什麼「Shutdown 逾時」在本服務不算失敗?
+//
+// MCP Streamable HTTP 的 GET 連線是一條依協定設計就不會主動結束的 SSE
+// 長串流,在 net/http 眼中它永遠是一個「處理中的請求」。因此只要還有
+// 任何 MCP 用戶端連著,srv.Shutdown 就一定會等滿整個逾時才回傳
+// context.DeadlineExceeded——這是這個 transport 的正常關閉路徑,不是
+// 故障。
+//
+// 若把這個 error 原樣往上傳,main 會印出錯誤並以結束碼 1 離開,於是
+// 每一次正常的 SIGTERM 關閉都會被 Docker、systemd 之類的部署工具誤判
+// 成「服務異常結束」,進而觸發重啟迴圈或告警。正確做法是逾時後改用
+// Close 強制切斷剩下的長連線,並以正常結束碼離開。
+func shutdownServer(logger *slog.Logger, srv *http.Server, timeout time.Duration) error {
+	// 刻意用 context.Background()(全新的、沒有已被取消的 context)搭配
+	// 一個新的逾時,而不是沿用外層那個「已經因為收到停止訊號而被取消」
+	// 的 ctx——如果沿用已取消的 ctx,srv.Shutdown 內部一檢查 context
+	// 狀態就會立刻判定「已經取消」,完全沒有機會等待進行中的請求完成,
+	// graceful shutdown 就形同虛設了。
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("優雅關閉逾時,強制關閉剩餘連線", "err", err)
+		return srv.Close()
+	}
+	return nil
 }
 
 // newPool 建立 PostgreSQL 連線池:套用連線數上限、連線逾時,並以

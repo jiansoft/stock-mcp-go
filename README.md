@@ -59,7 +59,8 @@ API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY` �
 | `HOST` | `127.0.0.1` | 綁定位址(容器內請設 `0.0.0.0`) |
 | `PORT` | `3000` | 監聽 port |
 | `MCP_PATH` | `/mcp` | MCP endpoint 路徑 |
-| `TRUST_PROXY` | `false` | 僅在 `true` 時信任 `X-Forwarded-For` |
+| `TRUST_PROXY` | `false` | 僅在 `true` 時參考 `X-Forwarded-For` |
+| `TRUSTED_PROXY_HOPS` | `1` | 前方有幾層會自行附加 `X-Forwarded-For` 的受信任代理。**設錯會導致 rate limit 可被繞過**,詳見「反向代理」 |
 | `DATA_SOURCE` | `api` | `api`（正式）或 `db`（遷移期比對） |
 | `STOCK_RUST_API_BASE_URL` | api 模式必填 | 例如 `http://127.0.0.1:9002` |
 | `STOCK_RUST_API_KEY` | api 模式必填 | stock_rust 的 `DATA_API_KEY`，不可與 MCP key 共用 |
@@ -69,6 +70,7 @@ API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY` �
 | `DB_CONNECTION_TIMEOUT_MS` | `5000` | 連線逾時 |
 | `DB_STATEMENT_TIMEOUT_MS` | `5000` | 每條查詢的 statement timeout |
 | `MCP_API_KEY` | (必填) | Bearer API key |
+| `MCP_TRUSTED_ORIGINS` | (空) | 額外信任的跨來源 Origin,逗號分隔,例如 `https://a.example,https://b.example`。非瀏覽器用戶端不受影響,詳見「跨來源保護」 |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | rate limit 視窗 |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | 視窗內每個 API key + IP 的請求上限 |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
@@ -304,6 +306,54 @@ location /mcp {
 ```
 
 放在代理後方時將 `TRUST_PROXY=true`,rate limit 才會使用真實用戶端 IP。
+
+**`TRUSTED_PROXY_HOPS` 必須與實際的代理層數一致。** `X-Forwarded-For` 是逗號分隔的清單,每經過一層代理就在**最右邊**附加一個 IP;清單左邊的部分是用戶端自己送來的,任何人都能偽造。以上面的 Nginx 設定為例,本服務收到的值是:
+
+```
+X-Forwarded-For: <用戶端自己填的內容>, <連到 Nginx 的真實來源 IP>
+```
+
+服務因此從右邊往左數,跳過 `TRUSTED_PROXY_HOPS - 1` 項後取用。設定值對照:
+
+| 部署拓撲 | `TRUSTED_PROXY_HOPS` |
+| --- | --- |
+| 用戶端 → Nginx → 本服務 | `1`(預設) |
+| 用戶端 → Cloudflare/CDN → Nginx → 本服務 | `2` |
+
+設得**太大**會取到清單更左邊、由用戶端可控的位置,讓攻擊者每個請求偽造一個假 IP 就能取得無限的限流額度;設得**太小**則會把代理自己的位址當成用戶端,使所有人共用同一份額度。層數與清單長度不符、或取出的值不是合法 IP 時,服務會退回使用 TCP 連線的 `RemoteAddr`(寧可過度限流,也不採信可能被偽造的值)。
+
+### 健康檢查
+
+| 端點 | 用途 | 行為 |
+| --- | --- | --- |
+| `GET /healthz` | liveness(存活) | 只要 HTTP 伺服器能回應就回 200,不碰任何外部相依 |
+| `GET /readyz` | readiness(就緒) | 額外確認資料來源(Data API 或資料庫)可用;不可用時回 503 |
+
+兩者都不需要 API key。負載平衡器與 k8s 應使用 `/readyz` 決定是否把流量導向這個實例,`/healthz` 則用於判斷是否需要重啟容器。`/readyz` 的檢查結果會快取 2 秒,避免高頻探測本身變成後端的額外負載;回應內容不含任何底層錯誤細節(這個端點不需認證,而底層錯誤可能包含內網位址)。
+
+兩個端點的請求 log 為 `debug` 等級,不會在預設的 `info` 等級產生洗版。
+
+### 跨來源保護
+
+服務會擋下 `Origin` 與自身 `Host` 不符的請求(回 403),符合 MCP 安全最佳實務對 Origin 驗證的要求。
+
+- **非瀏覽器用戶端不受影響**:Claude Desktop、Claude Code、MCP Inspector、`curl` 等都不會送出 `Origin` header,沒有 `Origin` 的請求一律放行。
+- 若反向代理會改寫 `Host`(例如對外是 `mcp.example.com`、轉發時改成 `127.0.0.1:3000`),請在 Nginx 加上 `proxy_set_header Host $host;`,或把對外網域加入 `MCP_TRUSTED_ORIGINS`。
+- 需要讓特定網頁前端跨網域呼叫時,把該來源加入 `MCP_TRUSTED_ORIGINS`。
+
+## MCP 協定相容性
+
+| 項目 | 說明 |
+| --- | --- |
+| Transport | 僅 Streamable HTTP(單一 endpoint 處理 POST / GET / DELETE)。**不支援 stdio** |
+| 支援的 Protocol Version | `2025-11-25`(預設)、`2025-06-18`、`2025-03-26`、`2024-11-05` |
+| 版本協商 | 由 go-sdk 依用戶端送出的 `protocolVersion` 自動協商;送出不支援的版本時回退到最新版 |
+| Capabilities | 僅 Tools(無 Resources / Prompts / Sampling);全部工具皆標記 `readOnlyHint: true` |
+| Session | 由 SDK 管理 `Mcp-Session-Id`;**閒置逾時 5 分鐘**,逾時後用戶端下一次請求會收到 404 並自動重新 `initialize`(規範定義的正常流程) |
+| SSE resume | 未啟用 `EventStore`,不支援 `Last-Event-ID` 續傳。所有工具皆為唯讀查詢,重連後重查即可 |
+| 請求大小上限 | 單一請求 body 上限 1 MiB,超過回 413 |
+
+> 支援的版本清單取決於 `go.mod` 裡的 `github.com/modelcontextprotocol/go-sdk` 版本(目前 v1.6.1);升級 SDK 時請一併確認此表。
 
 ## 測試
 

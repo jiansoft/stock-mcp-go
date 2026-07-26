@@ -738,3 +738,46 @@ func TestAPIClientMarketDataErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestAPIClientErrorPathsDrainBody 驗證「關閉前先 drain response body」
+// 這個修改沒有改變任何既有語意:404 仍然是「查無資料」、非 2xx 仍然是
+// 一般錯誤,而且能連續正確處理多次。
+//
+// ## 為什麼這裡不斷言「連線被重用了幾條」
+//
+// 加上 drain 的原意是讓底層 TCP 連線能回到連線池重用(Go 的
+// http.Transport 只在 response body 被完整讀到 EOF 之後才保留連線)。
+// 但實測顯示 Go 的 transport 本身已經會自行處理掉大部分情況:對這個
+// 測試的 20 次錯誤請求,有 drain 是建立 1 條連線、沒有 drain 是 2 條——
+// 差異真實存在但非常小,遠不到值得用一個依賴 transport 內部行為的
+// 脆弱斷言去釘死的程度(那種測試會在 Go 版本更新時無預警壞掉)。
+//
+// 因此這裡只測「語意不變」這件確定且穩定的事;drain 本身保留,因為它
+// 在語意上是正確的做法(用完的 body 就該讀完再關),成本也趨近於零。
+func TestAPIClientErrorPathsDrainBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/profile") {
+			// 附帶內容的 404,模擬真實 API 會回錯誤說明的情況。
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"stock not found","detail":"no such symbol"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL, "secret", 5*time.Second)
+
+	// 連續多次,確認每一次的行為都一致——如果 drain 寫錯(例如不小心把
+	// 成功路徑的 body 也提前吃掉),重複執行最容易把問題暴露出來。
+	for i := range 5 {
+		profile, err := client.StockProfile(t.Context(), "2330")
+		if err != nil || profile != nil {
+			t.Fatalf("第 %d 次 StockProfile 404 應回傳 (nil, nil),實際為 %#v, %v", i+1, profile, err)
+		}
+		if _, err := client.MarketIndexHistory(t.Context(), IndexHistoryOptions{Limit: 10}); err == nil {
+			t.Fatalf("第 %d 次 5xx 應回傳錯誤", i+1)
+		}
+	}
+}

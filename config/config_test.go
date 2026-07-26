@@ -20,6 +20,7 @@ func setRequired(t *testing.T) {
 		"APP_ENV", "HOST", "PORT", "MCP_PATH", "TRUST_PROXY",
 		"DB_POOL_MAX", "DB_CONNECTION_TIMEOUT_MS", "DB_STATEMENT_TIMEOUT_MS",
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
+		"MCP_TRUSTED_ORIGINS",
 	} {
 		t.Setenv(name, "")
 	}
@@ -104,6 +105,66 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.RateLimitMax != 120 {
 			t.Errorf("RateLimitMax 應為 120,實際為 %d", cfg.RateLimitMax)
+		}
+	})
+}
+
+func TestTrustedOrigins(t *testing.T) {
+	t.Run("未設定時為空", func(t *testing.T) {
+		setRequired(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("預期成功,實際錯誤:%v", err)
+		}
+		if len(cfg.TrustedOrigins) != 0 {
+			t.Errorf("未設定時應為空,實際為 %v", cfg.TrustedOrigins)
+		}
+	})
+
+	t.Run("逗號分隔的多個 Origin 都被載入", func(t *testing.T) {
+		setRequired(t)
+		// 刻意在項目之間加上多餘的空白,確認會被正確去除。
+		t.Setenv("MCP_TRUSTED_ORIGINS", "https://a.example, https://b.example:8443")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("預期成功,實際錯誤:%v", err)
+		}
+		want := []string{"https://a.example", "https://b.example:8443"}
+		if len(cfg.TrustedOrigins) != len(want) {
+			t.Fatalf("預期 %d 個 Origin,實際為 %v", len(want), cfg.TrustedOrigins)
+		}
+		for i, w := range want {
+			if cfg.TrustedOrigins[i] != w {
+				t.Errorf("第 %d 個 Origin 應為 %q,實際為 %q", i+1, w, cfg.TrustedOrigins[i])
+			}
+		}
+	})
+
+	t.Run("格式錯誤的 Origin 拒絕啟動", func(t *testing.T) {
+		// 一個寫錯的 Origin 會靜默地讓跨來源保護永遠比對不到,等於安全
+		// 機制沒生效卻毫無徵兆;啟動時就攔下來才安全。
+		for _, bad := range []string{
+			"a.example",                  // 缺少 scheme
+			"https://",                   // 缺少 host
+			"https://a.example/path",     // 不可含路徑
+			"https://a.example/",         // 結尾斜線也算路徑
+			"https://a.example?x=1",      // 不可含查詢字串
+			"https://a.example#fragment", // 不可含 fragment
+		} {
+			t.Run(bad, func(t *testing.T) {
+				setRequired(t)
+				t.Setenv("MCP_TRUSTED_ORIGINS", bad)
+
+				_, err := Load()
+				if err == nil {
+					t.Fatalf("Origin %q 應被拒絕", bad)
+				}
+				if !strings.Contains(err.Error(), "MCP_TRUSTED_ORIGINS") {
+					t.Errorf("錯誤訊息應包含變數名稱,實際為:%v", err)
+				}
+			})
 		}
 	})
 }

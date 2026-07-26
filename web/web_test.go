@@ -39,7 +39,7 @@ func newTestHandler(cfg *config.Config) http.Handler {
 	fake := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	return NewHandler(cfg, logger, fake)
+	return NewHandler(cfg, logger, fake, nil)
 }
 
 func TestHealthz(t *testing.T) {
@@ -168,23 +168,115 @@ func TestRateLimitMiddleware(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
-	t.Run("預設不信任 X-Forwarded-For", func(t *testing.T) {
+	newReq := func(remoteAddr, xff string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.RemoteAddr = "203.0.113.7:1000"
-		req.Header.Set("X-Forwarded-For", "198.51.100.99")
+		req.RemoteAddr = remoteAddr
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		return req
+	}
 
-		if got := clientIP(req, false); got != "203.0.113.7" {
+	t.Run("預設不信任 X-Forwarded-For", func(t *testing.T) {
+		req := newReq("203.0.113.7:1000", "198.51.100.99")
+
+		if got := clientIP(req, false, 1); got != "203.0.113.7" {
 			t.Errorf("預期使用 RemoteAddr,實際為 %q", got)
 		}
 	})
 
-	t.Run("TRUST_PROXY 時取 X-Forwarded-For 第一個值", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.RemoteAddr = "127.0.0.1:1000"
-		req.Header.Set("X-Forwarded-For", "198.51.100.99, 10.0.0.1")
+	// 以下測試的 X-Forwarded-For 值都對應 README 記載的 Nginx 設定
+	// ($proxy_add_x_forwarded_for)所產生的格式:
+	// 「用戶端自己送來的內容, 連到 Nginx 的真實來源 IP」。
+	t.Run("單層代理時取最右邊(代理親手寫入)的值", func(t *testing.T) {
+		// 用戶端沒有送 XFF,Nginx 附加真實來源 IP。
+		req := newReq("10.0.0.1:1000", "198.51.100.99")
 
-		if got := clientIP(req, true); got != "198.51.100.99" {
-			t.Errorf("預期取第一個轉送 IP,實際為 %q", got)
+		if got := clientIP(req, true, 1); got != "198.51.100.99" {
+			t.Errorf("預期取代理寫入的 IP,實際為 %q", got)
 		}
 	})
+
+	t.Run("用戶端偽造的前綴必須被忽略", func(t *testing.T) {
+		// 這是這個函式最重要的一條測試:攻擊者送出
+		// X-Forwarded-For: 1.2.3.4,Nginx 附加真實 IP 後變成
+		// "1.2.3.4, 198.51.100.99"。取最左邊會拿到攻擊者完全可控的
+		// 1.2.3.4,讓 rate limit 可以被無限繞過。
+		req := newReq("10.0.0.1:1000", "1.2.3.4, 198.51.100.99")
+
+		if got := clientIP(req, true, 1); got != "198.51.100.99" {
+			t.Errorf("必須忽略用戶端偽造的前綴,預期 198.51.100.99,實際為 %q", got)
+		}
+	})
+
+	t.Run("兩層代理時取右邊數來第二項", func(t *testing.T) {
+		// CDN 與 Nginx 各附加一次:偽造值, 真實用戶端, CDN 的出口 IP。
+		req := newReq("10.0.0.1:1000", "1.2.3.4, 198.51.100.99, 10.0.0.2")
+
+		if got := clientIP(req, true, 2); got != "198.51.100.99" {
+			t.Errorf("兩層代理應取右邊第二項,實際為 %q", got)
+		}
+	})
+
+	t.Run("項目數少於代理層數時退回 RemoteAddr", func(t *testing.T) {
+		// 設定說有兩層代理,但清單只有一項——代表設定與實際部署不符,
+		// 此時不能猜,必須退回無法被偽造的 RemoteAddr。
+		req := newReq("203.0.113.7:1000", "198.51.100.99")
+
+		if got := clientIP(req, true, 2); got != "203.0.113.7" {
+			t.Errorf("層數不符時應退回 RemoteAddr,實際為 %q", got)
+		}
+	})
+
+	t.Run("取出的值不是合法 IP 時退回 RemoteAddr", func(t *testing.T) {
+		req := newReq("203.0.113.7:1000", "not-an-ip")
+
+		if got := clientIP(req, true, 1); got != "203.0.113.7" {
+			t.Errorf("非法 IP 應退回 RemoteAddr,實際為 %q", got)
+		}
+	})
+
+	t.Run("支援 IPv6", func(t *testing.T) {
+		req := newReq("[::1]:1000", "1.2.3.4, 2001:db8::1")
+
+		if got := clientIP(req, true, 1); got != "2001:db8::1" {
+			t.Errorf("預期取 IPv6 位址,實際為 %q", got)
+		}
+	})
+}
+
+// TestRateLimitNotBypassableViaXFF 是這個安全修正的端對端回歸測試:
+// 模擬「同一個真實用戶端,每個請求偽造一個不同的 X-Forwarded-For 前綴」,
+// 確認它無法藉此取得額外的限流額度。
+//
+// 修正前這個攻擊 100% 有效——實測在 RateLimitMax=2 的情況下連送 5 次
+// 全部回 200,rate limit 完全形同虛設。
+func TestRateLimitNotBypassableViaXFF(t *testing.T) {
+	cfg := testConfig()
+	cfg.TrustProxy = true
+	cfg.TrustedProxyHops = 1
+	cfg.RateLimitMax = 2
+	h := newTestHandler(cfg)
+
+	send := func(spoofed string) int {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer test-key")
+		req.RemoteAddr = "10.0.0.1:5000" // Nginx 自己的位址
+		// Nginx $proxy_add_x_forwarded_for 的產物:偽造值在前,真實 IP 在後。
+		req.Header.Set("X-Forwarded-For", spoofed+", 203.0.113.9")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	var blocked int
+	for _, fake := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4", "5.5.5.5"} {
+		if send(fake) == http.StatusTooManyRequests {
+			blocked++
+		}
+	}
+	// 上限 2、送 5 次,後 3 次都應該被擋下。
+	if blocked != 3 {
+		t.Fatalf("偽造 X-Forwarded-For 不應繞過 rate limit:預期擋下 3 次,實際擋下 %d 次", blocked)
+	}
 }

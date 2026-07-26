@@ -6,10 +6,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+)
+
+const (
+	// maxAPIResponseBytes 是單一 Data API 回應允許解析的上限(32 MiB)。
+	// 正常回應遠小於此值,這只是防止對端異常時無上限地吃記憶體。
+	maxAPIResponseBytes = 32 << 20
+	// maxDrainBytes 是關閉連線前願意丟棄讀取的 body 上限(64 KiB),用來
+	// 換取底層 TCP 連線可以被重複使用。
+	maxDrainBytes = 64 << 10
 )
 
 // APIClient 是 stock_rust Data API 的 HTTP 實作；不記錄 API key，並以明確 timeout 避免內網故障時卡住 MCP worker。
@@ -374,14 +384,33 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 	if err != nil {
 		return false, fmt.Errorf("呼叫資料 API:%w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// 關閉之前先把還沒讀完的 body 丟棄。Go 的 http.Transport 只有在
+		// response body 被「完整讀到 EOF」之後,才會把底層 TCP 連線放回
+		// 連線池重複使用;直接 Close 一個沒讀完的 body 會讓連線被丟棄,
+		// 下一次請求就得重新建立連線(TCP 三次握手 + 可能的 TLS 交握)。
+		//
+		// 這件事在 404 與非 2xx 這兩條路徑上特別重要:它們完全沒有讀取
+		// body 就直接返回,而查無資料(404)在正常使用中相當常見,若不
+		// drain,等於每一次查無資料都白白丟掉一條內網連線。
+		//
+		// 用 io.LimitReader 包一層當作保險:萬一對端回傳一個異常巨大的
+		// 錯誤頁面,drain 的成本也有上限,不會為了重用連線反而卡住。
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
+		resp.Body.Close()
+	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("資料 API 回傳非成功狀態:%d", resp.StatusCode)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(output); err != nil {
+	// 以 io.LimitReader 限制單一回應的最大解析量。Data API 是內網的受信任
+	// 服務,正常回應(即使是 365 筆日線或 200 筆行事曆事件)也只有數百 KB,
+	// 離上限還很遠;這一層防的是「對端故障或被取代成惡意服務」時,一份
+	// 無上限的回應把 MCP server 的記憶體吃光——不信任任何外部輸入的大小,
+	// 即使那個外部是自己人的服務。
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponseBytes)).Decode(output); err != nil {
 		return false, fmt.Errorf("解析資料 API 回應:%w", err)
 	}
 	return true, nil

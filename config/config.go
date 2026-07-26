@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -73,6 +74,27 @@ type Config struct {
 	// true。
 	TrustProxy bool
 
+	// TrustedProxyHops 是「本服務前方有幾層會自行附加 X-Forwarded-For 的
+	// 受信任代理」,只在 TrustProxy 為 true 時有意義,預設 1。
+	//
+	// ## 為什麼需要知道「幾層」?
+	//
+	// X-Forwarded-For 是一個逗號分隔的清單,每經過一層代理就在「最右邊」
+	// 附加一個 IP。以 README 記載的 Nginx 設定
+	// (proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for)為例,
+	// Nginx 產生的值是「用戶端自己送來的 XFF 內容, 連到 Nginx 的來源 IP」。
+	//
+	// 關鍵在於:清單左邊的部分完全是用戶端自己填的,任何人都能偽造;只有
+	// 「最右邊那幾個由受信任代理親手附加的值」才可信。因此要取得真正的
+	// 用戶端 IP,必須從右邊往左數,跳過 TrustedProxyHops - 1 個代理自己的
+	// 位址,取到第一個由受信任代理寫入的值——也就是索引
+	// len(清單) - TrustedProxyHops 的那一項。
+	//
+	// 取「最左邊那一項」是常見但錯誤的作法:那正好是攻擊者完全可控的值,
+	// 會讓依賴來源 IP 的 rate limit 被輕易繞過(每個請求偽造一個新 IP 就
+	// 有一份全新的額度)。
+	TrustedProxyHops int
+
 	// DatabaseURL、DBPoolMax、DBConnectTimeout、DBStatementTimeout:
 	// PostgreSQL 連線設定。DatabaseURL 內含帳號密碼,屬敏感資訊,任何
 	// 時候都不可寫入 log 或錯誤訊息。
@@ -89,6 +111,23 @@ type Config struct {
 
 	// APIKey 是 MCP 對外驗證用的金鑰,屬敏感資訊,不可寫入 log。
 	APIKey string
+
+	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
+	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
+	// "https://a.example,https://b.example"。
+	//
+	// ## 為什麼需要這個設定?
+	//
+	// web 套件會用 net/http 的 CrossOriginProtection 擋下「Origin 與本站
+	// 不符」的請求(見 web/server.go)。判斷「本站」的依據是請求的 Host
+	// header;如果本服務部署在會改寫 Host 的反向代理後方,或需要讓某個
+	// 已知的網頁前端跨網域呼叫,就必須在這裡明確列出那些可信任的來源,
+	// 否則合法請求會被誤擋成 403。
+	//
+	// 非瀏覽器的 MCP 用戶端(Claude Desktop、Claude Code 等)不會送出
+	// Origin header,完全不受這個機制影響,因此絕大多數部署都可以放著
+	// 不設定。
+	TrustedOrigins []string
 
 	// RateLimitWindow、RateLimitMax:每個 API key 與來源 IP 在
 	// RateLimitWindow 這段時間內,最多允許 RateLimitMax 次請求。
@@ -141,6 +180,15 @@ func Load() (*Config, error) {
 
 	cfg.TrustProxy = getEnv("TRUST_PROXY", "false") == "true"
 
+	// 上限 10 純粹是防呆:實務上不會有超過個位數層的反向代理,一個異常
+	// 大的值只可能是設定錯誤,而設定錯誤會讓 clientIP 取到清單更左邊、
+	// 也就是更可能被偽造的位置,應該在啟動時就擋下來。
+	proxyHops, err := intEnv("TRUSTED_PROXY_HOPS", 1, 1, 10)
+	if err != nil {
+		return nil, err
+	}
+	cfg.TrustedProxyHops = proxyHops
+
 	// 以下兩個是「必要」環境變數:跟前面幾個「有安全預設值」的變數不同,
 	// 這裡故意不呼叫 getEnv 提供預設值——資料庫連線字串與 API 金鑰沒有
 	// 「安全的預設值」可言,任何預設值(例如空字串)都會導致服務用一個
@@ -170,6 +218,12 @@ func Load() (*Config, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數:MCP_API_KEY")
 	}
+
+	origins, err := originsEnv("MCP_TRUSTED_ORIGINS")
+	if err != nil {
+		return nil, err
+	}
+	cfg.TrustedOrigins = origins
 
 	poolMax, err := intEnv("DB_POOL_MAX", 10, 1, 1000)
 	if err != nil {
@@ -241,6 +295,33 @@ func getEnv(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// originsEnv 讀取逗號分隔的 Origin 清單並驗證每一項的格式。
+//
+// 合法的 Origin 只有「scheme://host[:port]」這三個部分,不含路徑、查詢
+// 字串或結尾斜線(這是 HTML 規格對 Origin header 的定義)。這裡嚴格驗證
+// 而不是寬容地自動修正,是因為一個寫錯的 Origin 會靜默地讓跨來源保護
+// 失效(永遠比對不到),啟動時就明確拒絕比執行期才發現安全機制沒生效
+// 要好得多。錯誤訊息只提變數名稱與格式要求,不回顯使用者填入的值。
+func originsEnv(name string) ([]string, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return nil, nil
+	}
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		origin := strings.TrimSpace(part)
+		if origin == "" {
+			continue
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("環境變數 %s 的值格式不正確:每一項必須是 scheme://host[:port] 形式且不含路徑,以逗號分隔", name)
+		}
+		origins = append(origins, origin)
+	}
+	return origins, nil
 }
 
 // intEnv 讀取一個整數型環境變數,並驗證數值落在 [min, max] 範圍內;
