@@ -1,0 +1,48 @@
+# 第一階段：收進部署目錄裡的已編譯 binary，
+# 再依照 BuildKit 自動注入的 TARGETARCH / TARGETVARIANT 選出符合目前建置目標的那一個。
+#
+# - linux/arm64  → TARGETARCH=arm64（TARGETVARIANT 通常為空）
+# - linux/arm/v7 → TARGETARCH=arm，TARGETVARIANT=v7
+#
+# binary 由開發機的 build.ps1 交叉編譯（輸出到 bin\），部署時放到裝置的
+# 部署目錄「根層」（control.sh 的 move 流程），與本 Dockerfile 同一層。
+# COPY 用萬用字元：裝置上只需要放自己平台的那一個 binary 即可通過 COPY
+# （glob 至少要匹配到一個檔案），若缺少目前平台需要的那一個，
+# 下面 case 的 cp 會直接失敗、中止建置。
+# 搭配 .dockerignore 的白名單,只有 stock-mcp_linux_arm64 / armv7 這兩個
+# 確切檔名會進 build context,move 產生的備份檔（帶時間戳）不會被收進來。
+#
+# 不需要手動指定 --build-arg：BuildKit 會依目標平台自動帶入這兩個值。
+# 這個階段需要 shell 才能做條件判斷，所以不能用 `scratch`，
+# 但最終產物只有 `/stock-mcp` 這個檔案會被下一階段複製出去，不會影響最終 image 大小。
+FROM alpine:3 AS binary
+ARG TARGETARCH
+ARG TARGETVARIANT
+COPY stock-mcp_linux_* /src/
+RUN set -eu; \
+    case "${TARGETARCH}-${TARGETVARIANT}" in \
+      arm64-*) cp /src/stock-mcp_linux_arm64 /stock-mcp ;; \
+      arm-v7) cp /src/stock-mcp_linux_armv7 /stock-mcp ;; \
+      *) echo "不支援的平台: TARGETARCH=${TARGETARCH} TARGETVARIANT=${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    chmod 755 /stock-mcp
+
+# distroless static 已內建 CA 憑證與 tzdata（含 Asia/Taipei），不需再從 debian 複製。
+FROM gcr.io/distroless/static-debian13:nonroot
+
+# 秘密（MCP_API_KEY、DATABASE_URL 等）一律在啟動時以 --env-file 注入
+# （見 control.sh），不 COPY .env 進 image，避免秘密殘留在 image layer。
+# HOST 預設綁 0.0.0.0：容器內必須綁定所有介面才能被 port mapping 轉進來；
+# 對外存取範圍由 docker run 的 -p 參數（見 control.sh，對外 9004 → 容器內 3000）
+# 與反向代理控制。
+ENV TZ=Asia/Taipei \
+    HOST=0.0.0.0
+
+WORKDIR /app
+
+COPY --from=binary --chown=65532:65532 --chmod=755 /stock-mcp /app/stock-mcp
+
+EXPOSE 3000
+
+USER 65532:65532
+CMD ["/app/stock-mcp"]

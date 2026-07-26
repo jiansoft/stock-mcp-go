@@ -6,6 +6,9 @@
 # 編譯產物
 /stock-mcp
 /stock-mcp.exe
+/stock-mcp_linux_*
+/nohup.out
+/log_backup/
 /bin/
 /dist/
 

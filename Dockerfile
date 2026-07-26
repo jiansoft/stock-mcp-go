@@ -11,7 +11,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/stock-mcp .
 
 # ── 執行階段:distroless 非 root 使用者,不含 shell 與套件管理器 ──────────
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /out/stock-mcp /stock-mcp
 

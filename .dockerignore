@@ -1,0 +1,9 @@
+# 白名單模式:先排除全部,再放行 Dockerfile_live 需要的檔案。
+# 好處:
+#   - .env、log、備份檔(stock-mcp_linux_arm64.20260719-* 之類)都不會進
+#     build context,不會被意外 COPY 進 image,context 傳輸也最小。
+#   - 只放行「確切檔名」,Dockerfile 的 COPY stock-mcp_linux_* 萬用字元
+#     不會誤抓到 move 流程產生的時間戳備份檔。
+*
+!stock-mcp_linux_arm64
+!stock-mcp_linux_armv7
