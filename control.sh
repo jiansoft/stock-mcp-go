@@ -3,7 +3,31 @@
 # ==============================================================================
 # 配置變量
 # ==============================================================================
-export BINARY_NAME="stock-mcp_linux_arm64"
+
+# 依 `uname -m` 判斷目前硬體架構，並選用 build.ps1 產出的對應執行檔。
+detect_binary_name() {
+  local machine_arch
+  machine_arch="$(uname -m)"
+
+  case "$machine_arch" in
+    aarch64|arm64)
+      echo "stock-mcp_linux_arm64"
+      ;;
+    armv7l|armv7)
+      echo "stock-mcp_linux_armv7"
+      ;;
+    *)
+      echo ">>> 錯誤：不支援的硬體架構：$machine_arch" >&2
+      return 1
+      ;;
+  esac
+}
+
+if ! BINARY_NAME="$(detect_binary_name)"; then
+  exit 1
+fi
+export BINARY_NAME
+
 IMAGE_NAME="stock-mcp-image"
 CONTAINER_NAME="stock-mcp-container"
 LOG_BACKUP_DIR="./log_backup"
