@@ -672,6 +672,82 @@ func TestAPIClientMarketData(t *testing.T) {
 // 422、500、timeout 與無效 JSON。三個都是市場層級 endpoint,契約上沒有
 // 404 語意——404 代表部署異常,必須與其他非 2xx 一樣是一般 error,
 // 不得轉成 ErrStockNotFound 或 ErrMarketDataNotFound。
+// TestAPIClientMarketMovers 驗證排行 client 的兩種資料來源解析。
+//
+// 重點在於「client 不改寫伺服器回報的來源資訊」:source、is_realtime、
+// data_as_of 與兩種成交量單位都必須原樣帶出,任何一端擅自推斷都會讓
+// 前一交易日的收盤資料被誤當成盤中行情。
+func TestAPIClientMarketMovers(t *testing.T) {
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Query().Get("rank_by") {
+		case "top_volume":
+			// 盤中即時來源:有張數、昨收與採集站點,沒有股數/金額/筆數。
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-31","source":"realtime","is_realtime":true,"rank_by":"top_volume","market":"all","snapshot_updated_at":"2026-07-31T05:21:03+00:00","movers":[{"rank":1,"stock_symbol":"2330","name":"台積電","market_id":2,"industry_id":24,"price":1200,"change":30,"change_percent":2.56,"open":1180,"high":1205,"low":1175,"last_close":1170,"volume_lots":45000,"volume_shares":null,"trade_value":null,"transaction":null,"source_site":"HiStock"}]}`))
+		case "top_losers":
+			// 刻意回 movers:null,驗證 client 對外防禦性轉成 []。
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-30","source":"closing","is_realtime":false,"rank_by":"top_losers","market":"all","snapshot_updated_at":null,"movers":null}`))
+		default:
+			// 收盤來源:有股數/金額/筆數,沒有張數、昨收與採集站點。
+			_, _ = w.Write([]byte(`{"data_as_of":"2026-07-30","source":"closing","is_realtime":false,"rank_by":"top_gainers","market":"twse","snapshot_updated_at":null,"movers":[{"rank":1,"stock_symbol":"2317","name":"鴻海","market_id":2,"industry_id":24,"price":250,"change":22.5,"change_percent":9.87,"open":230,"high":250,"low":229,"last_close":null,"volume_lots":null,"volume_shares":123456789,"trade_value":30000000000,"transaction":98765,"source_site":null}]}`))
+		}
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	// --- 盤中即時來源 ---
+	realtime, err := client.MarketMovers(t.Context(), MoversOptions{RankBy: "top_volume", Market: "all", Limit: 20})
+	if err != nil || realtime == nil || len(realtime.Movers) != 1 {
+		t.Fatalf("MarketMovers() = %#v, %v", realtime, err)
+	}
+	if realtime.Source != "realtime" || !realtime.IsRealtime || realtime.DataAsOf != "2026-07-31" {
+		t.Fatalf("即時來源欄位必須原樣保留:%#v", realtime)
+	}
+	if realtime.SnapshotUpdatedAt == nil || *realtime.SnapshotUpdatedAt != "2026-07-31T05:21:03+00:00" {
+		t.Fatalf("即時來源必須帶快照時間:%#v", realtime.SnapshotUpdatedAt)
+	}
+	top := realtime.Movers[0]
+	if top.VolumeLots == nil || *top.VolumeLots != 45000 {
+		t.Fatalf("即時來源成交量應為張:%#v", top.VolumeLots)
+	}
+	if top.VolumeShares != nil || top.TradeValue != nil || top.Transaction != nil {
+		t.Fatalf("即時來源不得出現股數/金額/筆數:%#v", top)
+	}
+	if top.SourceSite == nil || *top.SourceSite != "HiStock" || top.LastClose == nil {
+		t.Fatalf("即時來源應帶採集站點與昨收:%#v", top)
+	}
+	if gotQuery != "limit=20&market=all&rank_by=top_volume" {
+		t.Fatalf("movers query string 錯誤:%q", gotQuery)
+	}
+
+	// --- 收盤來源 ---
+	closing, err := client.MarketMovers(t.Context(), MoversOptions{RankBy: "top_gainers", Market: "twse", Limit: 5})
+	if err != nil || closing == nil || len(closing.Movers) != 1 {
+		t.Fatalf("MarketMovers() = %#v, %v", closing, err)
+	}
+	if closing.Source != "closing" || closing.IsRealtime || closing.SnapshotUpdatedAt != nil {
+		t.Fatalf("收盤來源欄位錯誤:%#v", closing)
+	}
+	first := closing.Movers[0]
+	if first.VolumeShares == nil || *first.VolumeShares != 123456789 || first.VolumeLots != nil {
+		t.Fatalf("收盤來源成交量應為股且無張數:%#v", first)
+	}
+	if first.LastClose != nil || first.SourceSite != nil {
+		t.Fatalf("收盤來源不得出現昨收與採集站點:%#v", first)
+	}
+	if gotQuery != "limit=5&market=twse&rank_by=top_gainers" {
+		t.Fatalf("movers query string 錯誤:%q", gotQuery)
+	}
+
+	// --- 空結果:movers 為 null 時對外必須是空陣列而非 nil ---
+	empty, err := client.MarketMovers(t.Context(), MoversOptions{RankBy: "top_losers", Market: "all", Limit: 20})
+	if err != nil || empty.Movers == nil || len(empty.Movers) != 0 {
+		t.Fatalf("空排行語意錯誤:%#v, %v", empty, err)
+	}
+}
+
 func TestAPIClientMarketDataErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 以 limit 值挑選要模擬的故障情境,讓同一個 handler 服務三個 path。
@@ -706,6 +782,10 @@ func TestAPIClientMarketDataErrors(t *testing.T) {
 		},
 		"qfii-holding-ranking": func(c *APIClient, limit int) error {
 			_, err := c.QfiiHoldingRanking(t.Context(), QfiiRankingOptions{Market: "all", SortBy: "percentage", Limit: limit})
+			return err
+		},
+		"movers": func(c *APIClient, limit int) error {
+			_, err := c.MarketMovers(t.Context(), MoversOptions{RankBy: "top_gainers", Market: "all", Limit: limit})
 			return err
 		},
 	}

@@ -22,7 +22,7 @@
                     │         3. MCP StreamableHTTPHandler(SDK)   │
                     │              │                                │
                     │       stock/(領域層)                        │
-                    │         tools.go   ── 15 個 MCP tool(api 模式)│
+                    │         tools.go   ── 16 個 MCP tool(api 模式)│
                     │         repository ── 參數化 SQL(唯讀)      │
                     │              │                                │
                     └──────────────┼────────────────────────────────┘
@@ -237,6 +237,8 @@ Create／Rotate 成功回應才會額外包含：
 
 所有 tool 回傳一段繁體中文文字摘要與 `structuredContent`;價格資料一律包含 `data_kind`、`data_as_of`、`is_realtime: false`、`disclaimer`。
 
+> 唯一的例外是 [`get_market_movers`](#get_market_movers):盤中查詢時它回傳的是即時排行,`is_realtime` 會是 `true`。其餘工具在任何時候都是 `false`。
+
 ### `search_stock`
 
 以代號或名稱關鍵字搜尋(代號完全符合優先)。查無資料回傳空陣列,不是錯誤。
@@ -370,6 +372,27 @@ Create／Rotate 成功回應才會額外包含：
 ```
 
 回應的 `data_kind` 為 `qfii_holding_ranking`；`qfii_shares_held` 與 `issued_share` 為整數股數，缺值為 `null`。查無資料時 `stocks` 為空陣列。
+
+### `get_market_movers`
+
+僅在 `DATA_SOURCE=api` 出現。查詢當日漲跌幅或成交量排行。`rank_by` 可選 `top_gainers`（漲幅由高到低，預設）、`top_losers`（跌幅由深到淺）或 `top_volume`（成交量由大到小）；`market` 可選 `all`（上市＋上櫃，預設）、`twse`、`tpex`；`limit` 預設 20（1–50）。已排除暫停上市與當日零成交的股票，同值一律以股票代號由小到大穩定排序。
+
+**資料來源由伺服器端自動切換**，呼叫端不需要（也不可以）指定：
+
+| 時段 | `source` | `is_realtime` | 資料內容 |
+|---|---|---|---|
+| 盤中 | `realtime` | `true` | 第三方網站採集的即時報價快照，附 `snapshot_updated_at` |
+| 收盤後 | `closing` | `false` | 當日最終收盤日線 |
+
+> **13:30–15:00 空窗**：台股 13:30 收盤時即時採集停止，但當日日線要到 15:00 的收盤排程才寫入。這段時間查詢會拿到 `source=closing` 且 `data_as_of` 為**前一交易日**，摘要會明確標示「今日收盤資料尚未產生」。假日與長假期間同理。
+
+> **成交量有兩個欄位**：即時來源給 `volume_lots`（張）、收盤來源給 `volume_shares`（股），來源沒有的那個固定為 `null`。看似除以 1000 就能統一，但零股交易會讓換算失真，因此契約選擇誠實而非方便。同理，即時來源沒有 `trade_value`／`transaction`，收盤來源沒有 `last_close`／`source_site`。也因為即時快照沒有成交金額，**不提供成交金額排行**——同一個參數在兩個時段語意不同，比不提供更危險。
+
+```json
+{"name": "get_market_movers", "arguments": {"rank_by": "top_gainers", "market": "all", "limit": 20}}
+```
+
+回應的 `data_kind` 為 `market_movers`。這是所有工具中**唯一 `is_realtime` 可能為 `true`** 的分析型輸出；`data_as_of` 永遠有值（即時為今日、收盤為該交易日）。查無符合條件的股票時 `movers` 為空陣列。
 
 ## 安全設計
 

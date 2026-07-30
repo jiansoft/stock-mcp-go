@@ -252,6 +252,14 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: qfiiRankingSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, mts.qfiiHoldingRanking)
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_market_movers",
+			Description: "查詢當日漲跌幅或成交量排行(漲幅前 N 名、跌幅前 N 名、成交量前 N 名),可依市場篩選。" +
+				"盤中回傳即時排行,收盤後回傳當日最終排行,資料來源由伺服器端自動判斷並以 source/is_realtime/data_as_of 回報。" +
+				"注意:13:30 收盤到 15:00 之間當日收盤資料尚未產生,此時回傳的是前一交易日的排行,摘要會明確標示。",
+			InputSchema: moversSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, mts.marketMovers)
 	}
 }
 

@@ -766,6 +766,97 @@ type QfiiRankingOptions struct {
 	Limit int
 }
 
+// MoversOptions 是當日漲跌幅／成交量排行的查詢條件。
+//
+// 刻意**沒有**「指定資料來源」的欄位:現在是不是盤中,由 stock_rust 依
+// 即時報價快取是否為空判斷,MCP 端與呼叫端都不做時鐘判斷(服務重啟、
+// 國定假日、颱風停市時時鐘會判斷錯,快取狀態不會)。
+type MoversOptions struct {
+	// RankBy 排序鍵:"top_gainers"(漲幅)、"top_losers"(跌幅)或
+	// "top_volume"(成交量);tool 層保證傳入時已套用預設值 top_gainers。
+	RankBy string
+	// Market 市場範圍:"all"(上市+上櫃)、"twse" 或 "tpex";tool 層
+	// 保證傳入時已套用預設值 "all"。
+	Market string
+	// Limit 最多回傳筆數。
+	Limit int
+}
+
+// Mover 是排行中的單一股票。
+//
+// ## 給新手的背景知識:為什麼成交量有兩個欄位,而且總有一個是 nil?
+//
+// 台股的成交量有兩種單位:「張」(一般情況下 1 張 = 1000 股)與「股」。
+// 盤中即時報價來源(第三方網站)提供的是「張」,收盤後的官方日線提供的
+// 是「股」。看似只要除以 1000 就能統一,但零股交易會讓換算結果失真,
+// 因此契約選擇誠實:兩種單位各一個欄位,來源沒有的那個一律是 nil,
+// 絕不用 0 或換算值冒充。同理,即時快照沒有成交金額與成交筆數,收盤
+// 日線沒有昨收價與採集站點,缺的欄位都是 nil。
+type Mover struct {
+	// Rank 名次(由 1 起算,依查詢的 rank_by 排序)。
+	Rank uint32 `json:"rank"`
+	// StockSymbol 股票代號;Name 股票中文名稱。
+	StockSymbol string `json:"stock_symbol"`
+	Name        string `json:"name"`
+	// MarketID 市場編號(2 上市、4 上櫃);IndustryID 產業分類編號。
+	MarketID   int32 `json:"market_id"`
+	IndustryID int32 `json:"industry_id"`
+	// Price 成交價:盤中為最新成交價,收盤後為收盤價。
+	Price *float64 `json:"price"`
+	// Change 漲跌(元);ChangePercent 漲跌幅(%)。
+	Change        *float64 `json:"change"`
+	ChangePercent *float64 `json:"change_percent"`
+	// Open / High / Low 當日開高低價。
+	Open *float64 `json:"open"`
+	High *float64 `json:"high"`
+	Low  *float64 `json:"low"`
+	// LastClose 昨收價;僅即時來源有值(日線表沒有這個欄位)。
+	LastClose *float64 `json:"last_close"`
+	// VolumeLots 成交量(張);僅即時來源有值。
+	VolumeLots *float64 `json:"volume_lots"`
+	// VolumeShares 成交量(股);僅收盤來源有值。
+	VolumeShares *float64 `json:"volume_shares"`
+	// TradeValue 成交金額(元);Transaction 成交筆數。兩者僅收盤來源有值。
+	TradeValue  *float64 `json:"trade_value"`
+	Transaction *float64 `json:"transaction"`
+	// SourceSite 即時報價的採集站點(例如 HiStock、Yahoo);僅即時來源有值。
+	SourceSite *string `json:"source_site"`
+}
+
+// MarketMovers 是 market/movers endpoint 的完整回應 envelope。
+//
+// ## 為什麼同一個 endpoint 會有兩種資料來源?
+//
+// 「今天漲最多的是哪幾檔」在盤中與收盤後是同一個問題,但資料分別放在
+// 記憶體的即時快照與收盤後的日線表。stock_rust 依即時快取狀態自動選擇
+// 來源,並把選擇結果誠實寫在 Source / IsRealtime / DataAsOf 三個欄位。
+//
+// ## 必須注意的空窗:13:30 收盤到 15:00 之間
+//
+// 台股 13:30 收盤時即時採集任務停止並清空快取,但當日日線要到 15:00
+// 的收盤排程才寫入資料庫。這段時間查詢會拿到 Source = "closing" 且
+// DataAsOf 是**前一交易日**的資料——tool 層必須在摘要中明講,不可讓
+// 呼叫端把它當成今日行情。
+type MarketMovers struct {
+	// DataAsOf 資料日期(YYYY-MM-DD):即時來源為今日,收盤來源為該批
+	// 日線的實際交易日。與其他工具不同,這個欄位永遠有值。
+	DataAsOf string `json:"data_as_of"`
+	// Source 資料來源:"realtime"(盤中即時快照)或 "closing"(收盤日線)。
+	Source string `json:"source"`
+	// IsRealtime 是否為即時資料,等同於 Source == "realtime"。這是所有
+	// 工具中唯一可能為 true 的分析型輸出。
+	IsRealtime bool `json:"is_realtime"`
+	// RankBy / Market 伺服器端實際採用的排序鍵與市場條件。
+	RankBy string `json:"rank_by"`
+	Market string `json:"market"`
+	// SnapshotUpdatedAt 即時快照批次的最新更新時間(UTC ISO 8601);
+	// 收盤來源固定為 nil。
+	SnapshotUpdatedAt *string `json:"snapshot_updated_at"`
+	// Movers 依 RankBy 排序、同值以股票代號由小到大穩定排序的排行;
+	// 空結果必須是空陣列而非 null。
+	Movers []Mover `json:"movers"`
+}
+
 // MarketDataQuerier 是 Phase 4 三個市場輔助工具對資料來源的最小需求介面。
 //
 // 與 FinancialQuerier/AnalyticsQuerier 相同的設計:介面由消費端
@@ -777,4 +868,8 @@ type MarketDataQuerier interface {
 	MarketIndexHistory(context.Context, IndexHistoryOptions) (*MarketIndexHistory, error)
 	DividendCalendar(context.Context, CalendarOptions) (*DividendCalendar, error)
 	QfiiHoldingRanking(context.Context, QfiiRankingOptions) (*QfiiHoldingRanking, error)
+	// MarketMovers 是後續新增的當日漲跌幅／成交量排行。放進同一個介面
+	// 而不是另開第五個介面:它同樣是市場層級查詢、同樣只有 *APIClient
+	// 具備這個能力,拆開只會讓註冊邏輯多一層卻不帶來任何彈性。
+	MarketMovers(context.Context, MoversOptions) (*MarketMovers, error)
 }

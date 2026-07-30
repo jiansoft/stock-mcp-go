@@ -63,6 +63,47 @@ type QfiiRankingInput struct {
 	Limit  int    `json:"limit,omitempty"`
 }
 
+// MoversInput 是 get_market_movers 的輸入參數型別。
+//
+// 刻意沒有「資料來源」或「日期」參數:來源由伺服器端依即時快取狀態決定,
+// 且這個工具只回答「當日(或最近一個有資料的交易日)」的排行,歷史某一天
+// 的排行不在本工具範圍內。
+type MoversInput struct {
+	// RankBy 排序鍵(選填,預設 top_gainers)。
+	RankBy string `json:"rank_by,omitempty"`
+	// Market 市場範圍(選填,預設 all)。
+	Market string `json:"market,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// moversSchema 描述 get_market_movers 的輸入形狀。
+//
+// rank_by 只有三個值:**沒有**成交金額排行。即時報價快照沒有成交金額
+// 欄位,若提供這個排序鍵,同一個參數在盤中與收盤後會有不同語意,對
+// 呼叫端(通常是 LLM)比「不提供」更危險。收盤來源的結果仍會附上
+// trade_value 欄位供參考,只是不能拿來排序。
+func moversSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "object",
+		Properties: map[string]*jsonschema.Schema{
+			"rank_by": {
+				Type:        "string",
+				Enum:        []any{"top_gainers", "top_losers", "top_volume"},
+				Default:     []byte(`"top_gainers"`),
+				Description: "排序鍵:top_gainers(漲幅由高到低)、top_losers(跌幅由深到淺)或 top_volume(成交量由大到小)",
+			},
+			"market": listedOTCMarketSchema(),
+			"limit": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(50.0),
+				Default:     []byte("20"),
+				Description: "最大回傳筆數(預設 20,範圍 1 至 50)",
+			},
+		},
+	}
+}
+
 // indexHistorySchema 描述 get_market_index_history 的輸入形狀。
 // 與 get_price_history 慣例一致:limit 預設 30、範圍 1–365。
 func indexHistorySchema() *jsonschema.Schema {
@@ -190,6 +231,42 @@ type QfiiRankingOutput struct {
 	Stocks     []QfiiHolding `json:"stocks"`
 }
 
+// MarketMoversOutput 是 get_market_movers 的 structuredContent。
+//
+// 與其他分析型工具最大的不同:IsRealtime **可能為 true**。它直接沿用
+// Data API 回報的值,不寫死 false——盤中查到的排行確實是即時資料,謊報
+// 成歷史資料同樣是錯誤資訊。DataAsOf 也永遠有值(非指標),因為兩種
+// 來源都能明確給出資料日期。
+type MarketMoversOutput struct {
+	DataKind   string `json:"data_kind"`
+	IsRealtime bool   `json:"is_realtime"`
+	Disclaimer string `json:"disclaimer"`
+	DataAsOf   string `json:"data_as_of"`
+	// Source 資料來源:realtime 或 closing。
+	Source string `json:"source"`
+	// RankBy / Market 伺服器端實際採用的條件。
+	RankBy string `json:"rank_by"`
+	Market string `json:"market"`
+	// SnapshotUpdatedAt 即時快照批次時間;收盤來源為 null。
+	SnapshotUpdatedAt *string `json:"snapshot_updated_at"`
+	Movers            []Mover `json:"movers"`
+}
+
+// realtimeSourceNotice 是即時來源摘要固定附帶的來源限制說明。
+//
+// stock_rust 的即時報價是從第三方網站(HiStock、Yahoo)採集而來,不是
+// 交易所的官方即時行情,沿用既有 get_realtime_snapshot 的措辭,不宣稱
+// 為保證即時。
+const realtimeSourceNotice = "資料來自第三方網站採集,非交易所即時行情,可能有數十秒至數分鐘延遲。"
+
+// taipeiLocation 是台北時區(UTC+8,無日光節約時間)。
+//
+// 這裡刻意用固定偏移而不是 time.LoadLocation("Asia/Taipei"):後者依賴
+// 執行環境有時區資料庫(精簡的容器映像檔常常沒有),失敗時會退回 UTC,
+// 造成「今天」判斷錯誤。台灣自 1980 年起就沒有日光節約時間,固定 +8
+// 在本工具的用途(判斷資料日期是不是今天、顯示快照時間)上完全正確。
+var taipeiLocation = time.FixedZone("CST", 8*60*60)
+
 // qfiiSnapshotNotice 是 QFII 排行摘要固定附帶的快照限制說明(§4.10):
 // 集中成常數,確保「有資料」與「查無資料」兩種摘要用字一致,測試也
 // 只需針對同一份文字驗證。
@@ -230,6 +307,120 @@ func validateCalendarRange(from, to *time.Time) error {
 		return fmt.Errorf("查詢區間 (from 到 to) 不可超過 92 天")
 	}
 	return nil
+}
+
+// moversSourceSummary 組出排行摘要開頭的「資料來源與時段」說明。
+//
+// 這段文字是本工具最重要的部分,三種情境必須清楚區分:
+//
+//  1. 盤中即時:標明是即時資料與快照時間,並附上第三方來源警語。
+//  2. 收盤且資料日期就是今天:正常的「當日收盤排行」。
+//  3. 收盤但資料日期不是今天:**必須明講今日收盤資料尚未產生**。這正是
+//     13:30 收盤到 15:00 收盤排程之間的空窗,此時拿到的是前一交易日的
+//     資料;若摘要不講,LLM 幾乎一定會把它當成今天的行情回答使用者。
+//     假日與長假期間也走這條路徑,說明同樣正確。
+//
+// now 由呼叫端傳入(而非函式內直接取系統時間),讓測試能固定時間點驗證
+// 三種情境,不必依賴執行當下的真實時鐘。
+func moversSourceSummary(envelope *MarketMovers, now time.Time) string {
+	if envelope.IsRealtime {
+		when := ""
+		if envelope.SnapshotUpdatedAt != nil {
+			// 伺服器端回的是 UTC ISO 8601;轉成台北時間顯示,呼叫端看到的
+			// 才是「盤中的幾點幾分」。無法解析時就不顯示時間,不猜測。
+			if parsed, err := time.Parse(time.RFC3339, *envelope.SnapshotUpdatedAt); err == nil {
+				when = fmt.Sprintf("(快照時間 %s)", parsed.In(taipeiLocation).Format("15:04"))
+			}
+		}
+		return fmt.Sprintf("盤中即時%s。%s", when, realtimeSourceNotice)
+	}
+	today := now.In(taipeiLocation).Format("2006-01-02")
+	if envelope.DataAsOf == today {
+		return fmt.Sprintf("%s 收盤。", envelope.DataAsOf)
+	}
+	return fmt.Sprintf("今日收盤資料尚未產生,以下為前一交易日 %s 的收盤排行。", envelope.DataAsOf)
+}
+
+// moversMetricSummary 依排序鍵描述第一名的關鍵數字。
+//
+// 成交量因來源不同而單位不同(即時為張、收盤為股),摘要必須把單位寫
+// 清楚,否則「成交量 1234」在兩種來源會差 1000 倍。
+func moversMetricSummary(rankBy string, top Mover) string {
+	if rankBy == "top_volume" {
+		if top.VolumeLots != nil {
+			return fmt.Sprintf("成交量 %s 張", displayFloat(top.VolumeLots))
+		}
+		return fmt.Sprintf("成交量 %s 股", displayFloat(top.VolumeShares))
+	}
+	return fmt.Sprintf("漲跌幅 %s%%、成交價 %s 元",
+		displayFloat(top.ChangePercent), displayFloat(top.Price))
+}
+
+// marketMovers 執行 get_market_movers。
+//
+// 錯誤分層原則同其他市場工具:輸入錯誤可安全原樣告知呼叫端;API 認證、
+// timeout、5xx、404(此 endpoint 的 404 代表整張日線表都沒有資料,屬
+// 部署異常)或解析錯誤只寫 server log,對外回安全通用訊息。
+func (ts *marketDataToolset) marketMovers(ctx context.Context, _ *mcp.CallToolRequest, in MoversInput) (*mcp.CallToolResult, any, error) {
+	// 空字串代表未提供,套用預設 top_gainers;非法值直接報錯,不猜測。
+	rankBy := strings.ToLower(strings.TrimSpace(in.RankBy))
+	if rankBy == "" {
+		rankBy = "top_gainers"
+	}
+	if rankBy != "top_gainers" && rankBy != "top_losers" && rankBy != "top_volume" {
+		return nil, nil, fmt.Errorf("參數 rank_by 必須為 top_gainers、top_losers 或 top_volume,收到了 %q", in.RankBy)
+	}
+	market, err := normalizeMarket(in.Market)
+	if err != nil {
+		return nil, nil, err
+	}
+	limit, err := rangedLimit(in.Limit, 20, 1, 50)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	envelope, err := ts.marketData.MarketMovers(ctx, MoversOptions{RankBy: rankBy, Market: market, Limit: limit})
+	if err != nil {
+		ts.logf("工具 get_market_movers 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+	// 防禦性檢查:正常的 client 不會回 (nil, nil),但 MCP server 是長駐
+	// 服務,單一工具的 nil pointer panic 會拖垮整個 process,寧可多一個
+	// 分支換取「絕不 panic」。
+	if envelope == nil {
+		ts.logf("工具 get_market_movers 取得空的回應 envelope")
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+
+	source := moversSourceSummary(envelope, time.Now())
+	summary := fmt.Sprintf("%s目前 %s 市場沒有符合條件的排行資料。\n免責聲明:%s",
+		source, market, AnalysisDisclaimer)
+	if len(envelope.Movers) > 0 {
+		top := envelope.Movers[0]
+		summary = fmt.Sprintf("%s%s 市場 %s 排行共 %d 檔;第 1 名為 %s %s,%s。\n免責聲明:%s",
+			source, market, moversRankLabels[envelope.RankBy], len(envelope.Movers),
+			top.StockSymbol, top.Name, moversMetricSummary(envelope.RankBy, top), AnalysisDisclaimer)
+	}
+	return textResult(summary), MarketMoversOutput{
+		DataKind: "market_movers",
+		// 直接沿用伺服器回報的值:盤中就是 true,不謊報成歷史資料。
+		IsRealtime:        envelope.IsRealtime,
+		Disclaimer:        AnalysisDisclaimer,
+		DataAsOf:          envelope.DataAsOf,
+		Source:            envelope.Source,
+		RankBy:            envelope.RankBy,
+		Market:            envelope.Market,
+		SnapshotUpdatedAt: envelope.SnapshotUpdatedAt,
+		Movers:            envelope.Movers,
+	}, nil
+}
+
+// moversRankLabels 把排序鍵對映成摘要用的繁體中文名稱;structuredContent
+// 內維持英文代碼(契約欄位不翻譯)。
+var moversRankLabels = map[string]string{
+	"top_gainers": "漲幅",
+	"top_losers":  "跌幅",
+	"top_volume":  "成交量",
 }
 
 // marketIndexHistory 執行 get_market_index_history:驗證輸入 → 呼叫

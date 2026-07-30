@@ -361,6 +361,34 @@ func (c *APIClient) QfiiHoldingRanking(ctx context.Context, opt QfiiRankingOptio
 	return &body, nil
 }
 
+// MarketMovers 查詢當日漲跌幅／成交量排行,回傳完整 envelope。
+//
+// 資料來源(盤中即時 / 收盤日線)由 stock_rust 依即時快取狀態決定,
+// client 不傳任何來源參數,也不改寫伺服器回報的 source / is_realtime /
+// data_as_of——這三個欄位是呼叫端判斷「手上這份資料是什麼」的唯一依據,
+// 任何一端擅自推斷都會造成前一交易日資料被當成今日行情。
+//
+// 市場層級 endpoint 沒有個股 404 語意:合法條件查無資料時 Data API 回
+// 200 空陣列,只有整張日線表都沒有資料(部署異常)才會 404,因此使用
+// c.get 讓 404 直接成為錯誤。
+func (c *APIClient) MarketMovers(ctx context.Context, opt MoversOptions) (*MarketMovers, error) {
+	// RankBy/Market 由 tool 層保證已套用預設值,固定送出。
+	values := url.Values{
+		"rank_by": []string{opt.RankBy},
+		"market":  []string{opt.Market},
+		"limit":   []string{fmt.Sprint(opt.Limit)},
+	}
+	var body MarketMovers
+	if err := c.get(ctx, "/api/v1/market/movers?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	// 防禦性保證:「查無資料」在 JSON 輸出必須是 [] 而非 null(§3.4)。
+	if body.Movers == nil {
+		body.Movers = []Mover{}
+	}
+	return &body, nil
+}
+
 // get 執行成功必為 200 的 GET 請求。
 func (c *APIClient) get(ctx context.Context, path string, output any) error {
 	found, err := c.getFound(ctx, path, output)
