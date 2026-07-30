@@ -26,6 +26,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"stockmcp/apikey"
 	"stockmcp/config"
 	"stockmcp/stock"
 	"stockmcp/web"
@@ -142,6 +143,19 @@ func run(ctx context.Context) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
+	keyRepo, err := apikey.OpenSQLite(ctx, cfg.APIKeyDBPath)
+	if err != nil {
+		return err
+	}
+	defer keyRepo.Close()
+	keyService, err := apikey.NewService(
+		ctx, keyRepo, []byte(cfg.APIKeyPepper), cfg.APIKey, logger,
+	)
+	if err != nil {
+		return err
+	}
+	defer keyService.Close()
+
 	var repo stock.Querier
 	var closeDataSource func()
 	if cfg.DataSource == "api" {
@@ -200,7 +214,7 @@ func run(ctx context.Context) error {
 		readiness = hc.Health
 	}
 
-	srv := web.NewServer(cfg, web.NewHandler(cfg, logger, mcpHandler, readiness))
+	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService))
 
 	// 這裡用一個「容量為 1 的 channel」搭配一個獨立的 goroutine 啟動
 	// HTTP 伺服器,而不是直接在目前這個 goroutine 呼叫
@@ -250,7 +264,7 @@ const healthCheckTimeout = 3 * time.Second
 // runHealthCheck 呼叫本機的 /readyz,就緒時回傳 nil。
 //
 // 刻意不呼叫 config.Load():健康檢查只需要知道要連哪個 port,而 Load 會
-// 驗證一整套環境變數(DATABASE_URL、MCP_API_KEY 等)。若因為某個與網路
+// 驗證一整套環境變數(DATABASE_URL、MCP_API_KEY_PEPPER 等)。若因為某個與網路
 // 無關的設定問題導致 Load 失敗,健康檢查會回報一個與「服務到底有沒有在
 // 服務」毫不相干的錯誤,反而誤導排查方向。
 //

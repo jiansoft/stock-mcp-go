@@ -25,7 +25,8 @@ RUN set -eu; \
       arm-v7) cp /src/stock-mcp_linux_armv7 /stock-mcp ;; \
       *) echo "不支援的平台: TARGETARCH=${TARGETARCH} TARGETVARIANT=${TARGETVARIANT}" >&2; exit 1 ;; \
     esac; \
-    chmod 755 /stock-mcp
+    chmod 755 /stock-mcp; \
+    mkdir -p /data
 
 # distroless static 已內建 CA 憑證與 tzdata（含 Asia/Taipei），不需再從 debian 複製。
 FROM gcr.io/distroless/static-debian13:nonroot
@@ -41,6 +42,7 @@ ENV TZ=Asia/Taipei \
 WORKDIR /app
 
 COPY --from=binary --chown=65532:65532 --chmod=755 /stock-mcp /app/stock-mcp
+COPY --from=binary --chown=65532:65532 /data /data
 
 EXPOSE 3000
 

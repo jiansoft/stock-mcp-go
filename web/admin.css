@@ -1,0 +1,129 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f4f7fb;
+  color: #152033;
+  /* 版面容器：預設筆電寬度，於下方斷點逐級放大 */
+  --container: min(1180px, calc(100% - 32px));
+  --gutter: 24px;
+  --cell-y: 15px;
+  --cell-x: 16px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+header, main { width: var(--container); margin-inline: auto; }
+header {
+  display: flex; align-items: end; justify-content: space-between; gap: 24px;
+  padding: 48px 0 24px;
+}
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 8px; font-size: clamp(1.8rem, 4vw, 2.7rem); letter-spacing: -.04em; }
+h2 { margin-bottom: 4px; }
+.eyebrow { color: #4263eb; font-size: .78rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; margin-bottom: 8px; }
+.subtitle, .panel-heading p { color: #667085; margin-bottom: 0; }
+.header-actions, .dialog-actions, .copy-row { display: flex; gap: 10px; align-items: center; }
+button {
+  appearance: none; border: 1px solid #3451d1; border-radius: 9px; background: #4263eb;
+  color: white; cursor: pointer; font: inherit; font-weight: 700; padding: 10px 15px;
+}
+button:hover { background: #3451d1; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 2px; }
+button.secondary { background: white; border-color: #cbd5e1; color: #344054; }
+button.secondary:hover { background: #f8fafc; }
+button.danger { background: #b42318; border-color: #b42318; }
+button.small { font-size: .82rem; padding: 7px 9px; }
+.panel {
+  background: white; border: 1px solid #e4e7ec; border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, .06); overflow: hidden; margin-bottom: 48px;
+}
+.panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px var(--gutter); border-bottom: 1px solid #eaecf0; }
+.count { border-radius: 999px; background: #eef2ff; color: #3730a3; padding: 5px 10px; font-weight: 800; }
+.state { text-align: center; color: #667085; padding: 56px var(--gutter); }
+.state.error, .field-error { color: #b42318; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 950px; }
+th, td { border-bottom: 1px solid #eaecf0; padding: var(--cell-y) var(--cell-x); text-align: left; vertical-align: top; }
+th { background: #f9fafb; color: #475467; font-size: .78rem; letter-spacing: .03em; text-transform: uppercase; }
+td { font-size: .9rem; }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: #fbfcfe; }
+.description { color: #667085; display: block; margin-top: 4px; max-width: 220px; }
+.masked { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+.badge { display: inline-flex; align-items: center; border-radius: 999px; font-size: .78rem; font-weight: 800; padding: 5px 9px; }
+.badge.active { background: #ecfdf3; color: #027a48; }
+.badge.disabled { background: #f2f4f7; color: #475467; }
+.badge.revoked, .badge.expired { background: #fef3f2; color: #b42318; }
+.actions { min-width: 280px; white-space: nowrap; }
+.actions-buttons { display: flex; flex-wrap: nowrap; gap: 6px; }
+.notice { padding: 12px 15px; border-radius: 10px; margin-bottom: 16px; background: #ecfdf3; color: #027a48; }
+dialog { width: min(520px, calc(100% - 32px)); border: 0; border-radius: 16px; padding: 24px; box-shadow: 0 24px 80px rgba(16,24,40,.25); }
+dialog::backdrop { background: rgba(15, 23, 42, .58); }
+dialog form { display: grid; gap: 10px; }
+label { font-weight: 750; margin-top: 6px; }
+input, textarea {
+  width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; background: white;
+  color: #152033; font: inherit; padding: 10px 12px;
+}
+textarea { resize: vertical; }
+.dialog-actions { justify-content: flex-end; margin-top: 12px; }
+.warning { display: grid; gap: 4px; border-left: 4px solid #f79009; background: #fffaeb; color: #7a2e0e; padding: 12px; }
+.copy-row input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+code { background: #f2f4f7; border-radius: 5px; padding: 2px 5px; }
+
+/* ── 大型桌機（26 吋 / 2560px 級距）：放寬容器並加大留白 ───────────── */
+@media (min-width: 1440px) {
+  :root { --container: min(1440px, calc(100% - 64px)); --gutter: 28px; --cell-y: 17px; --cell-x: 20px; }
+  td { font-size: .92rem; }
+  .description { max-width: 320px; }
+}
+@media (min-width: 1920px) {
+  :root { --container: min(1760px, calc(100% - 96px)); --gutter: 32px; --cell-y: 19px; --cell-x: 24px; }
+  body { font-size: 1.05rem; }
+  header { padding-top: 64px; }
+  td { font-size: .95rem; }
+  .description { max-width: 420px; }
+}
+
+/* ── 平板 / 小筆電 ─────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  :root { --gutter: 20px; --cell-y: 13px; --cell-x: 14px; }
+  header { padding: 36px 0 20px; }
+}
+
+/* ── 手機：表格轉為卡片式，避免橫向捲動 ───────────────────────── */
+@media (max-width: 767px) {
+  :root { --container: calc(100% - 24px); }
+  header { align-items: stretch; flex-direction: column; gap: 16px; padding-top: 28px; }
+  .header-actions button { flex: 1; }
+  .panel-heading { align-items: start; }
+  .table-wrap { overflow-x: visible; }
+  table { min-width: 0; }
+  thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  tbody tr {
+    display: block; margin: 12px; padding: 4px 0;
+    border: 1px solid #e4e7ec; border-radius: 12px; background: white;
+  }
+  tbody tr:hover { background: white; }
+  tbody td {
+    display: grid; grid-template-columns: 34% minmax(0, 1fr); align-items: start; gap: 12px;
+    border-bottom: 1px solid #f2f4f7; padding: 10px 14px;
+  }
+  tbody td::before {
+    content: attr(data-label);
+    color: #475467; font-size: .74rem; font-weight: 800; letter-spacing: .03em; text-transform: uppercase;
+  }
+  tbody td:last-child { border-bottom: 0; }
+  .description { max-width: none; }
+  .masked { white-space: normal; overflow-wrap: anywhere; }
+  /* 操作列：標籤置頂、按鈕自動換行填滿 */
+  tbody td.actions { display: block; min-width: 0; white-space: normal; }
+  tbody td.actions::before { display: block; margin-bottom: 8px; }
+  .actions-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .actions-buttons button { flex: 1 1 calc(50% - 4px); }
+  dialog { padding: 19px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog[open] { animation: appear .14s ease-out; }
+  @keyframes appear { from { opacity: 0; transform: translateY(8px) scale(.99); } }
+}

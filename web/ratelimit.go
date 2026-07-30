@@ -1,8 +1,6 @@
 package web
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net"
 	"net/http"
 	"strings"
@@ -179,16 +177,19 @@ func (l *RateLimiter) sweepAllLocked(now time.Time) {
 // rateLimit 是套用 RateLimiter 的 HTTP middleware:超過額度時回傳
 // HTTP 429,否則放行給 next 繼續處理。
 //
-// 計數用的 key 組合是「API key 的 SHA-256 雜湊(取前 8 byte)+ 來源
-// IP」,而不是直接把 API key 明文當作 map 的 key——先做雜湊是為了避免
-// API key 明文長期停留在程式的記憶體結構裡(例如透過記憶體傾印
-// (memory dump)或除錯工具意外外洩的風險);只取雜湊值的前 8 byte
-// (而非完整 32 byte)是因為這裡只是用來當作限流的分桶依據,不需要
-// 密碼學等級的完整雜湊長度,節省一點記憶體。
+// 計數用的 key 組合是「驗證成功後取得的非敏感 API key ID + 來源 IP」,
+// 不把完整 API key 放進長期存在的 map。requireAuthenticator 一定在這層
+// 外面；若未取得 principal，採 fail-closed 回 401。
 func rateLimit(l *RateLimiter, trustProxy bool, hops int, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sum := sha256.Sum256([]byte(bearerToken(r)))
-		key := hex.EncodeToString(sum[:8]) + "|" + clientIP(r, trustProxy, hops)
+		principal, ok := authenticatedPrincipal(r)
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"未經授權"}`))
+			return
+		}
+		key := principal.KeyID + "|" + clientIP(r, trustProxy, hops)
 		if !l.Allow(key) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusTooManyRequests)

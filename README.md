@@ -14,6 +14,8 @@
  AI client          │                                               │
  (MCP over ─ HTTPS ─▶ 反向代理 ─▶ web/(HTTP 層)                    │
   Streamable HTTP)  │       GET /healthz、/readyz(免驗證)         │
+                    │       /admin/mcp-api-keys(管理 UI)          │
+                    │       /api/admin/mcp-api-keys/*(管理 API)   │
                     │       {MCP_PATH}:                             │
                     │         1. API key 驗證(401)                │
                     │         2. rate limit(429)                  │
@@ -31,7 +33,8 @@
 ```
 
 - **`stock/`**:資料模型、Data API client、遷移期的 PostgreSQL repository、MCP tool 實作。
-- **`web/`**:API key 驗證、rate limit、健康檢查、HTTP server。tool 與資料庫邏輯完全與 transport 解耦,未來可新增 stdio adapter。
+- **`apikey/`**:多組 MCP API Key domain、SQLite repository、HMAC 驗證、不可變 snapshot、audit 與 last-used 節流。
+- **`web/`**:API key 驗證、管理 REST API／UI、rate limit、健康檢查、HTTP server。tool 與資料庫邏輯完全與 transport 解耦。
 - **`config/`**:環境變數載入與啟動驗證。
 
 ## 系統需求
@@ -45,11 +48,11 @@
 ```bash
 git clone <本專案>
 cd stock_mcp_go
-cp .env.example .env   # 填入 STOCK_RUST_API_* 與 MCP_API_KEY
+cp .env.example .env   # 填入 STOCK_RUST_API_*、pepper、admin token 與 bootstrap key
 go build ./...
 ```
 
-API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY` 與 `MCP_API_KEY`；db 模式才需要 `DATABASE_URL`。
+API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY`、`MCP_API_KEY_PEPPER` 與 `MCP_ADMIN_TOKEN`；db 模式才需要 `DATABASE_URL`。`MCP_API_KEY` 現在只供首次相容性匯入，不再是每次啟動的必要條件。
 
 ### 環境變數
 
@@ -69,7 +72,10 @@ API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY` �
 | `DB_POOL_MAX` | `10` | 連線池上限 |
 | `DB_CONNECTION_TIMEOUT_MS` | `5000` | 連線逾時 |
 | `DB_STATEMENT_TIMEOUT_MS` | `5000` | 每條查詢的 statement timeout |
-| `MCP_API_KEY` | (必填) | Bearer API key |
+| `MCP_API_KEY` | (空) | 舊部署相容性 bootstrap；僅在 SQLite 沒有任何 Key 時匯入一次 |
+| `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | API Key 管理 SQLite 路徑；容器預設 `/data/mcp-api-keys.db` |
+| `MCP_API_KEY_PEPPER` | (必填) | 至少 32 bytes 的 HMAC-SHA-256 pepper；只放 secret manager，不存 SQLite |
+| `MCP_ADMIN_TOKEN` | (必填) | 至少 32 bytes 的獨立管理 Bearer token，不可與 MCP Key 共用 |
 | `MCP_TRUSTED_ORIGINS` | (空) | 額外信任的跨來源 Origin,逗號分隔,例如 `https://a.example,https://b.example`。非瀏覽器用戶端不受影響,詳見「跨來源保護」 |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | rate limit 視窗 |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | 視窗內每個 API key + IP 的請求上限 |
@@ -123,7 +129,7 @@ curl http://127.0.0.1:3000/readyz    # readiness:資料來源是否可用
 - `GET /mcp`:Streamable HTTP 的 SSE 串流/可恢復連線(由官方 SDK 處理)
 - `DELETE /mcp`:終止 MCP session
 
-所有 MCP 請求都必須帶:
+所有 MCP 請求仍沿用原本的 header，不需修改 Client:
 
 ```http
 Authorization: Bearer <MCP_API_KEY>
@@ -137,6 +143,92 @@ MCP client 設定範例(以 Claude Code 為例):
 claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
   --header "Authorization: Bearer <MCP_API_KEY>"
 ```
+
+## 多組 MCP API Key 管理
+
+管理頁位於：
+
+```text
+https://your-domain.example/admin/mcp-api-keys
+```
+
+頁面會要求輸入獨立的 `MCP_ADMIN_TOKEN`。此 token 只存在目前頁面的記憶體，不寫入 Cookie、URL、`localStorage` 或 `sessionStorage`；管理 API 使用同一個 `Authorization: Bearer <MCP_ADMIN_TOKEN>` header。管理頁 HTML 本身不含資料或秘密，所有資料 API 都需要管理者驗證並套用 Origin 保護。
+
+可用功能包含 List、Create、Edit、Enable、Disable、Rotate、Delete、Refresh，以及建立／輪替後的一次性 Copy。完整 API Key 只在 Create 或 Rotate 成功回應中出現一次，關閉視窗後無法透過 List、Get 或 Update 取回。
+
+新 Key 格式：
+
+```text
+mcp_live_<public-id>_<256-bit-url-safe-secret>
+```
+
+SQLite 只保存 public prefix 與 `HMAC-SHA-256(pepper, full-key)`，不保存明文或可逆密文。驗證先由 public ID 直接定位 snapshot 中的單筆 credential，再以常數時間比較 HMAC；MCP request 熱路徑不查 SQLite。舊格式 `MCP_API_KEY` 匯入後也用 HMAC 派生的 lookup prefix 直接定位，不需掃描全表。
+
+### 管理 REST API
+
+所有端點都要求 `Authorization: Bearer <MCP_ADMIN_TOKEN>`、限制 request body、回傳 `Cache-Control: no-store`，錯誤格式固定為 `{"error":{"code":"...","message":"..."}}`。
+
+| Method | Endpoint | 功能 |
+|---|---|---|
+| `GET` | `/api/admin/mcp-api-keys` | 清單 |
+| `POST` | `/api/admin/mcp-api-keys` | 建立；輸入 `name`、`description`、`expiresAt` |
+| `GET` | `/api/admin/mcp-api-keys/{id}` | 非敏感 metadata |
+| `PATCH` | `/api/admin/mcp-api-keys/{id}` | 更新 name／description／expiresAt；需帶 version |
+| `POST` | `/api/admin/mcp-api-keys/{id}/enable` | 啟用；body 為 `{"version":N}` |
+| `POST` | `/api/admin/mcp-api-keys/{id}/disable` | 停用；body 為 `{"version":N}` |
+| `POST` | `/api/admin/mcp-api-keys/{id}/rotate` | 輪替並一次性回傳新 Key |
+| `DELETE` | `/api/admin/mcp-api-keys/{id}` | soft-delete／revoke；body 為 `{"version":N}` |
+
+Create 範例：
+
+```json
+{
+  "name": "Production Client",
+  "description": "Used by production MCP client",
+  "expiresAt": null
+}
+```
+
+Create／Rotate 成功回應才會額外包含：
+
+```json
+{
+  "item": {
+    "id": "...",
+    "name": "Production Client",
+    "maskedKey": "mcp_live_ab12..._••••••••••••",
+    "status": "active",
+    "version": 1
+  },
+  "apiKey": "mcp_live_ab12..._<one-time-secret>",
+  "notice": "完整 API Key 只顯示這一次，關閉後無法再次取得。"
+}
+```
+
+`version` 是樂觀鎖；過期或重複操作會回 409。停用或刪除最後一組尚未到期的 active Key 也會回 409，避免 MCP 存取被意外全部鎖死；即使如此，管理存取仍由獨立 `MCP_ADMIN_TOKEN` 保護，可用來建立替代 Key。
+
+### 即時生效與 last-used
+
+管理 transaction 會在同一筆 SQLite transaction 內取得完整 active credentials，commit 成功後以 `atomic.Pointer` 一次替換不可變 snapshot，然後才回應管理 API。停用、刪除或輪替後，後續新請求立即讀到新 snapshot；已進入 handler 的請求不強制中止。snapshot 建立是純記憶體操作，不存在 DB commit 成功後 reload I/O 失敗而保留 revoked Key 的窗口；明確 Reload 若失敗則保留上一份完整 snapshot，不發布 partial state。
+
+成功驗證後的 `last_used_at` 以記憶體節流，同一 Key 最多每分鐘排程一次，背景批次更新 SQLite；寫入失敗不影響 MCP request，graceful shutdown 會盡力 flush。
+
+### 舊 `MCP_API_KEY` 遷移
+
+啟動時若 SQLite 沒有任何 Key 且 `MCP_API_KEY` 有值，會匯入為 `Migrated MCP_API_KEY`，不在 log 輸出原值。資料庫已有任何 Key 時不再重複匯入。確認管理頁可以使用後，可從部署環境移除 `MCP_API_KEY`；它不是 CRUD 的持久化來源。
+
+### SQLite、備份與 Pepper
+
+- migration 是可重複執行的 `CREATE TABLE/INDEX IF NOT EXISTS`，啟用 foreign keys、5 秒 busy timeout 與 WAL。
+- 程式會以 `0700` 建立資料夾並盡力將 DB 設為 `0600`。資料檔、`-wal`、`-shm` 已列入 `.gitignore`。
+- Docker Compose 使用 named volume `mcp-api-key-data:/data`。自行 `docker run` 時也必須掛載 `/data`，否則重建容器會失去 Key。
+- 執行中備份請使用 SQLite backup 工具或先正常停止服務，再一起複製 `.db`、`-wal`、`-shm`；還原前先停止服務。備份雖不含明文 Key，仍應視為敏感資料。
+- Pepper 必須另存於 secret manager／離線備份，不在 SQLite 內。資料庫保存 pepper check；設定錯誤或遺失時服務會明確拒絕啟動，不會靜默使用空 pepper。恢復方式是還原正確 pepper；若永久遺失，只能保留舊 DB 作稽核備份、改用全新 DB＋新 pepper，並由 `MCP_API_KEY` bootstrap 或管理頁重新建立所有 Client Key。
+- Pepper 不可直接原地輪替，因為既有 HMAC 無法在沒有明文 Key 的情況下重算。要換 pepper，需建立新 DB 並輪替所有 Client。
+
+### 單一與多執行個體
+
+此實作明確支援「單一 Go process＋本機 SQLite volume」。SQLite 檔案不應由多台主機或多個 replica 共用，記憶體 snapshot 也不會跨程序同步；因此不可將同一份 `/data` 掛到多個 replicas 後宣稱一致性。需要水平擴充時，應先把 Key repository 移到部署環境已有的共享關聯式資料庫，再加入 version polling／通知機制；本功能沒有導入 Redis 或 message broker。
 
 ## MCP tools
 
@@ -278,9 +370,11 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 
 ## 安全設計
 
-- 只讀取資料庫;SQL 全部集中在 `stock/repository.go`,一律參數化查詢($1、$2…),禁止字串拼接。
-- API key 以常數時間比較(`crypto/subtle`),防 timing attack。
-- rate limit 以「API key 雜湊 + 來源 IP」計數;預設 60 次/分鐘,可由環境變數調整。
+- 股票資料來源維持唯讀；PostgreSQL SQL 集中在 `stock/repository.go` 且全部參數化。API Key 只寫入獨立 SQLite。
+- 多組 API key 以 HMAC-SHA-256＋server-side pepper 保存驗證資料，並以 `crypto/subtle` 常數時間比較。
+- rate limit 以「非敏感 Key ID + 來源 IP」計數;預設 60 次/分鐘,可由環境變數調整。
+- 管理 API 使用獨立 admin token、Origin 防護、64 KiB body limit 與 `no-store`。
+- 停用、輪替、soft-delete 後以 atomic snapshot 立即失效；最後一組 active Key 不可停用或刪除。
 - 每條查詢套用 `statement_timeout`(預設 5 秒);歷史查詢皆有最大筆數限制。
 - 錯誤回應與 log 不包含資料庫主機、帳密、SQL 原文、堆疊或 Authorization header。
 - log 為結構化 JSON(`log/slog`),不記錄任何敏感資訊。
@@ -303,9 +397,29 @@ Nginx 片段:
 location /mcp {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_buffering off;   # SSE 串流必須關閉緩衝
     proxy_read_timeout 3600s;
+}
+
+location = /healthz {
+    proxy_pass http://127.0.0.1:3000/healthz;
+}
+
+location = /readyz {
+    proxy_pass http://127.0.0.1:3000/readyz;
+}
+
+# 建議再以 VPN、IP allowlist 或額外邊界驗證限制管理路由。
+location /admin/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+}
+
+location /api/admin/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
 }
 ```
 
@@ -384,5 +498,6 @@ TEST_DATABASE_URL=postgresql://... go test ./stock/ -run TestRepositoryIntegrati
 ## 已知限制
 
 - **資料新鮮度取決於 `stock_rust` 專案寫入資料庫的頻率**;本服務只是資料庫的唯讀視圖,不主動抓取任何交易所資料。
-- rate limiter 為單機記憶體實作;水平擴充多實體時需改用共享儲存(如 Redis)。
+- rate limiter 為單機記憶體實作；水平擴充時每個 instance 會各自計數。
+- API Key repository 與驗證 snapshot 是單一程序＋本機 SQLite 設計，不支援多 replica 共用同一 SQLite volume。
 - 第一版資料來源僅限既有 PostgreSQL,無任何即時行情來源。

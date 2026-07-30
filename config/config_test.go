@@ -20,7 +20,7 @@ func setRequired(t *testing.T) {
 		"APP_ENV", "HOST", "PORT", "MCP_PATH", "TRUST_PROXY",
 		"DB_POOL_MAX", "DB_CONNECTION_TIMEOUT_MS", "DB_STATEMENT_TIMEOUT_MS",
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
-		"MCP_TRUSTED_ORIGINS",
+		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 	} {
 		t.Setenv(name, "")
 	}
@@ -28,6 +28,8 @@ func setRequired(t *testing.T) {
 	t.Setenv("DATA_SOURCE", "db")
 	t.Setenv("DATABASE_URL", "postgresql://reader:secret@127.0.0.1:5432/stock")
 	t.Setenv("MCP_API_KEY", "test-key")
+	t.Setenv("MCP_API_KEY_PEPPER", "test-pepper-32-bytes-minimum-value")
+	t.Setenv("MCP_ADMIN_TOKEN", "test-admin-token-32-bytes-minimum")
 }
 
 func TestLoad(t *testing.T) {
@@ -47,12 +49,32 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
-	t.Run("缺少 MCP_API_KEY 必須拒絕啟動", func(t *testing.T) {
+	t.Run("缺少 MCP_API_KEY 仍可由管理介面建立第一組 key", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("MCP_API_KEY", "")
 
-		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_API_KEY") {
-			t.Fatalf("預期錯誤訊息包含 MCP_API_KEY,實際為:%v", err)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("MCP_API_KEY 是相容性匯入值，不應成為啟動必要條件:%v", err)
+		}
+		if cfg.APIKey != "" {
+			t.Fatalf("預期空 bootstrap key，實際不為空")
+		}
+	})
+
+	t.Run("缺少 pepper 必須拒絕啟動", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("MCP_API_KEY_PEPPER", "")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_API_KEY_PEPPER") {
+			t.Fatalf("預期 pepper 設定錯誤,實際為:%v", err)
+		}
+	})
+
+	t.Run("缺少獨立管理 token 必須拒絕啟動", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("MCP_ADMIN_TOKEN", "")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_ADMIN_TOKEN") {
+			t.Fatalf("預期 admin token 設定錯誤,實際為:%v", err)
 		}
 	})
 

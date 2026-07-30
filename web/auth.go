@@ -11,9 +11,12 @@
 package web
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"strings"
+
+	"stockmcp/apikey"
 )
 
 // bearerToken 從 HTTP 請求的 Authorization header 取出 Bearer token。
@@ -68,16 +71,81 @@ func bearerToken(r *http.Request) string {
 // 「透過回應時間差異猜測金鑰內容」這個攻擊管道。回傳值是 1(相等)
 // 或 0(不相等),不是 Go 一般慣用的 bool,所以這裡要跟 1 比較,而不是
 // 直接當作布林值使用。
-func requireAPIKey(apiKey string, next http.Handler) http.Handler {
+type Authenticator interface {
+	Authenticate(context.Context, string) (apikey.Principal, bool)
+}
+
+type staticAuthenticator string
+
+func (a staticAuthenticator) Authenticate(_ context.Context, token string) (apikey.Principal, bool) {
+	expected := string(a)
+	ok := token != "" && len(token) == len(expected) &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
+	return apikey.Principal{KeyID: "legacy-static"}, ok
+}
+
+type principalContextKey struct{}
+
+func authenticatedPrincipal(r *http.Request) (apikey.Principal, bool) {
+	principal, ok := r.Context().Value(principalContextKey{}).(apikey.Principal)
+	return principal, ok
+}
+
+func requireAuthenticator(
+	authenticator Authenticator,
+	failures *RateLimiter,
+	trustProxy bool,
+	trustedProxyHops int,
+	next http.Handler,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
-		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
+		principal, ok := authenticator.Authenticate(r.Context(), token)
+		if !ok {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusUnauthorized)
+			w.Header().Set("Cache-Control", "no-store")
+			status := http.StatusUnauthorized
+			if failures != nil && !failures.Allow(clientIP(r, trustProxy, trustedProxyHops)) {
+				status = http.StatusTooManyRequests
+				w.Header().Set("Retry-After", "60")
+			}
+			w.WriteHeader(status)
 			// 錯誤訊息裡不會回顯呼叫端傳來的 token 或任何一部分的
 			// apiKey——依安全規則,這裡絕不可記錄或回傳 API key 或完整
 			// Authorization header 的內容,即使只是為了方便除錯。
 			_, _ = w.Write([]byte(`{"error":"未經授權:請提供正確的 Authorization: Bearer API key"}`))
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func requireAPIKey(apiKey string, next http.Handler) http.Handler {
+	return requireAuthenticator(staticAuthenticator(apiKey), nil, false, 1, next)
+}
+
+func requireAdminToken(
+	adminToken string,
+	failures *RateLimiter,
+	trustProxy bool,
+	trustedProxyHops int,
+	next http.Handler,
+) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		ok := token != "" && len(token) == len(adminToken) &&
+			subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) == 1
+		if !ok {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			status := http.StatusUnauthorized
+			if failures != nil && !failures.Allow(clientIP(r, trustProxy, trustedProxyHops)) {
+				status = http.StatusTooManyRequests
+				w.Header().Set("Retry-After", "60")
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"管理者驗證失敗"}}`))
 			return
 		}
 		next.ServeHTTP(w, r)

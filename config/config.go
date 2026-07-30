@@ -13,13 +13,14 @@
 // 不需要再處理「這個環境變數到底有沒有設定」「格式對不對」這些細節。
 //
 // ## 設計原則
-//   - 缺少必要變數(DATABASE_URL、MCP_API_KEY)時拒絕啟動,且錯誤訊息
+//   - 缺少必要變數(DATABASE_URL、MCP_API_KEY_PEPPER、MCP_ADMIN_TOKEN)時拒絕啟動,且錯誤訊息
 //     只包含「變數名稱」,絕不包含變數的「值」——避免資料庫密碼、API key
 //     不小心被印到終端機、log 檔或監控系統裡。
 //   - 所有選填變數都有安全的預設值,未設定時程式仍可正常啟動。
 package config
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net"
@@ -110,7 +111,14 @@ type Config struct {
 	APITimeout          time.Duration
 
 	// APIKey 是 MCP 對外驗證用的金鑰,屬敏感資訊,不可寫入 log。
+	// 它只用於空 API key 資料庫的首次相容性匯入；完成後以 SQLite 為準。
 	APIKey string
+	// APIKeyDBPath 是 API key 管理專用 SQLite 檔案。
+	APIKeyDBPath string
+	// APIKeyPepper 是 HMAC-SHA-256 的 server-side pepper，不得寫入資料庫。
+	APIKeyPepper string
+	// AdminToken 是管理 API 專用的獨立 Bearer token，不可與 MCP key 共用。
+	AdminToken string
 
 	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
 	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
@@ -215,8 +223,17 @@ func Load() (*Config, error) {
 	}
 	cfg.APITimeout = time.Duration(apiTimeoutMS) * time.Millisecond
 	cfg.APIKey = os.Getenv("MCP_API_KEY")
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("缺少必要的環境變數:MCP_API_KEY")
+	cfg.APIKeyDBPath = getEnv("MCP_API_KEY_DB_PATH", "data/mcp-api-keys.db")
+	cfg.APIKeyPepper = os.Getenv("MCP_API_KEY_PEPPER")
+	if len(cfg.APIKeyPepper) < 32 {
+		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
+	}
+	cfg.AdminToken = os.Getenv("MCP_ADMIN_TOKEN")
+	if len(cfg.AdminToken) < 32 {
+		return nil, fmt.Errorf("缺少必要的環境變數 MCP_ADMIN_TOKEN，或長度少於 32 bytes")
+	}
+	if cfg.APIKey != "" && subtleConstantStringEqual(cfg.APIKey, cfg.AdminToken) {
+		return nil, fmt.Errorf("MCP_ADMIN_TOKEN 不可與 MCP_API_KEY 相同")
 	}
 
 	origins, err := originsEnv("MCP_TRUSTED_ORIGINS")
@@ -269,6 +286,10 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func subtleConstantStringEqual(a, b string) bool {
+	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // Addr 回傳 HTTP 伺服器要綁定的 "host:port" 位址字串,可直接傳給

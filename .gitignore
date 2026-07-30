@@ -11,6 +11,10 @@
 /log_backup/
 /bin/
 /dist/
+/data/
+*.db
+*.db-shm
+*.db-wal
 
 # 測試與覆蓋率
 *.test

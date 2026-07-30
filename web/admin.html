@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MCP API Key 管理</title>
+  <link rel="stylesheet" href="/admin/assets/api-keys.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">stock-mcp</p>
+      <h1>MCP API Key 管理</h1>
+      <p class="subtitle">建立、停用與輪替 Client 使用的存取密鑰。</p>
+    </div>
+    <div class="header-actions">
+      <button id="refreshButton" class="secondary" type="button">重新整理</button>
+      <button id="createButton" type="button">建立 API Key</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <section class="panel" aria-labelledby="keyListTitle">
+      <div class="panel-heading">
+        <div>
+          <h2 id="keyListTitle">API Key 清單</h2>
+          <p>完整密鑰不會出現在清單中。</p>
+        </div>
+        <span id="countBadge" class="count">0</span>
+      </div>
+      <div id="loadingState" class="state">正在載入…</div>
+      <div id="errorState" class="state error" hidden>
+        <p id="errorMessage">無法載入資料。</p>
+        <button id="retryButton" class="secondary" type="button">再試一次</button>
+      </div>
+      <div id="emptyState" class="state" hidden>
+        <p>目前沒有 API Key。建立第一組 Key 後，MCP Client 才能通過驗證。</p>
+      </div>
+      <div id="tableWrap" class="table-wrap" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">名稱</th>
+              <th scope="col">Key</th>
+              <th scope="col">狀態</th>
+              <th scope="col">建立時間</th>
+              <th scope="col">最後使用</th>
+              <th scope="col">到期時間</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody id="keyRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="authDialog" aria-labelledby="authTitle">
+    <form id="authForm" method="dialog">
+      <h2 id="authTitle">管理者驗證</h2>
+      <p>輸入部署時設定的 <code>MCP_ADMIN_TOKEN</code>。Token 會保留在目前瀏覽器分頁的 Session 中，重新整理頁面不需再次輸入；關閉分頁後即清除。</p>
+      <label for="adminToken">管理者 Token</label>
+      <input id="adminToken" name="adminToken" type="password" autocomplete="off" required>
+      <p id="authError" class="field-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="submit">登入管理介面</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="keyFormDialog" aria-labelledby="keyFormTitle">
+    <form id="keyForm">
+      <h2 id="keyFormTitle">建立 API Key</h2>
+      <input id="editingID" type="hidden">
+      <label for="keyName">名稱</label>
+      <input id="keyName" maxlength="100" required>
+      <label for="keyDescription">說明</label>
+      <textarea id="keyDescription" maxlength="1000" rows="4"></textarea>
+      <label for="keyExpires">到期時間（選填）</label>
+      <input id="keyExpires" type="datetime-local">
+      <p id="formError" class="field-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="cancelFormButton" class="secondary" type="button">取消</button>
+        <button id="saveKeyButton" type="submit">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirmDialog" aria-labelledby="confirmTitle">
+    <form method="dialog">
+      <h2 id="confirmTitle">確認操作</h2>
+      <p id="confirmMessage"></p>
+      <p id="confirmError" class="field-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="cancelConfirmButton" class="secondary" value="cancel">取消</button>
+        <button id="confirmButton" value="default">確認</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="secretDialog" aria-labelledby="secretTitle">
+    <form method="dialog">
+      <h2 id="secretTitle">API Key 已建立</h2>
+      <div class="warning" role="note">
+        <strong>完整 Key 只顯示這一次。</strong>
+        <span id="secretNotice">請立即複製並安全保存；關閉後無法再次取得。</span>
+      </div>
+      <label for="oneTimeKey">完整 API Key</label>
+      <div class="copy-row">
+        <input id="oneTimeKey" readonly aria-describedby="copyStatus">
+        <button id="copyButton" type="button">複製</button>
+      </div>
+      <p id="copyStatus" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="closeSecretButton" type="button">我已保存，關閉</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/admin/assets/api-keys.js" defer></script>
+</body>
+</html>

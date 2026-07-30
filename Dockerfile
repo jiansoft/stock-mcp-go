@@ -8,12 +8,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/stock-mcp .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/stock-mcp . \
+    && mkdir -p /out/data
 
 # ── 執行階段:distroless 非 root 使用者,不含 shell 與套件管理器 ──────────
 FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /out/stock-mcp /stock-mcp
+COPY --from=build --chown=65532:65532 /out/data /data
 
 # 容器內需綁定 0.0.0.0 才能對外服務(以環境變數覆蓋預設的 127.0.0.1)
 ENV HOST=0.0.0.0

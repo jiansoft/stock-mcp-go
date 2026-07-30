@@ -53,6 +53,8 @@ DOCKER_RUN_OPTS=(
   -e TZ=Asia/Taipei
   -e HOST=0.0.0.0
   -e PORT=3000
+  -e MCP_API_KEY_DB_PATH=/data/mcp-api-keys.db
+  -v stock-mcp-api-key-data:/data
   -p 9004:3000
   -t
   -d
