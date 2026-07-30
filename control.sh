@@ -55,7 +55,7 @@ DOCKER_RUN_OPTS=(
   -e PORT=3000
   -e MCP_API_KEY_DB_PATH=/data/mcp-api-keys.db
   -v stock-mcp-api-key-data:/data
-  -p 9004:3000
+  -p 9005:3000
   -t
   -d
 )

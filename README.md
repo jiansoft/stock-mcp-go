@@ -112,6 +112,8 @@ make start
 docker compose -f docker-compose.example.yml up --build
 ```
 
+> 要部署到正式機器,請先看 [部署目錄與檔案結構](#部署目錄與檔案結構):哪些檔案必須放、放在哪一層,以及最常見的啟動失敗原因(相對路徑是相對於**工作目錄**而非執行檔位置)。
+
 健康檢查(不需 API key):
 
 ```bash
@@ -379,6 +381,88 @@ Create／Rotate 成功回應才會額外包含：
 - 每條查詢套用 `statement_timeout`(預設 5 秒);歷史查詢皆有最大筆數限制。
 - 錯誤回應與 log 不包含資料庫主機、帳密、SQL 原文、堆疊或 Authorization header。
 - log 為結構化 JSON(`log/slog`),不記錄任何敏感資訊。
+
+## 部署目錄與檔案結構
+
+本服務執行期只依賴**兩樣東西**:執行檔本身,以及提供環境變數的來源。管理頁的 HTML/CSS/JS 已用 `go:embed` 編進執行檔(見 `web/admin_api.go`),**不需要**隨部署複製任何前端檔案或 `web/` 目錄。
+
+### ⚠️ 最容易踩的雷:相對路徑是相對於「工作目錄」,不是執行檔位置
+
+`.env` 與 `MCP_API_KEY_DB_PATH` 的預設值 `data/mcp-api-keys.db` 都是**相對路徑**,而且相對的是**啟動時的工作目錄(cwd)**:
+
+```bash
+cd /opt/stock_mcp && ./stock-mcp_linux_arm64   # ✅ 讀到 /opt/stock_mcp/.env
+cd / && /opt/stock_mcp/stock-mcp_linux_arm64   # ❌ 讀不到 .env，改在 /data 建資料庫
+```
+
+`control.sh` 的 `start` 是以 `./$BINARY_NAME` 啟動,cwd 必然等於部署目錄,所以照它操作不會有問題。但若自行寫 systemd unit,**務必設定 `WorkingDirectory=/opt/stock_mcp`**,否則會出現「.env 明明放好了卻說缺少環境變數」的狀況。
+
+### 裸機部署(control.sh)
+
+部署目錄預設為 `/opt/stock_mcp`(`control.sh` 的 `DEPLOY_DIR`):
+
+```text
+/opt/stock_mcp/
+├── stock-mcp_linux_arm64      # ← 必要。執行檔,需 chmod +x
+│                              #   檔名依硬體架構,由 control.sh 的 uname -m 自動選擇:
+│                              #   aarch64/arm64 → _linux_arm64、armv7l → _linux_armv7
+├── .env                       # ← 必要。權限建議 600(內含 API key 與 admin token)
+├── control.sh                 # ← 必要。啟停腳本,需 chmod +x
+├── data/                      # 自動建立(0700),存放 SQLite API key 資料庫
+│   └── mcp-api-keys.db        #   路徑由 MCP_API_KEY_DB_PATH 決定
+├── nohup.out                  # 自動產生,start 時的 JSON log
+└── log_backup/                # 自動建立,stop 時把 nohup.out 依時間戳搬進來
+```
+
+`data/` 目錄由程式以 `os.MkdirAll(..., 0700)` 自動建立(見 `apikey/sqlite.go` 的 `OpenSQLite`),**不需要手動 mkdir**,但部署目錄本身必須對執行身分可寫,否則會以「無法建立 API key 資料庫目錄」啟動失敗。
+
+更新流程(`./control.sh update`)預期新的執行檔放在 `/tmp/<BINARY_NAME>`,檔名必須與架構相符;舊執行檔會被改名為 `<BINARY_NAME>.<時間戳>` 留在同目錄作為備份並移除執行權限。
+
+### Docker 部署
+
+`Dockerfile_live` 走的是「開發機交叉編譯 → 裝置端只做打包」的路線,build context **只接受**這兩個確切檔名(見 `Dockerfile_live.dockerignore` 的白名單):
+
+```text
+/opt/stock_mcp/                    # docker build 的執行目錄
+├── stock-mcp_linux_arm64          # ← 放自己平台需要的那一個即可
+├── stock-mcp_linux_armv7          #   兩個都放也可以，BuildKit 依目標平台自動挑選
+├── Dockerfile_live                # ← 必要
+├── Dockerfile_live.dockerignore   # ← 必要，缺少會導致建置失敗，原因見下方說明
+└── .env                           # ← 必要。但不會進 image，由 --env-file 在啟動時注入
+```
+
+`Dockerfile_live.dockerignore` 不可省略。Docker 會優先套用與 Dockerfile 同名的 ignore 檔,找不到才退回專案根目錄的 `.dockerignore`——而 `.dockerignore` 是給「從原始碼建置」的 `Dockerfile` 用的,裡面明確排除了 `stock-mcp_linux_*`。少了這個檔案,執行檔會被排除在 build context 之外,`COPY stock-mcp_linux_* /src/` 因為匹配不到任何檔案而失敗:
+
+```text
+failed to compute cache key: "/stock-mcp_linux_*" not found
+```
+
+(同名 ignore 檔是 BuildKit 的行為;Docker 23 之後預設啟用 BuildKit,若環境刻意關閉則不適用。)
+
+容器內的路徑固定為:
+
+| 容器內路徑 | 內容 | 說明 |
+| --- | --- | --- |
+| `/app/stock-mcp` | 執行檔 | 以 uid/gid `65532`(nonroot)執行 |
+| `/data` | SQLite 資料庫 | `control.sh` 掛載具名 volume `stock-mcp-api-key-data`,並以 `-e MCP_API_KEY_DB_PATH=/data/mcp-api-keys.db` 覆寫成絕對路徑 |
+
+> 秘密刻意不烘進 image。`.env` 不會被 `COPY`(白名單擋掉),而是由 `docker run --env-file .env` 在啟動時注入,避免秘密殘留在 image layer 裡。
+>
+> API key 資料庫放在具名 volume 而非容器內,容器重建後既有的 API key 才不會消失。**若改用 bind mount,請確認目錄對 uid 65532 可寫**,否則容器會因無法建立資料庫而啟動失敗。
+
+### 啟動失敗的對照表
+
+| 錯誤訊息 | 原因 | 處理 |
+| --- | --- | --- |
+| `缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes` | `.env` 沒被讀到,或該值不足 32 bytes | 確認 cwd 是部署目錄;檢查 `.env` 是否存在該項 |
+| `缺少必要的環境變數 MCP_ADMIN_TOKEN，或長度少於 32 bytes` | 同上 | 同上 |
+| `MCP_ADMIN_TOKEN 不可與 MCP_API_KEY 相同` | 兩個秘密設成同一個值 | 改成兩個不同的隨機值 |
+| `缺少必要的環境變數:DATABASE_URL` | `DATA_SOURCE=db` 但沒給連線字串 | 補上,或改用 `DATA_SOURCE=api` |
+| `api 模式需要 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY` | `DATA_SOURCE=api` 但缺少上游設定 | 補齊這兩項 |
+| `無法建立 API key 資料庫目錄` | 部署目錄(或掛載點)對執行身分不可寫 | 修正目錄擁有者/權限 |
+| `MCP_API_KEY_PEPPER 與既有資料庫不相符` | pepper 被換掉,但沿用舊的 SQLite 檔 | 還原原本的 pepper;pepper 一旦更換,既有 API key 全數失效 |
+
+> `.env` **不存在本身不是錯誤**——程式設計成允許純以環境變數注入設定(容器情境),因此找不到 `.env` 時會靜默略過,直到某個必要變數缺失才報錯。這正是「檔案放錯位置」最常見的表現形式:錯誤訊息指向環境變數,實際原因卻是 `.env` 沒被讀到。
 
 ## HTTPS 部署(反向代理)
 

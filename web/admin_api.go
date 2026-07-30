@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,14 +14,10 @@ import (
 )
 
 const (
-	adminPagePath    = "/admin/mcp-api-keys"
 	adminAPIBasePath = "/api/admin/mcp-api-keys"
 	adminSessionPath = "/api/admin/session"
 	maxAdminBody     = 64 << 10
 )
-
-//go:embed admin.html admin.css admin.js
-var adminAssets embed.FS
 
 type adminAPI struct {
 	keys       *apikey.Service
@@ -57,9 +52,10 @@ func registerAPIKeyAdmin(mux *http.ServeMux, cfg *config.Config, keys *apikey.Se
 	mux.Handle(adminAPIBasePath, protected)
 	mux.Handle(adminAPIBasePath+"/", protected)
 	mux.Handle(adminSessionPath, protected)
-	mux.HandleFunc("GET "+adminPagePath, serveAdminPage)
-	mux.HandleFunc("GET /admin/assets/api-keys.css", serveAdminAsset("admin.css", "text/css; charset=utf-8"))
-	mux.HandleFunc("GET /admin/assets/api-keys.js", serveAdminAsset("admin.js", "text/javascript; charset=utf-8"))
+
+	// 管理介面(HTML/CSS/JS)本身不含資料,是上面這組 API 的用戶端,
+	// 註冊邏輯獨立在 admin_ui.go。
+	registerAdminUI(mux)
 }
 
 // login 只在 requireAdminToken 已驗證通過後才會被呼叫,因此這裡不需要
@@ -276,33 +272,4 @@ func limitAdminBody(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, maxAdminBody)
 		next.ServeHTTP(w, r)
 	})
-}
-
-func serveAdminPage(w http.ResponseWriter, _ *http.Request) {
-	raw, err := adminAssets.ReadFile("admin.html")
-	if err != nil {
-		http.Error(w, "管理頁面無法載入", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy",
-		"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	_, _ = w.Write(raw)
-}
-
-func serveAdminAsset(name, contentType string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		raw, err := adminAssets.ReadFile(name)
-		if err != nil {
-			http.NotFound(w, nil)
-			return
-		}
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = w.Write(raw)
-	}
 }

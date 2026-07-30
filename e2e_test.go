@@ -488,7 +488,10 @@ func TestE2ELatestProtocol(t *testing.T) {
 	}
 	defer func() { _ = session.Close() }()
 
-	tools, err := session.ListTools(t.Context(), nil)
+	// 傳入空的 params 而不是 nil:兩者行為完全相同(SDK 收到 nil 時會自己
+	// 建一個空值),但顯式傳值可讓靜態分析不必推斷泛型函式內的重新賦值,
+	// 也與下方 CallTool 的寫法一致。
+	tools, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatalf("tools/list 失敗:%v", err)
 	}
