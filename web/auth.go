@@ -94,6 +94,37 @@ func authenticatedPrincipal(r *http.Request) (apikey.Principal, bool) {
 // 「透過回應時間差異猜測金鑰內容」這個攻擊管道。回傳值是 1(相等)
 // 或 0(不相等),不是 Go 一般慣用的 bool,所以這裡要跟 1 比較,而不是
 // 直接當作布林值使用(見上方 staticAuthenticator.Authenticate)。
+// writeAuthFailure 寫出「驗證失敗」的回應,並在同一來源短時間內連續失敗
+// 時把狀態碼從 401 升級為 429。
+//
+// 這段邏輯由下面兩個驗證中介層共用:回應標頭、限流升級規則,以及「絕不
+// 回顯任何憑證內容」的紀律三者完全相同,唯一的差異只有錯誤 body 的格式
+// (MCP endpoint 與管理 API 各自有既定的錯誤結構,不能互換)。集中在
+// 一處可確保日後調整限流或標頭時,不會只改到其中一邊而讓兩條驗證路徑
+// 的行為悄悄分歧。
+//
+// body 由呼叫端提供,但必須是常數字串:依安全規則,這裡絕不可記錄或回傳
+// 呼叫端傳來的 token、API key 或完整 Authorization header 的任何片段,
+// 即使只是為了方便除錯。
+func writeAuthFailure(
+	w http.ResponseWriter,
+	r *http.Request,
+	failures *RateLimiter,
+	trustProxy bool,
+	trustedProxyHops int,
+	body string,
+) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	status := http.StatusUnauthorized
+	if failures != nil && !failures.Allow(clientIP(r, trustProxy, trustedProxyHops)) {
+		status = http.StatusTooManyRequests
+		w.Header().Set("Retry-After", "60")
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
+}
+
 func requireAuthenticator(
 	authenticator Authenticator,
 	failures *RateLimiter,
@@ -105,18 +136,8 @@ func requireAuthenticator(
 		token := bearerToken(r)
 		principal, ok := authenticator.Authenticate(r.Context(), token)
 		if !ok {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
-			status := http.StatusUnauthorized
-			if failures != nil && !failures.Allow(clientIP(r, trustProxy, trustedProxyHops)) {
-				status = http.StatusTooManyRequests
-				w.Header().Set("Retry-After", "60")
-			}
-			w.WriteHeader(status)
-			// 錯誤訊息裡不會回顯呼叫端傳來的 token 或任何一部分的
-			// apiKey——依安全規則,這裡絕不可記錄或回傳 API key 或完整
-			// Authorization header 的內容,即使只是為了方便除錯。
-			_, _ = w.Write([]byte(`{"error":"未經授權:請提供正確的 Authorization: Bearer API key"}`))
+			writeAuthFailure(w, r, failures, trustProxy, trustedProxyHops,
+				`{"error":"未經授權:請提供正確的 Authorization: Bearer API key"}`)
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
@@ -149,15 +170,8 @@ func requireAdminToken(
 			ok = sessions.valid(adminSessionToken(r))
 		}
 		if !ok {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
-			status := http.StatusUnauthorized
-			if failures != nil && !failures.Allow(clientIP(r, trustProxy, trustedProxyHops)) {
-				status = http.StatusTooManyRequests
-				w.Header().Set("Retry-After", "60")
-			}
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"管理者驗證失敗"}}`))
+			writeAuthFailure(w, r, failures, trustProxy, trustedProxyHops,
+				`{"error":{"code":"unauthorized","message":"管理者驗證失敗"}}`)
 			return
 		}
 		next.ServeHTTP(w, r)

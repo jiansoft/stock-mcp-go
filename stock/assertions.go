@@ -33,7 +33,7 @@ var (
 	_ SnapshotQuerier   = (*APIClient)(nil)
 	_ FinancialQuerier  = (*APIClient)(nil)
 	_ AnalyticsQuerier  = (*APIClient)(nil)
-	_ StockScreener     = (*APIClient)(nil)
+	_ Screener          = (*APIClient)(nil)
 	_ MarketDataQuerier = (*APIClient)(nil)
 
 	// 健康檢查兩種資料來源都必須支援,/readyz 才能真實反映後端狀態。

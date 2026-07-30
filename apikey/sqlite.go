@@ -54,12 +54,28 @@ func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
 }
 
+// 本檔案裡的 `defer func() { _ = tx.Rollback() }()` 與
+// `defer func() { _ = rows.Close() }()` 都刻意丟棄 error,原因不同但都
+// 明確:
+//
+//   - Rollback:這是「保險用」的回滾。正常路徑會先 Commit 成功,此時
+//     Rollback 必然回傳 sql.ErrTxDone——那是預期中的結果,不是故障。
+//     真正需要回滾的錯誤路徑,錯誤早已由該路徑自己回傳給呼叫端,回滾
+//     本身再失敗也沒有更好的補救動作(連線已經有問題,強行往上報只會
+//     用一個次要錯誤蓋掉真正的根因)。
+//   - rows.Close:掃描迴圈結束後一律會檢查 rows.Err(),讀取過程中真正
+//     的錯誤在那裡就會被攔下;Close 自身的 error 不帶額外資訊。
+//
+// 寫成明確的 `_ =` 而不是裸呼叫,是為了讓「這裡的 error 是被刻意丟棄的」
+// 與「這裡忘了處理 error」在閱讀與靜態分析上都能區分開來。
+
+// Migrate 建立(或補齊)API key 資料庫的資料表與索引,可重複執行。
 func (r *SQLiteRepository) Migrate(ctx context.Context) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.New("無法開始 API key migration")
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	const schema = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -119,7 +135,7 @@ func (r *SQLiteRepository) EnsurePepper(ctx context.Context, check []byte) error
 	if err != nil {
 		return errors.New("無法開始 pepper 驗證")
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var stored []byte
 	err = tx.QueryRowContext(ctx,
 		`SELECT value FROM mcp_api_key_meta WHERE name = 'pepper_check'`).Scan(&stored)
@@ -155,7 +171,7 @@ func (r *SQLiteRepository) List(ctx context.Context) ([]APIKey, error) {
 	if err != nil {
 		return nil, errors.New("無法讀取 API key 清單")
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []APIKey
 	for rows.Next() {
@@ -372,7 +388,7 @@ func (r *SQLiteRepository) UpdateLastUsed(ctx context.Context, used map[string]t
 	if err != nil {
 		return errors.New("無法開始 last-used transaction")
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for id, at := range used {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE mcp_api_keys
@@ -397,7 +413,7 @@ FROM mcp_api_key_audit WHERE key_id = ? ORDER BY id`, keyID)
 	if err != nil {
 		return nil, errors.New("無法讀取 API key audit")
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []AuditEvent
 	for rows.Next() {
 		var event AuditEvent
@@ -423,7 +439,7 @@ func (r *SQLiteRepository) mutate(
 	if err != nil {
 		return nil, errors.New("無法開始 API key transaction")
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := fn(tx); err != nil {
 		return nil, err
 	}
@@ -449,7 +465,7 @@ WHERE status = 'active' AND deleted_at IS NULL AND revoked_at IS NULL`)
 	if err != nil {
 		return nil, errors.New("無法讀取啟用中的 API key")
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	now := time.Now().UTC()
 	var out []credential
 	for rows.Next() {

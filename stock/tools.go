@@ -100,7 +100,7 @@ type Querier interface {
 	SearchStock(ctx context.Context, query string, limit int) ([]Stock, error)
 	LatestDailyQuote(ctx context.Context, symbol string) (*LatestDailyQuote, error)
 	PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int) ([]HistoricalQuote, error)
-	StockProfile(ctx context.Context, symbol string) (*StockProfile, error)
+	StockProfile(ctx context.Context, symbol string) (*Profile, error)
 }
 
 // AddTools 把四個 tool 註冊到 MCP server,是本套件對外暴露 MCP 能力的
@@ -219,7 +219,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// StockScreener 是獨立能力，避免為了單一 Phase 3 endpoint 擴大既有
 	// Querier。部署期間若 Data API client 尚未具備此方法，工具不會出現，
 	// 比註冊一個必然失敗的入口更能準確反映 server 能力。
-	if screener, ok := q.(StockScreener); ok {
+	if screener, ok := q.(Screener); ok {
 		sts := &screenToolset{screener: screener, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "screen_stocks",
@@ -471,13 +471,13 @@ type PriceHistoryOutput struct {
 	Quotes     []HistoricalQuote `json:"quotes"`
 }
 
-// StockProfileOutput 是 get_stock_profile 的 structuredContent。
-type StockProfileOutput struct {
-	DataKind   string       `json:"data_kind"`
-	DataAsOf   *string      `json:"data_as_of"`
-	IsRealtime bool         `json:"is_realtime"`
-	Disclaimer string       `json:"disclaimer"`
-	Profile    StockProfile `json:"profile"`
+// ProfileOutput 是 get_stock_profile 的 structuredContent。
+type ProfileOutput struct {
+	DataKind   string  `json:"data_kind"`
+	DataAsOf   *string `json:"data_as_of"`
+	IsRealtime bool    `json:"is_realtime"`
+	Disclaimer string  `json:"disclaimer"`
+	Profile    Profile `json:"profile"`
 }
 
 // ---------------------------------------------------------------------------
@@ -652,20 +652,20 @@ func (ts *toolset) latestDailyQuote(ctx context.Context, _ *mcp.CallToolRequest,
 	// 字串的 += 運算子重複串接,每一次串接都會複製整個字串內容,在
 	// 迴圈或多次拼接的情境下效能較差;strings.Builder 內部用可成長的
 	// byte slice 累積內容,只在真正需要輸出時才轉成最終字串。
-	var b strings.Builder
-	fmt.Fprintf(&b, "股票名稱:%s (%s)\n", latest.Stock.Name, latest.Stock.StockSymbol)
+	var b summaryBuilder
+	b.printf("股票名稱:%s (%s)\n", latest.Stock.Name, latest.Stock.StockSymbol)
 	if q := latest.Quote; q != nil {
-		fmt.Fprintf(&b, "日期:%s\n", q.Date)
-		fmt.Fprintf(&b, "收盤價:%s\n", displayFloat(q.ClosingPrice))
-		fmt.Fprintf(&b, "漲跌:%s (%s%%)\n", displayFloat(q.Change), displayFloat(q.ChangeRange))
-		fmt.Fprintf(&b, "成交量:%s 股\n", displayFloat(q.TradingVolume))
+		b.printf("日期:%s\n", q.Date)
+		b.printf("收盤價:%s\n", displayFloat(q.ClosingPrice))
+		b.printf("漲跌:%s (%s%%)\n", displayFloat(q.Change), displayFloat(q.ChangeRange))
+		b.printf("成交量:%s 股\n", displayFloat(q.TradingVolume))
 	} else {
 		// Quote 是 nil 代表股票存在,但資料庫還沒有這支股票的日報價
 		// (見 repository.go 的說明);摘要文字要誠實反映這件事,而不是
 		// 假裝有資料卻全部顯示「無」,讓使用者誤以為系統故障。
-		b.WriteString("此股票目前在資料庫中沒有最新日報價。\n")
+		b.writeString("此股票目前在資料庫中沒有最新日報價。\n")
 	}
-	fmt.Fprintf(&b, "免責聲明:%s", Disclaimer)
+	b.printf("免責聲明:%s", Disclaimer)
 
 	out := LatestQuoteOutput{
 		DataKind: "latest_daily_quote",
@@ -758,26 +758,26 @@ func (ts *toolset) stockProfile(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, nil, fmt.Errorf("找不到股票代號:%s", in.Symbol)
 	}
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "股票名稱:%s (%s)\n", profile.Stock.Name, profile.Stock.StockSymbol)
-	fmt.Fprintf(&b, "近一季 EPS:%s\n", displayFloat(profile.LastOneEPS))
-	fmt.Fprintf(&b, "近四季 EPS:%s\n", displayFloat(profile.LastFourEPS))
-	fmt.Fprintf(&b, "每股淨值:%s\n", displayFloat(profile.NetAssetValuePerShare))
+	var b summaryBuilder
+	b.printf("股票名稱:%s (%s)\n", profile.Stock.Name, profile.Stock.StockSymbol)
+	b.printf("近一季 EPS:%s\n", displayFloat(profile.LastOneEPS))
+	b.printf("近四季 EPS:%s\n", displayFloat(profile.LastFourEPS))
+	b.printf("每股淨值:%s\n", displayFloat(profile.NetAssetValuePerShare))
 	if profile.ReturnOnEquity != nil {
-		fmt.Fprintf(&b, "ROE:%s%%\n", formatFloat(*profile.ReturnOnEquity))
+		b.printf("ROE:%s%%\n", formatFloat(*profile.ReturnOnEquity))
 	} else {
-		b.WriteString("ROE:無\n")
+		b.writeString("ROE:無\n")
 	}
 	if profile.Quote != nil {
-		fmt.Fprintf(&b, "最新收盤價:%s\n", displayFloat(profile.Quote.ClosingPrice))
+		b.printf("最新收盤價:%s\n", displayFloat(profile.Quote.ClosingPrice))
 	}
 	if h := profile.History; h != nil {
-		fmt.Fprintf(&b, "歷史最高價:%s (%s)\n", displayFloat(h.MaximumPrice), displayString(h.MaximumPriceDateOn))
-		fmt.Fprintf(&b, "歷史最低價:%s (%s)\n", displayFloat(h.MinimumPrice), displayString(h.MinimumPriceDateOn))
+		b.printf("歷史最高價:%s (%s)\n", displayFloat(h.MaximumPrice), displayString(h.MaximumPriceDateOn))
+		b.printf("歷史最低價:%s (%s)\n", displayFloat(h.MinimumPrice), displayString(h.MinimumPriceDateOn))
 	}
-	fmt.Fprintf(&b, "免責聲明:%s", Disclaimer)
+	b.printf("免責聲明:%s", Disclaimer)
 
-	out := StockProfileOutput{
+	out := ProfileOutput{
 		DataKind:   "stock_profile",
 		DataAsOf:   quoteDataAsOf(profile.Quote),
 		IsRealtime: false,
@@ -821,6 +821,32 @@ func quoteDataAsOf(q *DailyQuote) *string {
 	d := q.Date
 	return &d
 }
+
+// summaryBuilder 累積工具回應的人類可讀摘要。
+//
+// 它存在的唯一理由是 fmt.Fprintf 的 error 回傳值。摘要是寫進
+// strings.Builder 的,而 strings.Builder.Write 的文件明確保證「回傳的
+// error 永遠是 nil」——換句話說這裡的寫入在型別上會回傳 error,實際上
+// 卻不可能失敗。若在每個呼叫點都寫成 `_, _ = fmt.Fprintf(&b, ...)`,
+// 十幾行摘要組裝的邏輯會被這個純粹的儀式性前綴淹沒;若原樣不管,靜態
+// 分析又會對每一行報 unhandled error。
+//
+// 因此把「不可能失敗」這件事集中在這裡宣告一次:呼叫端維持乾淨的
+// b.printf(...),而錯誤被明確丟棄的位置只有下面這兩行,一眼就能看見
+// 並驗證其正確性。
+type summaryBuilder struct {
+	b strings.Builder
+}
+
+func (s *summaryBuilder) printf(format string, args ...any) {
+	_, _ = fmt.Fprintf(&s.b, format, args...)
+}
+
+func (s *summaryBuilder) writeString(text string) {
+	_, _ = s.b.WriteString(text)
+}
+
+func (s *summaryBuilder) String() string { return s.b.String() }
 
 // displayFloat 把 *float64 格式化成摘要文字給人類閱讀:nil 顯示「無」,
 // 避免摘要裡出現像 Go 內部表示法的 "<nil>" 這種對一般使用者毫無意義的

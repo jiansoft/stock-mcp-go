@@ -21,9 +21,9 @@ import (
 // Phase 3:固定白名單條件選股
 // ---------------------------------------------------------------------------
 
-// screenToolset 綁定 StockScreener 與安全記錄函式。
+// screenToolset 綁定 Screener 與安全記錄函式。
 type screenToolset struct {
-	screener StockScreener
+	screener Screener
 	logf     func(string, ...any)
 }
 
@@ -87,8 +87,8 @@ func screenStocksSchema() *jsonschema.Schema {
 	}
 }
 
-// StockScreeningOutput 是 Data API envelope 加上 MCP 分析型共通欄位。
-type StockScreeningOutput struct {
+// ScreeningOutput 是 Data API envelope 加上 MCP 分析型共通欄位。
+type ScreeningOutput struct {
 	DataKind   string          `json:"data_kind"`
 	IsRealtime bool            `json:"is_realtime"`
 	Disclaimer string          `json:"disclaimer"`
@@ -188,7 +188,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			displayFloat(first.RevenueYOYPercent), displayFloat(first.EarningsPerShare), displayFloat(first.ReturnOnEquity), displayFloat(first.DividendYieldPercent),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate), AnalysisDisclaimer)
 	}
-	return textResult(summary), StockScreeningOutput{
+	return textResult(summary), ScreeningOutput{
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
 		DataAsOf: envelope.DataAsOf, Stocks: envelope.Stocks,
 	}, nil

@@ -272,7 +272,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // quoteColumns 對應 last_daily_quotes 這張表的查詢結果掃描目標。
-// LatestDailyQuote 與 StockProfile 兩個方法都需要「同樣的 19 個報價欄位」,
+// LatestDailyQuote 與 Profile 兩個方法都需要「同樣的 19 個報價欄位」,
 // 抽出這個共用型別可以避免兩處程式碼重複、日後修改時忘記同步更新其中一處。
 //
 // ## 給 Go 新手的背景知識:為什麼欄位型別是 pgtype.Numeric 而不是 float64?
@@ -577,12 +577,12 @@ func (r *Repository) PriceHistory(ctx context.Context, symbol string, from, to *
 //
 // # 回傳值
 //   - (nil, nil):股票代號不存在。
-//   - (&StockProfile{...}, nil):股票存在。其中 Quote 欄位依
+//   - (&Profile{...}, nil):股票存在。其中 Quote 欄位依
 //     last_daily_quotes 是否有對應資料而可能是 nil;History 欄位依
 //     quote_history_record 是否有對應資料而可能是 nil;基本面數字欄位
 //     (EPS、ROE 等)缺值時一律是 nil,絕不用 0 或猜測值取代——這是本
 //     專案「NULL 就是 NULL,不可偽裝成 0」原則在這個方法裡的具體實踐。
-func (r *Repository) StockProfile(ctx context.Context, symbol string) (*StockProfile, error) {
+func (r *Repository) StockProfile(ctx context.Context, symbol string) (*Profile, error) {
 	var (
 		s Stock
 		q quoteColumns
@@ -639,7 +639,7 @@ func (r *Repository) StockProfile(ctx context.Context, symbol string) (*StockPro
 		}
 	}
 
-	return &StockProfile{
+	return &Profile{
 		Stock:                 s,
 		Quote:                 q.toDailyQuote(),
 		LastOneEPS:            numericToFloat(lastOneEPS),

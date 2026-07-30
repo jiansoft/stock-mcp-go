@@ -116,12 +116,12 @@ func yieldRankingSchema() *jsonschema.Schema {
 
 // ValuationOutput 是估值 Data API envelope 加上 MCP 分析中繼資料。
 type ValuationOutput struct {
-	DataKind    string          `json:"data_kind"`
-	IsRealtime  bool            `json:"is_realtime"`
-	Disclaimer  string          `json:"disclaimer"`
-	StockSymbol string          `json:"stock_symbol"`
-	DataAsOf    *string         `json:"data_as_of"`
-	Valuation   *StockValuation `json:"valuation"`
+	DataKind    string     `json:"data_kind"`
+	IsRealtime  bool       `json:"is_realtime"`
+	Disclaimer  string     `json:"disclaimer"`
+	StockSymbol string     `json:"stock_symbol"`
+	DataAsOf    *string    `json:"data_as_of"`
+	Valuation   *Valuation `json:"valuation"`
 }
 
 // MarketBreadthOutput 是市場廣度 envelope 加上 MCP 分析中繼資料。

@@ -77,8 +77,8 @@ func (c *APIClient) PriceHistory(ctx context.Context, symbol string, from, to *t
 }
 
 // StockProfile 查詢完整股票 profile；404 代表股票不存在。
-func (c *APIClient) StockProfile(ctx context.Context, symbol string) (*StockProfile, error) {
-	var body StockProfile
+func (c *APIClient) StockProfile(ctx context.Context, symbol string) (*Profile, error) {
+	var body Profile
 	found, err := c.getFound(ctx, "/api/v1/stocks/"+url.PathEscape(symbol)+"/profile", &body)
 	if err != nil || !found {
 		return nil, err
@@ -172,7 +172,7 @@ func (c *APIClient) DividendHistory(ctx context.Context, symbol string, opt Divi
 // StockValuation 查詢個股估值並回傳完整 envelope；404 只代表股票不存在。
 // 股票存在但 31 天回溯窗口內沒有估值時，Data API 會以 200 回傳
 // valuation:null，client 會原樣保留而不把它誤判成錯誤。
-func (c *APIClient) StockValuation(ctx context.Context, symbol string, opt ValuationOptions) (*StockValuationEnvelope, error) {
+func (c *APIClient) StockValuation(ctx context.Context, symbol string, opt ValuationOptions) (*ValuationEnvelope, error) {
 	values := url.Values{}
 	if opt.Date != "" {
 		values.Set("date", opt.Date)
@@ -181,7 +181,7 @@ func (c *APIClient) StockValuation(ctx context.Context, symbol string, opt Valua
 	if query := values.Encode(); query != "" {
 		path += "?" + query
 	}
-	var body StockValuationEnvelope
+	var body ValuationEnvelope
 	found, err := c.getFound(ctx, path, &body)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func (c *APIClient) DividendYieldRanking(ctx context.Context, opt YieldRankingOp
 // ScreenStocks 以固定白名單 query parameters 查詢條件選股，並回傳完整
 // envelope。浮點門檻只有非 nil 時才送出，因為 0 是合法條件，不能用
 // Go 零值把「未提供」與「門檻為 0」混為一談。
-func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*StockScreening, error) {
+func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Screening, error) {
 	values := url.Values{
 		"market":     []string{opt.Market},
 		"sort_by":    []string{opt.SortBy},
@@ -272,7 +272,7 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Stock
 		values.Set("min_dividend_yield_percent", formatFloat(*opt.MinDividendYieldPercent))
 	}
 
-	var body StockScreening
+	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
 		return nil, err
 	}
@@ -397,7 +397,7 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 		// 用 io.LimitReader 包一層當作保險:萬一對端回傳一個異常巨大的
 		// 錯誤頁面,drain 的成本也有上限,不會為了重用連線反而卡住。
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil

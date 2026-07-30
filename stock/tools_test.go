@@ -31,7 +31,7 @@ type fakeQuerier struct {
 	stocks  []Stock
 	latest  *LatestDailyQuote
 	history []HistoricalQuote
-	profile *StockProfile
+	profile *Profile
 
 	// gotSymbol 記錄「最後一次被呼叫時,傳進來的股票代號實際上是什麼」,
 	// 讓測試可以驗證 tools.go 的 normalizeSymbol(trim + 轉大寫)有沒有
@@ -56,7 +56,7 @@ func (f *fakeQuerier) PriceHistory(_ context.Context, symbol string, from, to *t
 	return f.history, nil
 }
 
-func (f *fakeQuerier) StockProfile(_ context.Context, symbol string) (*StockProfile, error) {
+func (f *fakeQuerier) StockProfile(_ context.Context, symbol string) (*Profile, error) {
 	f.gotSymbol = symbol
 	return f.profile, nil
 }
@@ -123,7 +123,7 @@ func newFinancialToolset(f *fakeFinancialQuerier) *financialToolset {
 // handler 正規化後真正傳給 client 的 options。
 type fakeAnalyticsQuerier struct {
 	fakeQuerier
-	valuation *StockValuationEnvelope
+	valuation *ValuationEnvelope
 	breadth   *MarketBreadth
 	ranking   *DividendYieldRanking
 	err       error
@@ -134,7 +134,7 @@ type fakeAnalyticsQuerier struct {
 	gotRankingOpt   YieldRankingOptions
 }
 
-func (f *fakeAnalyticsQuerier) StockValuation(_ context.Context, symbol string, opt ValuationOptions) (*StockValuationEnvelope, error) {
+func (f *fakeAnalyticsQuerier) StockValuation(_ context.Context, symbol string, opt ValuationOptions) (*ValuationEnvelope, error) {
 	f.gotSymbol, f.gotValuationOpt = symbol, opt
 	return f.valuation, f.err
 }
@@ -154,16 +154,16 @@ func newAnalyticsToolset(f *fakeAnalyticsQuerier) *analyticsToolset {
 	return &analyticsToolset{analytics: f, logf: func(string, ...any) {}}
 }
 
-// fakeStockScreener 實作 Querier 與 StockScreener，供 Phase 3 handler 與
+// fakeStockScreener 實作 Querier 與 Screener，供 Phase 3 handler 與
 // AddTools 能力註冊測試使用。
 type fakeStockScreener struct {
 	fakeQuerier
-	result *StockScreening
+	result *Screening
 	err    error
 	gotOpt ScreenOptions
 }
 
-func (f *fakeStockScreener) ScreenStocks(_ context.Context, opt ScreenOptions) (*StockScreening, error) {
+func (f *fakeStockScreener) ScreenStocks(_ context.Context, opt ScreenOptions) (*Screening, error) {
 	f.gotOpt = opt
 	return f.result, f.err
 }
@@ -418,12 +418,12 @@ func TestStockProfileTool(t *testing.T) {
 	})
 
 	t.Run("缺失的基本面欄位維持 null 並在摘要顯示「無」", func(t *testing.T) {
-		ts := newToolset(&fakeQuerier{profile: &StockProfile{Stock: testStock}})
+		ts := newToolset(&fakeQuerier{profile: &Profile{Stock: testStock}})
 		res, out, err := ts.stockProfile(t.Context(), nil, SymbolInput{Symbol: "2330"})
 		if err != nil {
 			t.Fatalf("預期成功,實際錯誤:%v", err)
 		}
-		got := out.(StockProfileOutput)
+		got := out.(ProfileOutput)
 		if got.Profile.LastOneEPS != nil || got.Profile.History != nil {
 			t.Error("缺失資料必須維持 nil,不可用其他值取代")
 		}
@@ -949,9 +949,9 @@ func summaryOf(t *testing.T, res *mcp.CallToolResult) string {
 // 摘要，以及 Data API fixture 到 structuredContent 的數值/null/[] 一致性。
 func TestAnalyticsTools(t *testing.T) {
 	t.Run("估值:代號日期正規化且完整 envelope 原樣輸出", func(t *testing.T) {
-		fixture := &StockValuationEnvelope{
+		fixture := &ValuationEnvelope{
 			StockSymbol: "2330", DataAsOf: ptr("2026-07-16"),
-			Valuation: &StockValuation{StockSymbol: "2330", Date: "2026-07-16", ClosingPrice: ptr(1045.0), Percentage: ptr(50.0), YearCount: 5, Cheap: ptr(800.0), Fair: ptr(1000.0), Expensive: ptr(1200.0), ValuationBand: "overvalued"},
+			Valuation: &Valuation{StockSymbol: "2330", Date: "2026-07-16", ClosingPrice: ptr(1045.0), Percentage: ptr(50.0), YearCount: 5, Cheap: ptr(800.0), Fair: ptr(1000.0), Expensive: ptr(1200.0), ValuationBand: "overvalued"},
 		}
 		f := &fakeAnalyticsQuerier{valuation: fixture}
 		res, out, err := newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: " 2330 ", Date: "2026-07-16"})
@@ -978,7 +978,7 @@ func TestAnalyticsTools(t *testing.T) {
 	})
 
 	t.Run("估值:無資料保留 null且不存在股票/內部錯誤分層安全", func(t *testing.T) {
-		f := &fakeAnalyticsQuerier{valuation: &StockValuationEnvelope{StockSymbol: "4414"}}
+		f := &fakeAnalyticsQuerier{valuation: &ValuationEnvelope{StockSymbol: "4414"}}
 		_, out, err := newAnalyticsToolset(f).stockValuation(t.Context(), nil, ValuationInput{Symbol: "4414"})
 		if err != nil {
 			t.Fatalf("查無估值不是錯誤:%v", err)
@@ -1144,7 +1144,7 @@ func TestAnalyticsToolsAreReadOnly(t *testing.T) {
 // TestScreenStocksTool 驗證 Phase 3 的實質 filter、固定排序白名單、預設值、
 // structuredContent、null/[] 與安全錯誤分層。
 func TestScreenStocksTool(t *testing.T) {
-	empty := &StockScreening{Stocks: []ScreenedStock{}}
+	empty := &Screening{Stocks: []ScreenedStock{}}
 
 	t.Run("market all 單獨或只有排序不算實質篩選", func(t *testing.T) {
 		for _, in := range []ScreenStocksInput{{}, {Market: "all"}, {Market: "all", SortBy: "eps", SortOrder: "desc", Limit: 10}} {
@@ -1232,7 +1232,7 @@ func TestScreenStocksTool(t *testing.T) {
 	})
 
 	t.Run("完整 fixture 原樣進入 structuredContent 且摘要揭露各指標日期", func(t *testing.T) {
-		fixture := &StockScreening{Stocks: []ScreenedStock{{
+		fixture := &Screening{Stocks: []ScreenedStock{{
 			StockSymbol: "2330", Name: "台積電", MarketID: 2, IndustryID: 24,
 			RevenueYOYPercent: ptr(26.9), EarningsPerShare: ptr(13.94), ReturnOnEquity: ptr(8.9),
 			DividendYieldPercent: ptr(2.1), ValuationBand: ptr("fair_valued"), ValuationPercentage: ptr(130.6),

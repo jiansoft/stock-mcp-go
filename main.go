@@ -71,7 +71,10 @@ func main() {
 
 	if *healthCheckMode {
 		if err := runHealthCheck(context.Background()); err != nil {
-			fmt.Fprintln(os.Stderr, "健康檢查失敗:", err)
+			// 寫入 stderr 的 error 刻意丟棄:標準錯誤輸出若連寫都寫不進去
+			// (例如被關閉或指向已滿的裝置),已經沒有任何更可靠的管道可以
+			// 回報這件事,而下一行的 os.Exit(1) 才是真正傳達失敗的方式。
+			_, _ = fmt.Fprintln(os.Stderr, "健康檢查失敗:", err)
 			os.Exit(1)
 		}
 		return
@@ -87,7 +90,9 @@ func main() {
 		// 訊息用「結束於錯誤」而不是「啟動失敗」:run 回傳的 error 也
 		// 可能來自關閉階段(例如 Close 失敗),寫死成「啟動失敗」會在
 		// 排查問題時把人引導到完全錯誤的方向。
-		fmt.Fprintln(os.Stderr, "stock-mcp 結束於錯誤:", err)
+		// 與上面的健康檢查同理:stderr 寫入失敗已無從回報,結束碼才是
+		// 真正傳達失敗的管道。
+		_, _ = fmt.Fprintln(os.Stderr, "stock-mcp 結束於錯誤:", err)
 		os.Exit(1)
 	}
 }
@@ -137,14 +142,27 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer keyRepo.Close()
+	// 這兩個 Close 的 error 值得記錄而不是丟棄:關閉 SQLite 可能因為
+	// 寫入 flush 失敗而出錯,那代表 API key 資料可能沒有完整落盤,是排查
+	// 資料異常時的重要線索。但刻意只記錄、不改變 run 的回傳值——此時
+	// 主要的關閉流程已經走完,用一個次要的清理錯誤去覆蓋(或無中生有)
+	// 程式的結束狀態,只會讓真正的結束原因更難判讀。
+	defer func() {
+		if err := keyRepo.Close(); err != nil {
+			logger.Error("關閉 API key 資料庫失敗", "error", err)
+		}
+	}()
 	keyService, err := apikey.NewService(
 		ctx, keyRepo, []byte(cfg.APIKeyPepper), cfg.APIKey, logger,
 	)
 	if err != nil {
 		return err
 	}
-	defer keyService.Close()
+	defer func() {
+		if err := keyService.Close(); err != nil {
+			logger.Error("關閉 API key 服務失敗", "error", err)
+		}
+	}()
 
 	var repo stock.Querier
 	var closeDataSource func()
@@ -280,7 +298,7 @@ func runHealthCheck(ctx context.Context) error {
 	}
 	// 讀完並關閉 body:這個行程馬上就要結束,實際影響有限,但保持與
 	// stock/apiclient.go 一致的習慣,不留下「用完不讀完就關」的壞範例。
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 
 	if resp.StatusCode != http.StatusOK {

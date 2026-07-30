@@ -39,19 +39,21 @@ import (
 // 不是「各個 Phase 的工具邏輯」,後者已由 stock 套件的測試涵蓋。
 type e2eQuerier struct{}
 
-func (e2eQuerier) SearchStock(_ context.Context, query string, limit int) ([]stock.Stock, error) {
+// 這四個方法的參數一律省略名稱:這個 fake 回傳的是固定資料,不依賴任何
+// 輸入,列出參數名稱只會讓讀者誤以為它們有被使用。
+func (e2eQuerier) SearchStock(context.Context, string, int) ([]stock.Stock, error) {
 	return []stock.Stock{{StockSymbol: "2330", Name: "台積電"}}, nil
 }
 
-func (e2eQuerier) LatestDailyQuote(_ context.Context, symbol string) (*stock.LatestDailyQuote, error) {
+func (e2eQuerier) LatestDailyQuote(context.Context, string) (*stock.LatestDailyQuote, error) {
 	return nil, nil // nil 代表查無此股票,工具應回 tool-level error
 }
 
-func (e2eQuerier) PriceHistory(_ context.Context, symbol string, from, to *time.Time, limit int) ([]stock.HistoricalQuote, error) {
+func (e2eQuerier) PriceHistory(context.Context, string, *time.Time, *time.Time, int) ([]stock.HistoricalQuote, error) {
 	return []stock.HistoricalQuote{}, nil
 }
 
-func (e2eQuerier) StockProfile(_ context.Context, symbol string) (*stock.StockProfile, error) {
+func (e2eQuerier) StockProfile(context.Context, string) (*stock.Profile, error) {
 	return nil, nil
 }
 
@@ -111,7 +113,7 @@ func (c *e2eClient) post(body string) (int, string) {
 	if err != nil {
 		c.t.Fatalf("送出請求失敗:%v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.t.Fatalf("讀取回應失敗:%v", err)
@@ -445,7 +447,7 @@ func TestE2EProtocolErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("送出請求失敗:%v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusOK {
 			t.Errorf("不合法的 Accept header 應被拒絕,實際為 %d", resp.StatusCode)
@@ -459,7 +461,7 @@ func TestE2EProtocolErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("送出請求失敗:%v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("預期 401,實際為 %d", resp.StatusCode)
@@ -484,7 +486,7 @@ func TestE2ELatestProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("以最新協定連線失敗:%v", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	tools, err := session.ListTools(t.Context(), nil)
 	if err != nil {
@@ -535,7 +537,7 @@ func TestE2EStatelessTransport(t *testing.T) {
 				t.Fatalf("送出 %s 失敗:%v", method, err)
 			}
 			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("%s 預期 405(stateless 無長連線也無 session 可終止),實際為 %d",
 					method, resp.StatusCode)

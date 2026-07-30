@@ -207,7 +207,9 @@ func limitBody(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			// 錯誤訊息附上上限值,讓呼叫端知道該把請求縮到多小;這個數字
 			// 是程式常數,不是敏感資訊,可以安全回傳。
-			fmt.Fprintf(w, `{"error":"請求內容過大,單一請求上限為 %d 位元組"}`, maxRequestBody)
+			// 寫入失敗只代表用戶端已經斷線,伺服器端沒有補救動作可做,
+			// 與本檔案其他回應路徑的 `_, _ = w.Write(...)` 保持一致。
+			_, _ = fmt.Fprintf(w, `{"error":"請求內容過大,單一請求上限為 %d 位元組"}`, maxRequestBody)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)

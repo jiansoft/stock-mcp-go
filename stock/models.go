@@ -182,14 +182,14 @@ type QuoteHistoryRecord struct {
 	MinimumPriceToBookRatioDateOn *string  `json:"minimum_price_to_book_ratio_date_on"`
 }
 
-// StockProfile 是 get_stock_profile 工具的完整輸出:基本資料、最新報價、
+// Profile 是 get_stock_profile 工具的完整輸出:基本資料、最新報價、
 // 基本面數字與歷史高低點,一次到位。
 //
 // 缺失資料一律維持 nil(JSON null),絕不以 0 或猜測值取代——這條規則
 // 對財務數字尤其重要:例如一家公司近一季 EPS 是負值(虧損)跟「這項
 // 資料尚未公布/不存在」,如果都用 0 表示,會讓使用者誤判成「損益兩平」,
 // 是完全錯誤的資訊。
-type StockProfile struct {
+type Profile struct {
 	Stock Stock       `json:"stock"`
 	Quote *DailyQuote `json:"quote"`
 	// LastOneEPS 近一季每股盈餘;LastFourEPS 近四季合計每股盈餘。
@@ -420,13 +420,13 @@ type FinancialQuerier interface {
 	DividendHistory(context.Context, string, DividendHistoryOptions) (*DividendHistory, error)
 }
 
-// StockValuation 是 estimate 表某個交易日的估值計算結果。
+// Valuation 是 estimate 表某個交易日的估值計算結果。
 //
 // 所有金額與比率都使用指標，因為 stock_rust 遇到無法安全轉成 JSON
 // number 的 NUMERIC 值時會回傳 null；MCP 必須保留這個「缺值」語意，
 // 不可用 0 取代。YearCount 是資料庫保證存在的整數，因此維持值型別。
 // Cheap/Fair/Expensive 是模型算出的區間分界，並不是目標價或買賣建議。
-type StockValuation struct {
+type Valuation struct {
 	StockSymbol       string   `json:"stock_symbol"`
 	Date              string   `json:"date"`
 	ClosingPrice      *float64 `json:"closing_price"`
@@ -453,12 +453,12 @@ type StockValuation struct {
 	ValuationBand     string   `json:"valuation_band"`
 }
 
-// StockValuationEnvelope 是 valuation endpoint 的完整回應。
+// ValuationEnvelope 是 valuation endpoint 的完整回應。
 // Valuation 為 nil 表示股票存在，但指定日期的 31 天回溯窗口內沒有資料。
-type StockValuationEnvelope struct {
-	StockSymbol string          `json:"stock_symbol"`
-	DataAsOf    *string         `json:"data_as_of"`
-	Valuation   *StockValuation `json:"valuation"`
+type ValuationEnvelope struct {
+	StockSymbol string     `json:"stock_symbol"`
+	DataAsOf    *string    `json:"data_as_of"`
+	Valuation   *Valuation `json:"valuation"`
 }
 
 // MarketBreadthPoint 是單一交易日的市場漲跌、均線位置與估值分布統計。
@@ -538,7 +538,7 @@ type YieldRankingOptions struct {
 // 能力；三個方法都回完整 Data API envelope，避免 MCP 端重新推算
 // data_as_of 或改變 null/空陣列語意。
 type AnalyticsQuerier interface {
-	StockValuation(context.Context, string, ValuationOptions) (*StockValuationEnvelope, error)
+	StockValuation(context.Context, string, ValuationOptions) (*ValuationEnvelope, error)
 	MarketBreadth(context.Context, MarketBreadthOptions) (*MarketBreadth, error)
 	DividendYieldRanking(context.Context, YieldRankingOptions) (*DividendYieldRanking, error)
 }
@@ -567,10 +567,10 @@ type ScreenedStock struct {
 	YieldDate            *string  `json:"yield_date"`
 }
 
-// StockScreening 是 stocks/screen endpoint 的完整 envelope。
+// Screening 是 stocks/screen endpoint 的完整 envelope。
 // 混合指標沒有單一正確資料日，所以 DataAsOf 依契約固定為 nil；資料日期
 // 放在每筆 ScreenedStock 內。Stocks 空結果仍必須序列化為 []。
-type StockScreening struct {
+type Screening struct {
 	DataAsOf *string         `json:"data_as_of"`
 	Stocks   []ScreenedStock `json:"stocks"`
 }
@@ -593,11 +593,11 @@ type ScreenOptions struct {
 	Limit                   int
 }
 
-// StockScreener 是 Phase 3 選股工具對資料來源的最小需求介面。
+// Screener 是 Phase 3 選股工具對資料來源的最小需求介面。
 // 介面定義在消費端，AddTools 因此能只在注入來源真的支援 screen endpoint
 // 時註冊工具；完整 envelope 回傳可保留 data_as_of:null 與空陣列語意。
-type StockScreener interface {
-	ScreenStocks(context.Context, ScreenOptions) (*StockScreening, error)
+type Screener interface {
+	ScreenStocks(context.Context, ScreenOptions) (*Screening, error)
 }
 
 // ---------------------------------------------------------------------------
