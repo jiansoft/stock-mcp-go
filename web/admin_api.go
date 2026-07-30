@@ -17,6 +17,7 @@ import (
 const (
 	adminPagePath    = "/admin/mcp-api-keys"
 	adminAPIBasePath = "/api/admin/mcp-api-keys"
+	adminSessionPath = "/api/admin/session"
 	maxAdminBody     = 64 << 10
 )
 
@@ -24,12 +25,17 @@ const (
 var adminAssets embed.FS
 
 type adminAPI struct {
-	keys *apikey.Service
+	keys       *apikey.Service
+	sessions   *adminSessions
+	trustProxy bool
 }
 
 func registerAPIKeyAdmin(mux *http.ServeMux, cfg *config.Config, keys *apikey.Service) {
-	api := &adminAPI{keys: keys}
+	sessions := newAdminSessions(adminSessionTTL)
+	api := &adminAPI{keys: keys, sessions: sessions, trustProxy: cfg.TrustProxy}
 	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("POST "+adminSessionPath, api.login)
+	adminMux.HandleFunc("DELETE "+adminSessionPath, api.logout)
 	adminMux.HandleFunc("GET "+adminAPIBasePath, api.list)
 	adminMux.HandleFunc("POST "+adminAPIBasePath, api.create)
 	adminMux.HandleFunc("GET "+adminAPIBasePath+"/{id}", api.get)
@@ -42,6 +48,7 @@ func registerAPIKeyAdmin(mux *http.ServeMux, cfg *config.Config, keys *apikey.Se
 	failures := NewRateLimiter(time.Minute, 10)
 	protected := requireAdminToken(
 		cfg.AdminToken,
+		sessions,
 		failures,
 		cfg.TrustProxy,
 		cfg.TrustedProxyHops,
@@ -49,9 +56,30 @@ func registerAPIKeyAdmin(mux *http.ServeMux, cfg *config.Config, keys *apikey.Se
 	)
 	mux.Handle(adminAPIBasePath, protected)
 	mux.Handle(adminAPIBasePath+"/", protected)
+	mux.Handle(adminSessionPath, protected)
 	mux.HandleFunc("GET "+adminPagePath, serveAdminPage)
 	mux.HandleFunc("GET /admin/assets/api-keys.css", serveAdminAsset("admin.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET /admin/assets/api-keys.js", serveAdminAsset("admin.js", "text/javascript; charset=utf-8"))
+}
+
+// login 只在 requireAdminToken 已驗證通過後才會被呼叫,因此這裡不需要
+// 再檢查一次憑證——它的職責單純是「把已驗證的身分換成一張短期票券」。
+func (a *adminAPI) login(w http.ResponseWriter, r *http.Request) {
+	token, ttl, err := a.sessions.issue()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": map[string]string{"code": "internal", "message": "無法建立管理工作階段"},
+		})
+		return
+	}
+	setAdminSessionCookie(w, r, token, ttl, a.trustProxy)
+	writeJSON(w, http.StatusOK, map[string]any{"expiresIn": int(ttl.Seconds())})
+}
+
+func (a *adminAPI) logout(w http.ResponseWriter, r *http.Request) {
+	a.sessions.revoke(adminSessionToken(r))
+	clearAdminSessionCookie(w, r, a.trustProxy)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *adminAPI) list(w http.ResponseWriter, r *http.Request) {

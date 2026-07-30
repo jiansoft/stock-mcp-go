@@ -3,15 +3,16 @@ package main
 // 本檔案測試 main 套件裡幾個「接線層」的關鍵行為,它們都無法用純粹的
 // 單元測試涵蓋,必須真的把伺服器跑起來才驗證得到:
 //
-//  1. MCP session 的閒置逾時確實會回收 session 與其背景 goroutine。
-//  2. 即使有 MCP 的 SSE 長連線還開著,優雅關閉流程仍能正常結束(不會
-//     把「Shutdown 逾時」誤當成錯誤往上傳)。
+//  1. transport 確實運作在 stateless 模式(這是支援 MCP 2026-07-28 的
+//     前提),且反覆請求不會累積 session 與背景 goroutine。
+//  2. 即使有請求還沒結束,優雅關閉流程仍能正常結束(不會把「Shutdown
+//     逾時」誤當成錯誤往上傳)。
 //  3. -health-check 模式(容器 HEALTHCHECK 實際執行的路徑)能正確反映
 //     服務的就緒狀態。
 //
-// 前兩項對應審查報告裡的 P0 與 P1:兩者原本都只會在正式部署後才顯現
-// (一個是長時間執行後記憶體耗盡,一個是每次 SIGTERM 都以結束碼 1 離開),
-// 加上回歸測試才能確保未來改動不會默默把它們改回去。
+// 後兩項對應審查報告裡的 P1;第 1 項原本是 P0(session 洩漏),在改用
+// stateless 之後從「靠逾時圍堵」變成「結構上不可能發生」,測試也隨之
+// 改為直接釘住 stateless 這個前提。
 //
 // MCP 協定層面的端對端測試(initialize / tools/list / tools/call 等)
 // 在 e2e_test.go。
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,8 +55,11 @@ func startTestServer(t *testing.T, handler http.Handler) (string, *http.Server) 
 	return "http://" + ln.Addr().String(), srv
 }
 
-// postInitialize 送出一次 initialize 並回傳伺服器指派的 session id。
-func postInitialize(t *testing.T, url string) string {
+// postInitialize 送出一次舊協定的 initialize,回傳伺服器的 HTTP 狀態碼。
+//
+// stateless 模式下伺服器不再發放 Mcp-Session-Id,但舊協定的 initialize
+// 本身仍必須被接受——這是對既有用戶端的相容性保證。
+func postInitialize(t *testing.T, url string) int {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(initializeBody))
 	if err != nil {
@@ -70,58 +75,75 @@ func postInitialize(t *testing.T, url string) string {
 	// 必須讀完 body,底層連線才能被重複使用,也才能確保伺服器端已經
 	// 完整處理完這次請求。
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("initialize 預期 200,實際為 %d", resp.StatusCode)
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		t.Errorf("stateless 模式不應發放 Mcp-Session-Id,實際收到 %q", sid)
 	}
-	return resp.Header.Get("Mcp-Session-Id")
+	return resp.StatusCode
 }
 
-func TestMCPSessionTimeout(t *testing.T) {
-	t.Run("production 設定的 session 逾時必須大於零", func(t *testing.T) {
-		// 這是整個 P0 修正的核心不變量:零值在 go-sdk 裡代表「永不逾時」,
-		// 一旦有人不小心把它改回 0,session 與 goroutine 就會重新開始
-		// 無限累積。用一個極簡的斷言把這件事釘死。
-		if mcpSessionTimeout <= 0 {
-			t.Fatalf("mcpSessionTimeout 必須大於零(零值代表 session 永不關閉),實際為 %v", mcpSessionTimeout)
+// TestStatelessTransport 釘住「必須是 stateless」這個前提。
+//
+// 這不只是效能或風格偏好:go-sdk 只在 stateless 模式提供 MCP 2026-07-28,
+// 一旦有人把 Stateless 改回 false,最新協定的用戶端會全部收到 400,而
+// 舊協定用戶端仍能運作——也就是說這個退化在一般測試下是沉默的,必須
+// 用明確的斷言擋住。
+func TestStatelessTransport(t *testing.T) {
+	base, srv := startTestServer(t, newMCPHandler(newTestMCPServer()))
+	defer srv.Close()
+
+	t.Run("GET 與 DELETE 回 405", func(t *testing.T) {
+		// stateless 模式沒有可供推送的長連線,也沒有 session 可終止。
+		for _, method := range []string{http.MethodGet, http.MethodDelete} {
+			req, err := http.NewRequest(method, base, nil)
+			if err != nil {
+				t.Fatalf("建立 %s 請求失敗:%v", method, err)
+			}
+			req.Header.Set("Accept", "text/event-stream")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("送出 %s 失敗:%v", method, err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusMethodNotAllowed {
+				t.Errorf("%s 預期 405,實際為 %d", method, resp.StatusCode)
+			}
 		}
 	})
 
-	t.Run("閒置的 session 逾時後會被回收", func(t *testing.T) {
-		// 用一個很短的逾時,讓測試不需要真的等 5 分鐘。
-		const timeout = 150 * time.Millisecond
-		base, srv := startTestServer(t, newMCPHandler(newTestMCPServer(), timeout))
-		defer srv.Close()
+	t.Run("舊協定 initialize 仍可運作", func(t *testing.T) {
+		if status := postInitialize(t, base); status != http.StatusOK {
+			t.Fatalf("舊用戶端的 initialize 預期 200,實際為 %d", status)
+		}
+	})
 
+	t.Run("反覆請求不累積 goroutine", func(t *testing.T) {
+		// 舊寫法的 P0:每次 initialize 留下一個 session 與背景 goroutine,
+		// 只能靠閒置逾時回收。stateless 的臨時 session 隨請求結束即關閉,
+		// 因此這裡不需要等待任何逾時就該看到 goroutine 回到基準線。
 		runtime.GC()
 		before := runtime.NumGoroutine()
 
-		const sessions = 50
-		for range sessions {
-			if sid := postInitialize(t, base); sid == "" {
-				t.Fatal("initialize 應回傳 Mcp-Session-Id")
+		const requests = 50
+		for range requests {
+			if status := postInitialize(t, base); status != http.StatusOK {
+				t.Fatalf("initialize 預期 200,實際為 %d", status)
 			}
 		}
 
-		// 先確認這些 session 真的產生了 goroutine,否則後面「有沒有被
-		// 回收」的斷言會因為根本沒東西可回收而假性通過。
-		peak := runtime.NumGoroutine()
-		if peak-before < sessions/2 {
-			t.Skipf("環境未觀察到預期的 goroutine 成長(before=%d peak=%d),略過回收斷言", before, peak)
-		}
-
-		// 等待逾時觸發並讓 SDK 完成清理。逾時本身只有 150ms,這裡給
-		// 足夠寬鬆的上限並輪詢,避免在忙碌的 CI 機器上變成 flaky test。
-		deadline := time.Now().Add(10 * time.Second)
+		// 給 SDK 與 net/http 一點時間收尾,再確認沒有等比例的殘留。
+		deadline := time.Now().Add(5 * time.Second)
 		var after int
 		for time.Now().Before(deadline) {
-			time.Sleep(100 * time.Millisecond)
 			runtime.GC()
 			after = runtime.NumGoroutine()
-			if after-before < sessions/2 {
-				return // 已回收大部分 goroutine,符合預期
+			if after-before < requests/2 {
+				return
 			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		t.Fatalf("session 逾時後 goroutine 未被回收:before=%d peak=%d after=%d", before, peak, after)
+		t.Fatalf("stateless 模式不應累積 goroutine:before=%d after=%d(送出 %d 次請求)",
+			before, after, requests)
 	})
 }
 
@@ -129,57 +151,55 @@ func TestShutdownServer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	t.Run("沒有連線時立即完成", func(t *testing.T) {
-		_, srv := startTestServer(t, newMCPHandler(newTestMCPServer(), time.Minute))
+		_, srv := startTestServer(t, newMCPHandler(newTestMCPServer()))
 		if err := shutdownServer(logger, srv, 5*time.Second); err != nil {
 			t.Fatalf("預期正常關閉,實際回傳錯誤:%v", err)
 		}
 	})
 
-	t.Run("有 SSE 長連線時逾時仍回傳 nil", func(t *testing.T) {
-		// 這是 P1 的回歸測試:修正前,只要有一條 MCP 的 GET SSE 長連線
-		// 開著,Shutdown 就會等滿逾時並回傳 context.DeadlineExceeded,
-		// 一路傳到 main 變成「結束碼 1」。修正後應改為強制關閉並回傳 nil。
-		base, srv := startTestServer(t, newMCPHandler(newTestMCPServer(), time.Minute))
-		sid := postInitialize(t, base)
+	t.Run("有未結束的請求時逾時仍回傳 nil", func(t *testing.T) {
+		// 這是 P1 的回歸測試:修正前,只要有一個遲遲不結束的請求佔著連線,
+		// Shutdown 就會等滿逾時並回傳 context.DeadlineExceeded,一路傳到
+		// main 變成「結束碼 1」。修正後應改為強制關閉並回傳 nil。
+		//
+		// 過去這裡是用 MCP 的 GET SSE 長連線來製造「不會結束的請求」,
+		// 但 stateless 模式下 GET 一律回 405,已無法再開 SSE。改用一個
+		// 直接阻塞的 handler:它測的是 shutdownServer 本身的逾時行為,
+		// 與 MCP transport 無關,反而比原本的寫法更聚焦也更穩定。
+		blocked := make(chan struct{})
+		defer close(blocked)
+		started := make(chan struct{})
+		var once sync.Once
+		base, srv := startTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			once.Do(func() { close(started) })
+			<-blocked
+			w.WriteHeader(http.StatusOK)
+		}))
 
-		req, err := http.NewRequest(http.MethodGet, base, nil)
-		if err != nil {
-			t.Fatalf("建立 SSE 請求失敗:%v", err)
-		}
-		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("Mcp-Session-Id", sid)
-		req.Header.Set("MCP-Protocol-Version", "2025-06-18")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("開啟 SSE 串流失敗:%v", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("SSE GET 預期 200,實際為 %d", resp.StatusCode)
+		go func() {
+			resp, err := http.Get(base)
+			if err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("阻塞用的請求未能送達伺服器")
 		}
 
-		// 逾時刻意設得很短:這條 SSE 連線不會自己結束,Shutdown 必然
-		// 會等滿逾時,縮短它只是為了讓測試快一點。
+		// 逾時刻意設得很短:這個請求不會自己結束,Shutdown 必然會等滿
+		// 逾時,縮短它只是為了讓測試快一點。
 		const timeout = 300 * time.Millisecond
 		start := time.Now()
 		if err := shutdownServer(logger, srv, timeout); err != nil {
-			t.Fatalf("SSE 連線造成的 Shutdown 逾時不應被視為錯誤,實際回傳:%v", err)
+			t.Fatalf("未結束請求造成的 Shutdown 逾時不應被視為錯誤,實際回傳:%v", err)
 		}
 		if elapsed := time.Since(start); elapsed < timeout {
 			t.Errorf("預期至少等待 %v 才強制關閉,實際只花了 %v", timeout, elapsed)
 		}
 	})
-}
-
-func TestNewMCPHandlerAcceptsRequests(t *testing.T) {
-	// 確認 newMCPHandler 組出來的 handler 真的能完成一次 MCP 交握,
-	// 避免「加了 options 之後反而把 handler 設定壞掉」這種低級錯誤。
-	base, srv := startTestServer(t, newMCPHandler(newTestMCPServer(), time.Minute))
-	defer srv.Close()
-
-	if sid := postInitialize(t, base); sid == "" {
-		t.Fatal("initialize 應回傳非空的 Mcp-Session-Id")
-	}
 }
 
 // TestRunHealthCheck 測試 -health-check 模式,也就是容器 HEALTHCHECK 實際

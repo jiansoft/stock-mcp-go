@@ -125,9 +125,8 @@ curl http://127.0.0.1:3000/readyz    # readiness:資料來源是否可用
 
 ## MCP endpoint 與驗證
 
-- `POST /mcp`:MCP JSON-RPC 請求
-- `GET /mcp`:Streamable HTTP 的 SSE 串流/可恢復連線(由官方 SDK 處理)
-- `DELETE /mcp`:終止 MCP session
+- `POST /mcp`:MCP JSON-RPC 請求(stateless 模式下唯一支援的方法)
+- `GET /mcp`、`DELETE /mcp`:回 `405 Method Not Allowed`。MCP `2026-07-28` 規格已移除 session 與 SSE 長連線,詳見「MCP 協定相容性」
 
 所有 MCP 請求仍沿用原本的 header，不需修改 Client:
 
@@ -152,7 +151,9 @@ claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
 https://your-domain.example/admin/mcp-api-keys
 ```
 
-頁面會要求輸入獨立的 `MCP_ADMIN_TOKEN`。此 token 只存在目前頁面的記憶體，不寫入 Cookie、URL、`localStorage` 或 `sessionStorage`；管理 API 使用同一個 `Authorization: Bearer <MCP_ADMIN_TOKEN>` header。管理頁 HTML 本身不含資料或秘密，所有資料 API 都需要管理者驗證並套用 Origin 保護。
+頁面會要求輸入獨立的 `MCP_ADMIN_TOKEN`。此 token 只在登入那一次送出，之後由伺服器換發 **HttpOnly + Secure + SameSite=Strict** 的工作階段 Cookie（`POST /api/admin/session`），因此重新整理頁面不需再次輸入。Token 本身不寫入 URL、`localStorage` 或 `sessionStorage`，JavaScript 也讀不到工作階段 Cookie。工作階段 8 小時到期，按「登出」（`DELETE /api/admin/session`）即刻撤銷；工作階段存放於行程記憶體，服務重啟後需重新登入。
+
+管理 API 同時接受 `Authorization: Bearer <MCP_ADMIN_TOKEN>`（供 curl 與自動化腳本使用）。管理頁 HTML 本身不含資料或秘密，所有資料 API 都需要管理者驗證並套用 Origin 保護。
 
 可用功能包含 List、Create、Edit、Enable、Disable、Rotate、Delete、Refresh，以及建立／輪替後的一次性 Copy。完整 API Key 只在 Create 或 Rotate 成功回應中出現一次，關閉視窗後無法透過 List、Get 或 Update 取回。
 
@@ -471,15 +472,18 @@ stock-mcp -health-check   # 呼叫本機 /readyz,結束碼 0 = 就緒,1 = 未就
 
 | 項目 | 說明 |
 | --- | --- |
-| Transport | 僅 Streamable HTTP(單一 endpoint 處理 POST / GET / DELETE)。**不支援 stdio** |
-| 支援的 Protocol Version | `2025-11-25`(預設)、`2025-06-18`、`2025-03-26`、`2024-11-05` |
+| Transport | 僅 Streamable HTTP,且運作在 **stateless 模式**(單一 endpoint 只處理 POST)。**不支援 stdio** |
+| 支援的 Protocol Version | `2026-07-28`(預設)、`2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05` |
 | 版本協商 | 由 go-sdk 依用戶端送出的 `protocolVersion` 自動協商;送出不支援的版本時回退到最新版 |
 | Capabilities | 僅 Tools(無 Resources / Prompts / Sampling);全部工具皆標記 `readOnlyHint: true` |
-| Session | 由 SDK 管理 `Mcp-Session-Id`;**閒置逾時 5 分鐘**,逾時後用戶端下一次請求會收到 404 並自動重新 `initialize`(規範定義的正常流程) |
+| Session | **無**。`2026-07-28`(SEP-2575)移除了 `initialize` 交握與 `Mcp-Session-Id`,每個請求自帶協定版本與用戶端身分。舊協定用戶端仍可照常 POST `initialize`,只是不會拿到 session id |
+| GET / DELETE | 回 `405`。stateless 模式沒有可推送的長連線,也沒有 session 可終止 |
 | SSE resume | 未啟用 `EventStore`,不支援 `Last-Event-ID` 續傳。所有工具皆為唯讀查詢,重連後重查即可 |
 | 請求大小上限 | 單一請求 body 上限 1 MiB,超過回 413 |
 
-> 支援的版本清單取決於 `go.mod` 裡的 `github.com/modelcontextprotocol/go-sdk` 版本(目前 v1.6.1);升級 SDK 時請一併確認此表。
+> 支援的版本清單取決於 `go.mod` 裡的 `github.com/modelcontextprotocol/go-sdk` 版本(目前 v1.7.0);升級 SDK 時請一併確認此表。
+>
+> go-sdk 只在 stateless 模式提供 `2026-07-28`:若把 `StreamableHTTPOptions.Stateless` 改回 `false`,最新協定的用戶端會全部收到 400。`TestStatelessTransport` 與 `TestE2ELatestProtocol` 就是為了擋住這個退化。
 
 ## 測試
 

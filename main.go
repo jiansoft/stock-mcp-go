@@ -92,16 +92,6 @@ func main() {
 	}
 }
 
-// mcpSessionTimeout 是 MCP session 的閒置逾時:超過這段時間沒有收到該
-// session 任何 HTTP 請求,go-sdk 就會自動關閉它並釋放對應資源。
-//
-// 5 分鐘遠大於任何正常 MCP 用戶端的請求間隔(用戶端會維持一條 GET SSE
-// 長連線,只要連線還在就不算閒置),但又能保證異常斷線的 session 一定
-// 在可預期的時間內被回收。依 MCP Streamable HTTP 規格,server 本來就
-// 可以隨時終止 session,用戶端下一次請求會收到 404 並自動重新 initialize,
-// 這是規範定義的正常流程,不會造成資料遺失(本服務全部工具皆為唯讀)。
-const mcpSessionTimeout = 5 * time.Minute
-
 // shutdownTimeout 是收到停止訊號後,等待進行中請求自然結束的最長時間。
 const shutdownTimeout = 10 * time.Second
 
@@ -203,7 +193,7 @@ func run(ctx context.Context) error {
 		logger.Error("MCP 工具執行失敗", "detail", fmt.Sprintf(format, args...))
 	})
 
-	mcpHandler := newMCPHandler(server, mcpSessionTimeout)
+	mcpHandler := newMCPHandler(server)
 
 	// 把資料來源的健康檢查能力交給 web 層當作 /readyz 的判斷依據。用型別
 	// 斷言偵測(而不是擴充 Querier 介面)的原則與 stock.AddTools 一致;
@@ -307,24 +297,30 @@ func runHealthCheck(ctx context.Context) error {
 // *http.Request 是什麼,一律回傳同一個 server;這個彈性主要是給需要
 // 「依請求內容切換不同伺服器實例」的進階情境使用,本專案用不到。
 //
-// ## sessionTimeout 為什麼是必要的、而不是可有可無的調校選項
+// ## 為什麼是 Stateless
 //
-// 這個函式過去直接傳 nil 給 SDK(全部採用預設值),但
-// StreamableHTTPOptions.SessionTimeout 的零值,依 SDK 文件的定義是
-// 「閒置的 session 永遠不關閉」。每一次 initialize 都會在 handler 內部
-// 留下一個 session 與對應的背景 goroutine,而 SDK 並未提供任何從外部
-// 主動回收 session 的方法(它只有一個註解寫明「for tests」的未匯出
-// closeAll)。用戶端若沒有送出 DELETE 就離線——Claude Desktop、
-// Claude Code 在重啟或崩潰時正是如此——那個 session 就會永久滯留。
+// MCP 2026-07-28 規格(SEP-2575)拿掉了 initialize/notifications/initialized
+// 交握與 Mcp-Session-Id:每一次請求都自帶協定版本、用戶端身分與能力,
+// 伺服器不再需要記住任何跨請求的狀態。go-sdk 把新協定綁在 Stateless 模式
+// 上——若這個欄位是 false,任何宣告 2026-07-28 的用戶端都會直接收到
+// 400「protocol version ... is only supported on stateless HTTP servers」。
+// 因此要支援最新協定,這裡沒有第二種寫法。
 //
-// 實測連續送出 200 次 initialize 會讓 goroutine 數量增加 200,且 GC 後
-// 完全不回收,長時間執行必然耗盡記憶體。因此這個參數刻意設計成「必填」
-// 而不是可選:呼叫端必須明確決定一個逾時值,無法再不小心退回到那個會
-// 洩漏資源的預設行為。
-func newMCPHandler(server *mcp.Server, sessionTimeout time.Duration) http.Handler {
+// 這同時解決了舊寫法必須用 SessionTimeout 圍堵的資源洩漏問題:過去每次
+// initialize 都會在 handler 內部留下一個 session 與背景 goroutine,用戶端
+// 若沒送 DELETE 就離線(Claude Desktop、Claude Code 重啟或崩潰時正是
+// 如此),那個 session 就會永久滯留,只能靠閒置逾時回收。Stateless 模式
+// 下每個請求用完即拋的臨時 session 隨請求結束一起關閉,沒有東西可洩漏,
+// SessionTimeout 因而失去意義並已移除。
+//
+// 副作用:Stateless 模式下 GET 與 DELETE 一律回 405。本服務的工具全部是
+// 「一問一答」的唯讀查詢,不需要 server 主動推送,因此不受影響;舊協定
+// (2025-11-25 以前)的用戶端仍可照常用 POST 送 initialize 與 tools/call,
+// 只是拿不到 session id,也開不了 SSE 長連線。
+func newMCPHandler(server *mcp.Server) http.Handler {
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
-		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout},
+		&mcp.StreamableHTTPOptions{Stateless: true},
 	)
 }
 

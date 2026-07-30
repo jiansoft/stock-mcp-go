@@ -2,8 +2,11 @@
   "use strict";
 
   const apiBase = "/api/admin/mcp-api-keys";
-  const tokenStorageKey = "mcpAdminToken";
-  let adminToken = sessionStorage.getItem(tokenStorageKey) || "";
+  const sessionPath = "/api/admin/session";
+  // 這支前端刻意「不保存任何密鑰」:管理者 Token 只在登入那一次送出，
+  // 之後全靠伺服器發的 HttpOnly Cookie(JavaScript 讀不到)維持登入狀態。
+  // authenticated 只是 UI 狀態旗標，不是憑證。
+  let authenticated = false;
   let items = [];
   let pendingAction = null;
 
@@ -15,15 +18,15 @@
 
   async function request(path, options = {}) {
     const headers = new Headers(options.headers || {});
-    headers.set("Authorization", `Bearer ${adminToken}`);
     if (options.body) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, { ...options, headers, cache: "no-store" });
-    if (response.status === 401 || response.status === 429) {
-      if (response.status === 401) {
-        adminToken = "";
-        sessionStorage.removeItem(tokenStorageKey);
-        showAuth("管理者 Token 無效或已變更。");
-      }
+    // credentials: same-origin 讓瀏覽器自動帶上工作階段 Cookie。
+    const response = await fetch(path, {
+      ...options, headers, cache: "no-store", credentials: "same-origin",
+    });
+    if (response.status === 401) {
+      authenticated = false;
+      setLoggedOutUI();
+      showAuth("管理工作階段已失效，請重新登入。");
     }
     if (!response.ok) {
       let message = `請求失敗（${response.status}）`;
@@ -44,17 +47,53 @@
     queueMicrotask(() => byID("adminToken").focus());
   }
 
+  function setLoggedOutUI() {
+    byID("logoutButton").hidden = true;
+    items = [];
+    renderRows();
+    byID("countBadge").textContent = "0";
+  }
+
+  // login 是唯一接觸管理者 Token 的地方:送出後就交換成 HttpOnly Cookie，
+  // Token 本身不留在任何變數或 DOM 中。
+  async function login(token) {
+    const response = await fetch(sessionPath, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    if (response.ok) return;
+    if (response.status === 429) throw new Error("嘗試次數過多，請稍後再試。");
+    throw new Error("管理者 Token 不正確。");
+  }
+
+  async function logout() {
+    try {
+      await fetch(sessionPath, {
+        method: "DELETE", cache: "no-store", credentials: "same-origin",
+      });
+    } catch (_) {}
+    authenticated = false;
+    setLoggedOutUI();
+    setView("loading");
+    showAuth("已登出。");
+  }
+
   async function loadKeys() {
     setView("loading");
     try {
       const payload = await request(apiBase);
+      authenticated = true;
+      byID("logoutButton").hidden = false;
       items = payload.items;
       renderRows();
       setView(items.length ? "table" : "empty");
       byID("countBadge").textContent = String(items.length);
       if (authDialog.open) authDialog.close();
     } catch (error) {
-      if (!adminToken) return;
+      // 未登入時的失敗已由 request() 叫出登入對話框接手，不必再顯示錯誤畫面。
+      if (!authenticated) return;
       byID("errorMessage").textContent = error.message;
       setView("error");
     }
@@ -326,11 +365,22 @@
 
   byID("authForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    adminToken = byID("adminToken").value;
-    sessionStorage.setItem(tokenStorageKey, adminToken);
-    byID("adminToken").value = "";
-    await loadKeys();
+    const field = byID("adminToken");
+    const token = field.value;
+    field.value = "";
+    byID("authSubmit").disabled = true;
+    try {
+      await login(token);
+      authenticated = true;
+      authDialog.close();
+      await loadKeys();
+    } catch (error) {
+      showAuth(error.message);
+    } finally {
+      byID("authSubmit").disabled = false;
+    }
   });
+  byID("logoutButton").addEventListener("click", logout);
   byID("refreshButton").addEventListener("click", loadKeys);
   byID("retryButton").addEventListener("click", loadKeys);
   byID("createButton").addEventListener("click", openCreate);
@@ -342,9 +392,7 @@
   byID("closeSecretButton").addEventListener("click", closeSecret);
   secretDialog.addEventListener("cancel", (event) => { event.preventDefault(); closeSecret(); });
 
-  if (adminToken) {
-    loadKeys();
-  } else {
-    showAuth();
-  }
+  // 樂觀載入:若上次的工作階段 Cookie 仍有效就直接進入管理介面，
+  // 重新整理(F5)不會再被要求輸入 Token；失效才會跳出登入對話框。
+  loadKeys();
 })();

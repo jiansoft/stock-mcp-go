@@ -24,7 +24,7 @@ import (
 // MCP 規格要求的驗證格式是 `Authorization: Bearer <token>`,也就是
 // header 的值以字面字串 "Bearer "(注意後面有一個空格)開頭,後面接著
 // 實際的金鑰內容。如果 header 不存在、太短、或開頭不是 "Bearer ",一律
-// 回傳空字串,由呼叫端(requireAPIKey)統一處理成「驗證失敗」。
+// 回傳空字串,由呼叫端(requireAuthenticator)統一處理成「驗證失敗」。
 //
 // strings.EqualFold 而不是直接用 == 比較開頭,是為了容許 "bearer "、
 // "BEARER " 等大小寫混寫的寫法都能被接受——HTTP header 名稱與部分
@@ -39,10 +39,33 @@ func bearerToken(r *http.Request) string {
 	return auth[len(prefix):]
 }
 
-// requireAPIKey 是一個 HTTP middleware(中介層),驗證所有請求都帶有
-// 正確的 `Authorization: Bearer <MCP_API_KEY>`。驗證失敗時直接回傳
-// HTTP 401,並且不會呼叫 next(也就是說,錯誤的請求連 next 代表的下一層
-// handler 都不會執行到,更不會有機會觸及資料庫)。
+// Authenticator 把「一個 token 是否有效、對應到誰」這件事抽象成介面,
+// 讓驗證中介層不必知道憑證究竟來自寫死的環境變數(staticAuthenticator)
+// 還是資料庫裡可增刪的 API key(apikey.Service)。
+type Authenticator interface {
+	Authenticate(context.Context, string) (apikey.Principal, bool)
+}
+
+type staticAuthenticator string
+
+func (a staticAuthenticator) Authenticate(_ context.Context, token string) (apikey.Principal, bool) {
+	expected := string(a)
+	ok := token != "" && len(token) == len(expected) &&
+		subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
+	return apikey.Principal{KeyID: "legacy-static"}, ok
+}
+
+type principalContextKey struct{}
+
+func authenticatedPrincipal(r *http.Request) (apikey.Principal, bool) {
+	principal, ok := r.Context().Value(principalContextKey{}).(apikey.Principal)
+	return principal, ok
+}
+
+// requireAuthenticator 是一個 HTTP middleware(中介層),驗證所有請求都帶有
+// 正確的 `Authorization: Bearer <API key>`。驗證失敗時直接回傳 HTTP 401,
+// 並且不會呼叫 next(也就是說,錯誤的請求連 next 代表的下一層 handler 都
+// 不會執行到,更不會有機會觸及資料庫)。
 //
 // ## 給新手的背景知識:什麼是 middleware,為什麼長這個樣子?
 //
@@ -70,27 +93,7 @@ func bearerToken(r *http.Request) string {
 // 不同,它會直接回傳不相等,不需要真的去比對內容),從根本上消除了
 // 「透過回應時間差異猜測金鑰內容」這個攻擊管道。回傳值是 1(相等)
 // 或 0(不相等),不是 Go 一般慣用的 bool,所以這裡要跟 1 比較,而不是
-// 直接當作布林值使用。
-type Authenticator interface {
-	Authenticate(context.Context, string) (apikey.Principal, bool)
-}
-
-type staticAuthenticator string
-
-func (a staticAuthenticator) Authenticate(_ context.Context, token string) (apikey.Principal, bool) {
-	expected := string(a)
-	ok := token != "" && len(token) == len(expected) &&
-		subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
-	return apikey.Principal{KeyID: "legacy-static"}, ok
-}
-
-type principalContextKey struct{}
-
-func authenticatedPrincipal(r *http.Request) (apikey.Principal, bool) {
-	principal, ok := r.Context().Value(principalContextKey{}).(apikey.Principal)
-	return principal, ok
-}
-
+// 直接當作布林值使用(見上方 staticAuthenticator.Authenticate)。
 func requireAuthenticator(
 	authenticator Authenticator,
 	failures *RateLimiter,
@@ -121,12 +124,18 @@ func requireAuthenticator(
 	})
 }
 
-func requireAPIKey(apiKey string, next http.Handler) http.Handler {
-	return requireAuthenticator(staticAuthenticator(apiKey), nil, false, 1, next)
-}
-
+// requireAdminToken 接受兩種憑證:
+//
+//  1. `Authorization: Bearer <MCP_ADMIN_TOKEN>`——長期憑證,供 curl、
+//     自動化腳本,以及管理頁面「登入」那一次請求使用。
+//  2. HttpOnly 的 session Cookie——由登入端點簽發(見 admin_session.go)。
+//     這讓管理頁面重新整理後不必再次輸入 Token,同時完全不需要把任何
+//     密鑰交給 JavaScript 保管。
+//
+// 兩者都失敗才算未授權,並計入失敗限流。
 func requireAdminToken(
 	adminToken string,
+	sessions *adminSessions,
 	failures *RateLimiter,
 	trustProxy bool,
 	trustedProxyHops int,
@@ -136,6 +145,9 @@ func requireAdminToken(
 		token := bearerToken(r)
 		ok := token != "" && len(token) == len(adminToken) &&
 			subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) == 1
+		if !ok && sessions != nil {
+			ok = sessions.valid(adminSessionToken(r))
+		}
 		if !ok {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")

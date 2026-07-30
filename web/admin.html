@@ -14,6 +14,7 @@
       <p class="subtitle">建立、停用與輪替 Client 使用的存取密鑰。</p>
     </div>
     <div class="header-actions">
+      <button id="logoutButton" class="secondary" type="button" hidden>登出</button>
       <button id="refreshButton" class="secondary" type="button">重新整理</button>
       <button id="createButton" type="button">建立 API Key</button>
     </div>
@@ -59,12 +60,12 @@
   <dialog id="authDialog" aria-labelledby="authTitle">
     <form id="authForm" method="dialog">
       <h2 id="authTitle">管理者驗證</h2>
-      <p>輸入部署時設定的 <code>MCP_ADMIN_TOKEN</code>。Token 會保留在目前瀏覽器分頁的 Session 中，重新整理頁面不需再次輸入；關閉分頁後即清除。</p>
+      <p>輸入部署時設定的 <code>MCP_ADMIN_TOKEN</code>。驗證後由伺服器發放 HttpOnly 工作階段 Cookie，Token 本身不會留在瀏覽器中；重新整理頁面不需再次輸入，工作階段 8 小時後或按下登出即失效。</p>
       <label for="adminToken">管理者 Token</label>
       <input id="adminToken" name="adminToken" type="password" autocomplete="off" required>
       <p id="authError" class="field-error" role="alert" hidden></p>
       <div class="dialog-actions">
-        <button type="submit">登入管理介面</button>
+        <button id="authSubmit" type="submit">登入管理介面</button>
       </div>
     </form>
   </dialog>

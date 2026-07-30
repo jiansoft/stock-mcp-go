@@ -68,7 +68,7 @@ func e2eServer(t *testing.T) string {
 	stock.AddTools(mcpSrv, e2eQuerier{}, nil)
 
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	handler := web.NewHandler(cfg, logger, newMCPHandler(mcpSrv, time.Minute), nil)
+	handler := web.NewHandler(cfg, logger, newMCPHandler(mcpSrv), nil)
 
 	base, srv := startTestServer(t, handler)
 	t.Cleanup(func() { _ = srv.Close() })
@@ -146,7 +146,10 @@ func (c *e2eClient) call(body string) rpcResponse {
 	return out
 }
 
-// newE2EClient 建立用戶端並完成 initialize 交握。
+// newE2EClient 建立用戶端並完成舊協定(2025-06-18)的 initialize 交握。
+//
+// 伺服器已改為 stateless,不再發放 Mcp-Session-Id,但舊協定的交握流程
+// 仍必須被接受——這正是本檔案要守住的相容性保證。
 func newE2EClient(t *testing.T) *e2eClient {
 	t.Helper()
 	c := &e2eClient{t: t, url: e2eServer(t)}
@@ -156,8 +159,8 @@ func newE2EClient(t *testing.T) *e2eClient {
 	if resp.Error != nil {
 		t.Fatalf("initialize 不應失敗:%+v", resp.Error)
 	}
-	if c.sessionID == "" {
-		t.Fatal("initialize 應回傳 Mcp-Session-Id")
+	if c.sessionID != "" {
+		t.Fatalf("stateless 模式不應發放 Mcp-Session-Id,實際收到 %q", c.sessionID)
 	}
 	// 依 MCP 規格,用戶端完成初始化後要送出 initialized 通知。
 	c.post(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
@@ -464,38 +467,89 @@ func TestE2EProtocolErrors(t *testing.T) {
 	})
 }
 
-func TestE2ESessionLifecycle(t *testing.T) {
-	t.Run("DELETE 可終止 session", func(t *testing.T) {
-		c := newE2EClient(t)
+// TestE2ELatestProtocol 用 SDK 自己的用戶端跑完一輪最新協定(2026-07-28)。
+//
+// 刻意不手工組 JSON-RPC 與 Mcp-* header:新協定對 header 與 _meta 的一致性
+// 有嚴格檢查(不符會回 -32020),用 SDK 用戶端才能真正代表「真實用戶端連
+// 得上嗎」,而不是只驗證我們自己拼出來的請求格式。
+func TestE2ELatestProtocol(t *testing.T) {
+	url := e2eServer(t)
 
-		req, err := http.NewRequest(http.MethodDelete, c.url, nil)
-		if err != nil {
-			t.Fatalf("建立請求失敗:%v", err)
-		}
-		req.Header.Set("Authorization", "Bearer test-key")
-		req.Header.Set("Mcp-Session-Id", c.sessionID)
-		req.Header.Set("MCP-Protocol-Version", "2025-06-18")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("送出 DELETE 失敗:%v", err)
-		}
-		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, resp.Body)
-		if resp.StatusCode >= 400 {
-			t.Fatalf("DELETE 應成功終止 session,實際為 %d", resp.StatusCode)
-		}
+	transport := &mcp.StreamableClientTransport{
+		Endpoint:   url,
+		HTTPClient: &http.Client{Transport: bearerTransport{key: "test-key"}},
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-latest", Version: "1"}, nil)
+	session, err := client.Connect(t.Context(), transport, nil)
+	if err != nil {
+		t.Fatalf("以最新協定連線失敗:%v", err)
+	}
+	defer session.Close()
 
-		// session 已終止,再用同一個 id 請求應該被拒絕(依規格為 404,
-		// 讓用戶端知道要重新 initialize)。
-		if status, _ := c.post(`{"jsonrpc":"2.0","id":10,"method":"tools/list"}`); status == http.StatusOK {
-			t.Error("已終止的 session 不應還能發出請求")
+	tools, err := session.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("tools/list 失敗:%v", err)
+	}
+	if len(tools.Tools) == 0 {
+		t.Fatal("應至少回傳一個工具")
+	}
+
+	res, err := session.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      "search_stock",
+		Arguments: map[string]any{"query": "2330"},
+	})
+	if err != nil {
+		t.Fatalf("tools/call 失敗:%v", err)
+	}
+	if res.IsError {
+		t.Fatalf("search_stock 不應回傳錯誤:%+v", res.Content)
+	}
+}
+
+// bearerTransport 幫 SDK 用戶端的每個請求補上 API key。
+type bearerTransport struct{ key string }
+
+func (b bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+b.key)
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+// TestE2EStatelessTransport 確認 stateless 模式對外的可見行為。
+//
+// 這些斷言同時是「不要退回 stateful」的護欄:一旦有人把 Stateless 改回
+// false,session id 會重新出現、GET/DELETE 會變回 200,這裡就會失敗。
+func TestE2EStatelessTransport(t *testing.T) {
+	url := e2eServer(t)
+
+	t.Run("GET 與 DELETE 回 405", func(t *testing.T) {
+		for _, method := range []string{http.MethodGet, http.MethodDelete} {
+			req, err := http.NewRequest(method, url, nil)
+			if err != nil {
+				t.Fatalf("建立 %s 請求失敗:%v", method, err)
+			}
+			req.Header.Set("Authorization", "Bearer test-key")
+			req.Header.Set("Accept", "text/event-stream")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("送出 %s 失敗:%v", method, err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusMethodNotAllowed {
+				t.Errorf("%s 預期 405(stateless 無長連線也無 session 可終止),實際為 %d",
+					method, resp.StatusCode)
+			}
 		}
 	})
 
-	t.Run("未知的 session id 被拒絕", func(t *testing.T) {
-		c := &e2eClient{t: t, url: e2eServer(t), sessionID: "THIS-SESSION-DOES-NOT-EXIST"}
-		if status, _ := c.post(`{"jsonrpc":"2.0","id":11,"method":"tools/list"}`); status == http.StatusOK {
-			t.Error("偽造的 session id 不應被接受")
+	t.Run("不發放 session id", func(t *testing.T) {
+		c := &e2eClient{t: t, url: url}
+		c.call(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{` +
+			`"protocolVersion":"2025-06-18","capabilities":{},` +
+			`"clientInfo":{"name":"e2e","version":"1"}}}`)
+		if c.sessionID != "" {
+			t.Errorf("stateless 模式不應回傳 Mcp-Session-Id,實際為 %q", c.sessionID)
 		}
 	})
 }

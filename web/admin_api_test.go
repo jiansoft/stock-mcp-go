@@ -70,6 +70,66 @@ func adminRequest(t *testing.T, handler http.Handler, method, path, body, token 
 	return rec
 }
 
+// TestAdminSessionCookieLifecycle 確認「登入一次後重新整理不必再輸入
+// Token」是靠可撤銷的 HttpOnly Cookie 達成的，而不是把密鑰交給前端。
+func TestAdminSessionCookieLifecycle(t *testing.T) {
+	server := newAdminTestServer(t)
+
+	if rec := adminRequest(t, server.handler, http.MethodPost, adminSessionPath, "", "wrong-token"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("錯誤 Token 不得換到工作階段，實際 %d", rec.Code)
+	}
+
+	login := adminRequest(t, server.handler, http.MethodPost, adminSessionPath, "", testAdminToken)
+	if login.Code != http.StatusOK {
+		t.Fatalf("登入預期 200，實際 %d: %s", login.Code, login.Body.String())
+	}
+	var session *http.Cookie
+	for _, cookie := range login.Result().Cookies() {
+		if cookie.Name == adminSessionCookie {
+			session = cookie
+		}
+	}
+	if session == nil || session.Value == "" {
+		t.Fatal("登入未發放工作階段 Cookie")
+	}
+	if !session.HttpOnly {
+		t.Error("工作階段 Cookie 必須是 HttpOnly，否則 JavaScript 可讀取")
+	}
+	if session.SameSite != http.SameSiteStrictMode {
+		t.Error("工作階段 Cookie 必須是 SameSite=Strict")
+	}
+	if strings.Contains(session.Value, testAdminToken) {
+		t.Fatal("工作階段 Cookie 不得包含管理者 Token")
+	}
+
+	// 僅帶 Cookie(不帶 Authorization)也要能通過驗證——這就是 F5 之後的情況。
+	withCookie := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req.AddCookie(session)
+		rec := httptest.NewRecorder()
+		server.handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := withCookie(http.MethodGet, adminAPIBasePath); rec.Code != http.StatusOK {
+		t.Fatalf("持有工作階段 Cookie 應可讀取清單，實際 %d: %s", rec.Code, rec.Body.String())
+	}
+
+	bogus := httptest.NewRequest(http.MethodGet, adminAPIBasePath, nil)
+	bogus.AddCookie(&http.Cookie{Name: adminSessionCookie, Value: "not-a-real-session"})
+	bogusRec := httptest.NewRecorder()
+	server.handler.ServeHTTP(bogusRec, bogus)
+	if bogusRec.Code != http.StatusUnauthorized {
+		t.Fatalf("偽造 Cookie 應為 401，實際 %d", bogusRec.Code)
+	}
+
+	if rec := withCookie(http.MethodDelete, adminSessionPath); rec.Code != http.StatusNoContent {
+		t.Fatalf("登出預期 204，實際 %d", rec.Code)
+	}
+	if rec := withCookie(http.MethodGet, adminAPIBasePath); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("登出後工作階段必須失效，實際 %d", rec.Code)
+	}
+}
+
 func TestAdminAuthenticationAndPage(t *testing.T) {
 	server := newAdminTestServer(t)
 	if rec := adminRequest(t, server.handler, http.MethodGet, adminAPIBasePath, "", ""); rec.Code != http.StatusUnauthorized {
