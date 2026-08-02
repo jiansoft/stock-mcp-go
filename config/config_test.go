@@ -21,6 +21,7 @@ func setRequired(t *testing.T) {
 		"DB_POOL_MAX", "DB_CONNECTION_TIMEOUT_MS", "DB_STATEMENT_TIMEOUT_MS",
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
+		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
 	} {
 		t.Setenv(name, "")
 	}
@@ -30,6 +31,77 @@ func setRequired(t *testing.T) {
 	t.Setenv("MCP_API_KEY", "test-key")
 	t.Setenv("MCP_API_KEY_PEPPER", "test-pepper-32-bytes-minimum-value")
 	t.Setenv("MCP_ADMIN_TOKEN", "test-admin-token-32-bytes-minimum")
+}
+
+func TestLoadRejectsInvalidSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		env    string
+		value  string
+		setup  func(*testing.T)
+		needle string
+	}{
+		{name: "HOST", env: "HOST", value: "localhost", needle: "HOST"},
+		{name: "MCP_PATH", env: "MCP_PATH", value: "mcp", needle: "MCP_PATH"},
+		{name: "DATA_SOURCE", env: "DATA_SOURCE", value: "other", needle: "DATA_SOURCE"},
+		{name: "TRUSTED_PROXY_HOPS", env: "TRUSTED_PROXY_HOPS", value: "0", needle: "TRUSTED_PROXY_HOPS"},
+		{name: "DB_POOL_MAX", env: "DB_POOL_MAX", value: "0", needle: "DB_POOL_MAX"},
+		{name: "DB_CONNECTION_TIMEOUT_MS", env: "DB_CONNECTION_TIMEOUT_MS", value: "0", needle: "DB_CONNECTION_TIMEOUT_MS"},
+		{name: "DB_STATEMENT_TIMEOUT_MS", env: "DB_STATEMENT_TIMEOUT_MS", value: "0", needle: "DB_STATEMENT_TIMEOUT_MS"},
+		{name: "RATE_LIMIT_WINDOW_MS", env: "RATE_LIMIT_WINDOW_MS", value: "0", needle: "RATE_LIMIT_WINDOW_MS"},
+		{name: "RATE_LIMIT_MAX_REQUESTS", env: "RATE_LIMIT_MAX_REQUESTS", value: "0", needle: "RATE_LIMIT_MAX_REQUESTS"},
+		{name: "LOG_LEVEL", env: "LOG_LEVEL", value: "verbose", needle: "LOG_LEVEL"},
+		{
+			name: "API mode missing upstream",
+			setup: func(t *testing.T) {
+				t.Setenv("DATA_SOURCE", "api")
+				t.Setenv("STOCK_RUST_API_BASE_URL", "")
+				t.Setenv("STOCK_RUST_API_KEY", "")
+			},
+			needle: "STOCK_RUST_API_BASE_URL",
+		},
+		{
+			name: "API_TIMEOUT_MS",
+			env:  "API_TIMEOUT_MS", value: "0",
+			setup: func(t *testing.T) {
+				t.Setenv("DATA_SOURCE", "api")
+				t.Setenv("STOCK_RUST_API_BASE_URL", "http://127.0.0.1")
+				t.Setenv("STOCK_RUST_API_KEY", "upstream")
+			},
+			needle: "API_TIMEOUT_MS",
+		},
+		{
+			name: "admin token equals bootstrap key",
+			setup: func(t *testing.T) {
+				const shared = "same-secret-value-at-least-32-bytes"
+				t.Setenv("MCP_API_KEY", shared)
+				t.Setenv("MCP_ADMIN_TOKEN", shared)
+			},
+			needle: "不可與 MCP_API_KEY 相同",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequired(t)
+			if tt.env != "" {
+				t.Setenv(tt.env, tt.value)
+			}
+			if tt.setup != nil {
+				tt.setup(t)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tt.needle) {
+				t.Fatalf("預期包含 %q 的設定錯誤，實際為:%v", tt.needle, err)
+			}
+		})
+	}
+}
+
+func TestAddr(t *testing.T) {
+	if got := (&Config{Host: "2001:db8::1", Port: 9005}).Addr(); got != "[2001:db8::1]:9005" {
+		t.Fatalf("IPv6 address 格式錯誤:%q", got)
+	}
 }
 
 func TestLoad(t *testing.T) {

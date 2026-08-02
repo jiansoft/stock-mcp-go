@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -287,5 +288,99 @@ func TestAdminLastActiveAndBodyLimit(t *testing.T) {
 	server.handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("超大 body 預期 413，實際 %d", rec.Code)
+	}
+}
+
+func TestAdminAPIErrorContractsAndUpdate(t *testing.T) {
+	server := newAdminTestServer(t)
+	items, err := server.keys.List(t.Context())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("取得 migration key 失敗:%+v err=%v", items, err)
+	}
+	item := items[0]
+
+	tests := []struct {
+		name, method, path, body string
+		want                     int
+	}{
+		{"Get unknown", http.MethodGet, adminAPIBasePath + "/missing", "", http.StatusNotFound},
+		{"Create malformed JSON", http.MethodPost, adminAPIBasePath, `{`, http.StatusBadRequest},
+		{"Create invalid metadata", http.MethodPost, adminAPIBasePath, `{"name":""}`, http.StatusBadRequest},
+		{"Update unknown", http.MethodPatch, adminAPIBasePath + "/missing", `{"name":"x","version":1}`, http.StatusNotFound},
+		{"Enable unknown", http.MethodPost, adminAPIBasePath + "/missing/enable", `{"version":1}`, http.StatusNotFound},
+		{"Disable malformed JSON", http.MethodPost, adminAPIBasePath + "/missing/disable", `{`, http.StatusBadRequest},
+		{"Rotate unknown", http.MethodPost, adminAPIBasePath + "/missing/rotate", `{"version":1}`, http.StatusNotFound},
+		{"Delete unknown", http.MethodDelete, adminAPIBasePath + "/missing", `{"version":1}`, http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := adminRequest(t, server.handler, tt.method, tt.path, tt.body, testAdminToken)
+			if rec.Code != tt.want {
+				t.Fatalf("預期 %d，實際 %d:%s", tt.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	updated := adminRequest(t, server.handler, http.MethodPatch,
+		adminAPIBasePath+"/"+item.ID,
+		`{"name":"Updated","description":"covered","expiresAt":null,"version":1}`,
+		testAdminToken)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("有效更新預期 200，實際 %d:%s", updated.Code, updated.Body.String())
+	}
+	stale := adminRequest(t, server.handler, http.MethodPatch,
+		adminAPIBasePath+"/"+item.ID,
+		`{"name":"Stale","version":1}`,
+		testAdminToken)
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("過期 version 預期 409，實際 %d:%s", stale.Code, stale.Body.String())
+	}
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequest(http.MethodGet, adminAPIBasePath, nil).WithContext(canceled)
+	req.Header.Set("Authorization", "Bearer "+testAdminToken)
+	rec := httptest.NewRecorder()
+	server.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("取消的 List 預期 500，實際 %d:%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminSessionCapacityExpiryAndHTTPS(t *testing.T) {
+	sessions := newAdminSessions(time.Hour)
+	for range maxAdminSessions + 1 {
+		if _, _, err := sessions.issue(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sessions.entries) != maxAdminSessions {
+		t.Fatalf("session 數量應限制為 %d，實際 %d", maxAdminSessions, len(sessions.entries))
+	}
+
+	expired := newAdminSessions(-time.Second)
+	token, _, err := expired.issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.valid(token) {
+		t.Fatal("過期 session 不應有效")
+	}
+	if len(expired.entries) != 0 {
+		t.Fatal("過期 session 應在驗證時移除")
+	}
+	expired.revoke("")
+
+	plain := httptest.NewRequest(http.MethodGet, "http://example.test/", nil)
+	if requestIsHTTPS(plain, false) {
+		t.Fatal("一般 HTTP request 不應視為 HTTPS")
+	}
+	plain.Header.Set("X-Forwarded-Proto", "HTTPS")
+	if !requestIsHTTPS(plain, true) {
+		t.Fatal("受信任代理的 X-Forwarded-Proto=https 應視為 HTTPS")
+	}
+	tlsReq := httptest.NewRequest(http.MethodGet, "https://example.test/", nil)
+	if !requestIsHTTPS(tlsReq, false) {
+		t.Fatal("TLS request 應視為 HTTPS")
 	}
 }

@@ -44,8 +44,15 @@ jobs:
       # 未設定 TEST_DATABASE_URL 時,stock 套件的資料庫整合測試
       # (TestRepositoryIntegration)會自動略過,見 stock/repository_test.go
       # 與 README「已知限制」章節——CI 不連真實資料庫,只跑純邏輯測試。
-      - name: go test
-        run: go test ./... -cover
+      - name: go test and coverage
+        env:
+          MIN_COVERAGE: '85.0'
+        run: |
+          go test ./... -coverprofile=coverage.out
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          echo "Total statement coverage: ${total}% (minimum: ${MIN_COVERAGE}%)"
+          awk -v total="$total" -v minimum="$MIN_COVERAGE" 'BEGIN { exit !(total + 0 >= minimum + 0) }'
 
       # -race 偵測資料競爭,-shuffle=on 讓測試以隨機順序執行,揭露
       # 「測試之間互相依賴執行順序」這種隱藏問題。兩者都比一般 test

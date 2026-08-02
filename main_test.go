@@ -18,17 +18,25 @@ package main
 // 在 e2e_test.go。
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"stockmcp/config"
 )
 
 // initializeBody 是一個最小但合法的 MCP initialize 請求。
@@ -272,5 +280,169 @@ func TestRunHealthCheck(t *testing.T) {
 		t.Setenv("PORT", "")
 		// 只要沒有 panic、且回傳的是「連線類」錯誤或 nil 都算通過。
 		_ = runHealthCheck(t.Context())
+	})
+}
+
+// TestRunAPIMode exercises the application's real wiring path without using a
+// production data source. It catches startup regressions between config,
+// SQLite API-key management, the MCP server, and graceful shutdown.
+func TestRunAPIMode(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/stocks/search" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer upstream-test-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"stocks": []any{}})
+	}))
+	defer upstream.Close()
+
+	port := reserveTestPort(t)
+	setRunEnv(t, upstream.URL, port, filepath.Join(t.TempDir(), "keys.db"))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx) }()
+
+	client := &http.Client{Timeout: time.Second}
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/readyz"
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		resp, err := client.Get(url)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		select {
+		case <-deadline.C:
+			cancel()
+			t.Fatalf("run 未能在期限內進入 ready 狀態，最後錯誤:%v", err)
+		case <-ticker.C:
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run 優雅關閉應成功，實際錯誤:%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run 在取消 context 後未結束")
+	}
+}
+
+func TestRunRejectsInvalidConfiguration(t *testing.T) {
+	t.Setenv("APP_ENV", "invalid")
+	if err := run(t.Context()); err == nil {
+		t.Fatal("無效 APP_ENV 應使 run 失敗")
+	}
+}
+
+func TestRunReportsAPIKeyDatabaseOpenFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"stocks":[]}`))
+	}))
+	defer upstream.Close()
+
+	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockedParent, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setRunEnv(t, upstream.URL, reserveTestPort(t), filepath.Join(blockedParent, "keys.db"))
+	if err := run(t.Context()); err == nil {
+		t.Fatal("無法建立 SQLite 目錄時 run 應失敗")
+	}
+}
+
+func reserveTestPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rawPort, err := net.SplitHostPort(ln.Addr().String())
+	_ = ln.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func setRunEnv(t *testing.T, upstreamURL string, port int, keyDBPath string) {
+	t.Helper()
+	values := map[string]string{
+		"APP_ENV":                  "test",
+		"HOST":                     "127.0.0.1",
+		"PORT":                     strconv.Itoa(port),
+		"MCP_PATH":                 "/mcp",
+		"TRUST_PROXY":              "false",
+		"TRUSTED_PROXY_HOPS":       "1",
+		"DATA_SOURCE":              "api",
+		"STOCK_RUST_API_BASE_URL":  upstreamURL,
+		"STOCK_RUST_API_KEY":       "upstream-test-key",
+		"API_TIMEOUT_MS":           "1000",
+		"DATABASE_URL":             "",
+		"MCP_API_KEY":              "bootstrap-client-key-for-run-tests",
+		"MCP_API_KEY_DB_PATH":      keyDBPath,
+		"MCP_API_KEY_PEPPER":       "run-test-pepper-value-at-least-32-bytes",
+		"MCP_ADMIN_TOKEN":          "run-test-admin-token-at-least-32-bytes",
+		"MCP_TRUSTED_ORIGINS":      "",
+		"RATE_LIMIT_WINDOW_MS":     "60000",
+		"RATE_LIMIT_MAX_REQUESTS":  "60",
+		"LOG_LEVEL":                "error",
+		"DB_POOL_MAX":              "10",
+		"DB_CONNECTION_TIMEOUT_MS": "1000",
+		"DB_STATEMENT_TIMEOUT_MS":  "1000",
+	}
+	for name, value := range values {
+		t.Setenv(name, value)
+	}
+}
+
+func TestNewPoolRejectsInvalidAndUnreachableDatabase(t *testing.T) {
+	t.Run("invalid URL does not echo secret", func(t *testing.T) {
+		const secret = "should-not-appear"
+		_, err := newPool(t.Context(), &config.Config{DatabaseURL: "://" + secret})
+		if err == nil {
+			t.Fatal("無效 DATABASE_URL 應失敗")
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("錯誤不可洩漏連線字串內容:%v", err)
+		}
+	})
+
+	t.Run("unreachable database fails during startup ping", func(t *testing.T) {
+		port := reserveTestPort(t)
+		cfg := &config.Config{
+			DatabaseURL:        "postgresql://reader:secret@127.0.0.1:" + strconv.Itoa(port) + "/stock?sslmode=disable",
+			DBPoolMax:          1,
+			DBConnectTimeout:   200 * time.Millisecond,
+			DBStatementTimeout: time.Second,
+		}
+		pool, err := newPool(t.Context(), cfg)
+		if pool != nil {
+			pool.Close()
+		}
+		if err == nil {
+			t.Fatal("無服務監聽時 startup ping 應失敗")
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Fatalf("連線錯誤不可洩漏密碼:%v", err)
+		}
 	})
 }

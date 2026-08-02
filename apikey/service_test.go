@@ -390,6 +390,79 @@ func TestPepperMismatchFailsStartup(t *testing.T) {
 	}
 }
 
+func TestServiceValidationAndClosedState(t *testing.T) {
+	if _, err := NewService(t.Context(), nil, testPepper, "", nil); !errors.Is(err, ErrValidation) {
+		t.Fatalf("nil repository 應回 ErrValidation:%v", err)
+	}
+	repo := newTestRepository(t)
+	if _, err := NewService(t.Context(), repo, []byte("short"), "", nil); err == nil {
+		t.Fatal("過短 pepper 應被拒絕")
+	}
+
+	service, _ := newTestService(t, "")
+	now := time.Now().UTC()
+	for _, input := range []CreateInput{
+		{Name: ""},
+		{Name: strings.Repeat("x", 101)},
+		{Name: "valid", Description: strings.Repeat("x", 1001)},
+		{Name: "valid", ExpiresAt: ptrTime(now.Add(-time.Minute))},
+	} {
+		if _, _, err := service.Create(t.Context(), input); !errors.Is(err, ErrValidation) {
+			t.Errorf("無效 metadata 應回 ErrValidation，input=%+v err=%v", input, err)
+		}
+	}
+	if _, err := service.Update(t.Context(), "missing", UpdateInput{Name: "valid", Version: 0}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("Update version=0 應回 ErrValidation:%v", err)
+	}
+	if _, err := service.Enable(t.Context(), "missing", 0); !errors.Is(err, ErrValidation) {
+		t.Fatalf("Enable version=0 應回 ErrValidation:%v", err)
+	}
+	if _, _, err := service.Rotate(t.Context(), "missing", 0); !errors.Is(err, ErrValidation) {
+		t.Fatalf("Rotate version=0 應回 ErrValidation:%v", err)
+	}
+	if err := service.Delete(t.Context(), "missing", 0); !errors.Is(err, ErrValidation) {
+		t.Fatalf("Delete version=0 應回 ErrValidation:%v", err)
+	}
+
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.Create(t.Context(), CreateInput{Name: "valid"}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("關閉後 Create 應回 ErrClosed:%v", err)
+	}
+	if _, err := service.Update(t.Context(), "id", UpdateInput{Name: "valid", Version: 1}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("關閉後 Update 應回 ErrClosed:%v", err)
+	}
+	if _, err := service.Disable(t.Context(), "id", 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("關閉後 Disable 應回 ErrClosed:%v", err)
+	}
+	if _, _, err := service.Rotate(t.Context(), "id", 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("關閉後 Rotate 應回 ErrClosed:%v", err)
+	}
+	if err := service.Delete(t.Context(), "id", 1); !errors.Is(err, ErrClosed) {
+		t.Fatalf("關閉後 Delete 應回 ErrClosed:%v", err)
+	}
+	if _, ok := service.Authenticate(t.Context(), "anything"); ok {
+		t.Fatal("關閉後 Authenticate 不應成功")
+	}
+}
+
+func TestRepositorySmallErrorAndNoOpPaths(t *testing.T) {
+	if _, err := OpenSQLite(t.Context(), " "); err == nil {
+		t.Fatal("空 SQLite path 應被拒絕")
+	}
+	repo := newTestRepository(t)
+	if err := repo.UpdateLastUsed(t.Context(), nil); err != nil {
+		t.Fatalf("空 last-used batch 應為 no-op:%v", err)
+	}
+	if _, err := repo.Get(t.Context(), "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知 ID 應回 ErrNotFound:%v", err)
+	}
+	if got := errorsWithoutSecret("safe message", errors.New("secret detail")); got.Error() != "safe message" {
+		t.Fatalf("錯誤應移除底層秘密:%v", got)
+	}
+}
+
 func ptrTime(value time.Time) *time.Time {
 	return &value
 }

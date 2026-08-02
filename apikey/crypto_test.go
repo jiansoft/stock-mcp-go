@@ -61,3 +61,18 @@ func TestHMACVerification(t *testing.T) {
 		t.Fatal("錯誤 pepper 不應通過")
 	}
 }
+
+func TestPepperAndDigestValidation(t *testing.T) {
+	if err := validatePepper(make([]byte, minPepperLength)); err != nil {
+		t.Fatalf("足夠長的 pepper 應有效:%v", err)
+	}
+	if err := validatePepper(make([]byte, minPepperLength-1)); err == nil {
+		t.Fatal("過短 pepper 應無效")
+	}
+	if secureDigestEqual(make([]byte, 1), make([]byte, 1)) {
+		t.Fatal("非 SHA-256 長度的 digest 不可視為相等")
+	}
+	if got, err := randomURLSafe(0); err != nil || got != "" {
+		t.Fatalf("零長度亂數應安全回傳空字串，got=%q err=%v", got, err)
+	}
+}
