@@ -15,15 +15,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      # go-version-file 直接讀 go.mod 的 go 指令行,確保 CI 用的 Go 版本
-      # 與本地開發、Dockerfile 一致,不需要在這裡另外手動維護一份版本號。
+      # setup-go 目前會把 go.mod 的預發行版本 go1.27rc2 誤解析成尚未發布的
+      # 穩定版 1.27。使用它支援的 SemVer RC 寫法明確指定同一個 toolchain；
+      # Go 1.27 正式發布後可改回 go-version-file: go.mod。
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version: '1.27.0-rc.2'
+          cache-dependency-path: go.sum
 
       - name: go build
         run: go build ./...
