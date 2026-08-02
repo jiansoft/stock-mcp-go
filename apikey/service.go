@@ -138,10 +138,8 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (APIKey, string
 	}
 	now := s.now().UTC()
 	rec := keyRecord{
-		APIKey: APIKey{
-			ID: generated.ID, Name: name, Description: description, MaskedKey: generated.Masked,
-			Status: StatusActive, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt, Version: 1,
-		},
+		ID: generated.ID, Name: name, Description: description, MaskedKey: generated.Masked,
+		Status: StatusActive, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt, Version: 1,
 		Prefix: generated.Prefix, Hash: keyDigest(s.pepper, generated.Full), HashAlgorithm: HashAlgorithm,
 	}
 
