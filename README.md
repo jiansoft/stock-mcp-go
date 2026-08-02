@@ -1,614 +1,253 @@
-# stock-mcp(Go 版)
+# stock-mcp-go
 
-以 **MCP Streamable HTTP transport** 提供服務的唯讀 MCP Server。預設透過 `stock_rust` 的版本化 Data API 查詢台股資料；`db` 模式只供遷移期比對。
+[English](README.md) | [繁體中文](README.zh-TW.md)
 
-> **非即時行情聲明**:本服務所有報價均為「資料庫中目前最新可取得的日報價或歷史日線資料」,**非交易所逐筆或保證即時行情**,僅供資訊參考。所有價格輸出都帶有 `is_realtime: false` 與免責聲明欄位。
+A read-only Model Context Protocol (MCP) server for Taiwan stock data, built with Go and the official MCP Go SDK. It exposes stock quotes, company fundamentals, financial history, valuation, screening, and market analytics over stateless Streamable HTTP.
 
-本專案是 `docs/stock-mcp-project-prompt.md` 規格的第三個實作(前兩個為 TypeScript 版 `stock_ts` 與 Rust 版 `stock_mcp_rust`),使用 **Go 1.27** 與官方 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
+> [!IMPORTANT]
+> Most data returned by this server is historical or the latest data available from the upstream database. It is not exchange-grade tick data and must not be treated as guaranteed real-time market data. The only tool that may return real-time results is `get_market_movers` during market hours. All responses include data provenance, freshness, and disclaimer fields.
 
-## 系統架構
+## Features
+
+- Stateless MCP Streamable HTTP endpoint with read-only tool annotations
+- 16 read-only tools backed by the `stock_rust` Data API
+- Traditional Chinese text summaries plus structured content for programmatic use
+- Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
+- HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
+- Embedded administration UI with secure, eight-hour HttpOnly sessions
+- Per-key and per-client-IP rate limiting
+- Origin validation, request-size limits, structured logging, and graceful shutdown
+- Liveness and data-source-aware readiness endpoints
+- Distroless, non-root container image with a built-in health check
+
+## Architecture
 
 ```text
-                    ┌───────────────────────────────────────────────┐
-                    │                  stock-mcp(Go)               │
- AI client          │                                               │
- (MCP over ─ HTTPS ─▶ 反向代理 ─▶ web/(HTTP 層)                    │
-  Streamable HTTP)  │       GET /healthz、/readyz(免驗證)         │
-                    │       /admin/mcp-api-keys(管理 UI)          │
-                    │       /api/admin/mcp-api-keys/*(管理 API)   │
-                    │       {MCP_PATH}:                             │
-                    │         1. API key 驗證(401)                │
-                    │         2. rate limit(429)                  │
-                    │         3. MCP StreamableHTTPHandler(SDK)   │
-                    │              │                                │
-                    │       stock/(領域層)                        │
-                    │         tools.go   ── 16 個 MCP tool(api 模式)│
-                    │         repository ── 參數化 SQL(唯讀)      │
-                    │              │                                │
-                    └──────────────┼────────────────────────────────┘
-                                   ▼
-                  stock_rust Data API (Bearer key)
-                               │
-                           PostgreSQL
+MCP client
+    │  HTTPS + Authorization: Bearer <MCP_API_KEY>
+    ▼
+Reverse proxy
+    ▼
+stock-mcp-go
+    ├── /mcp                         stateless MCP endpoint
+    ├── /healthz and /readyz         health endpoints
+    ├── /admin/mcp-api-keys          embedded administration UI
+    ├── web/                          auth, rate limiting, HTTP security
+    ├── apikey/                       SQLite key store and in-memory snapshot
+    └── stock/                        MCP tools and Data API client
+          └── api mode ─────────────► stock_rust Data API
 ```
 
-- **`stock/`**:資料模型、Data API client、遷移期的 PostgreSQL repository、MCP tool 實作。
-- **`apikey/`**:多組 MCP API Key domain、SQLite repository、HMAC 驗證、不可變 snapshot、audit 與 last-used 節流。
-- **`web/`**:API key 驗證、管理 REST API／UI、rate limit、健康檢查、HTTP server。tool 與資料庫邏輯完全與 transport 解耦。
-- **`config/`**:環境變數載入與啟動驗證。
+> [!WARNING]
+> Direct PostgreSQL access through `db` mode is deprecated, retained only for short-term migration comparison, and will be removed in a future release. Do not use it for new deployments. It currently exposes only `search_stock`, `get_latest_daily_quote`, `get_price_history`, and `get_stock_profile`.
 
-## 系統需求
+## MCP tools
 
-- Go 1.27(開發當下為 `go1.27rc2`,與 `go.mod`/`Dockerfile` 一致)
-- 可連線的 PostgreSQL(既有 `stock_rust` 資料庫)
-- 正式環境:HTTPS 反向代理(Caddy / Nginx)
+| Tool | Availability | Purpose |
+| --- | --- | --- |
+| `search_stock` | API | Search by stock symbol or Chinese/English name |
+| `get_latest_daily_quote` | API | Get the latest available daily quote |
+| `get_price_history` | API | Query historical daily prices by date range |
+| `get_stock_profile` | API | Get company details, quote, EPS, ROE, book value, and price extremes |
+| `get_realtime_snapshot` | API | Get a third-party near-real-time snapshot; not guaranteed real-time |
+| `get_monthly_revenue_history` | API | Query monthly and cumulative revenue history |
+| `get_financial_statement_history` | API | Query quarterly or annual financial metrics |
+| `get_dividend_history` | API | Query historical cash and stock dividends |
+| `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
+| `get_market_breadth` | API | Get advances/declines, moving-average breadth, and valuation distribution |
+| `get_dividend_yield_ranking` | API | Rank TWSE/TPEX stocks by historical dividend yield |
+| `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental and valuation filters |
+| `get_market_index_history` | API | Query TAIEX index history |
+| `get_dividend_calendar` | API | Query ex-dividend, ex-rights, and dividend-payment events |
+| `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
+| `get_market_movers` | API | Rank daily gainers, losers, or volume; automatically selects intraday or closing data |
 
-## 安裝與設定
+Every tool is read-only. Outputs include `data_kind`, `data_as_of`, `is_realtime`, and a disclaimer. Missing values remain `null`; the server does not invent zeroes or estimates.
+
+## Requirements
+
+- Go 1.27 (`go.mod` currently targets `go1.27rc2`)
+- Default `api` mode: access to a compatible `stock_rust` Data API and its bearer key
+- Production: an HTTPS reverse proxy such as Caddy or Nginx
+
+## Quick start
 
 ```bash
-git clone <本專案>
-cd stock_mcp_go
-cp .env.example .env   # 填入 STOCK_RUST_API_*、pepper、admin token 與 bootstrap key
-go build ./...
+git clone https://github.com/<owner>/stock-mcp-go.git
+cd stock-mcp-go
+cp .env.example .env
 ```
 
-API 模式啟動時會驗證 `STOCK_RUST_API_BASE_URL`、`STOCK_RUST_API_KEY`、`MCP_API_KEY_PEPPER` 與 `MCP_ADMIN_TOKEN`；db 模式才需要 `DATABASE_URL`。`MCP_API_KEY` 現在只供首次相容性匯入，不再是每次啟動的必要條件。
+At minimum, configure these values for the default API mode:
 
-### 環境變數
-
-| 變數 | 預設 | 說明 |
-|---|---|---|
-| `APP_ENV` | `development` | `development` / `production` / `test` |
-| `HOST` | `127.0.0.1` | 綁定位址(容器內請設 `0.0.0.0`) |
-| `PORT` | `3000` | 監聽 port |
-| `MCP_PATH` | `/mcp` | MCP endpoint 路徑 |
-| `TRUST_PROXY` | `false` | 僅在 `true` 時參考 `X-Forwarded-For` |
-| `TRUSTED_PROXY_HOPS` | `1` | 前方有幾層會自行附加 `X-Forwarded-For` 的受信任代理。**設錯會導致 rate limit 可被繞過**,詳見「反向代理」 |
-| `DATA_SOURCE` | `api` | `api`（正式）或 `db`（遷移期比對） |
-| `STOCK_RUST_API_BASE_URL` | api 模式必填 | 例如 `http://127.0.0.1:9002` |
-| `STOCK_RUST_API_KEY` | api 模式必填 | stock_rust 的 `DATA_API_KEY`，不可與 MCP key 共用 |
-| `API_TIMEOUT_MS` | `5000` | Data API HTTP timeout |
-| `DATABASE_URL` | db 模式必填 | 僅遷移期的唯讀連線字串 |
-| `DB_POOL_MAX` | `10` | 連線池上限 |
-| `DB_CONNECTION_TIMEOUT_MS` | `5000` | 連線逾時 |
-| `DB_STATEMENT_TIMEOUT_MS` | `5000` | 每條查詢的 statement timeout |
-| `MCP_API_KEY` | (空) | 舊部署相容性 bootstrap；僅在 SQLite 沒有任何 Key 時匯入一次 |
-| `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | API Key 管理 SQLite 路徑；容器預設 `/data/mcp-api-keys.db` |
-| `MCP_API_KEY_PEPPER` | (必填) | 至少 32 bytes 的 HMAC-SHA-256 pepper；只放 secret manager，不存 SQLite |
-| `MCP_ADMIN_TOKEN` | (必填) | 至少 32 bytes 的獨立管理 Bearer token，不可與 MCP Key 共用 |
-| `MCP_TRUSTED_ORIGINS` | (空) | 額外信任的跨來源 Origin,逗號分隔,例如 `https://a.example,https://b.example`。非瀏覽器用戶端不受影響,詳見「跨來源保護」 |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | rate limit 視窗 |
-| `RATE_LIMIT_MAX_REQUESTS` | `60` | 視窗內每個 API key + IP 的請求上限 |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-
-## 建立唯讀資料庫帳號
-
-本服務**只讀取**資料庫,請務必使用獨立、最小權限的唯讀帳號(概念範例,請替換資料庫名稱與強密碼):
-
-```sql
-CREATE ROLE stock_mcp_reader LOGIN PASSWORD '請替換為強密碼';
-GRANT CONNECT ON DATABASE stock TO stock_mcp_reader;
-GRANT USAGE ON SCHEMA public TO stock_mcp_reader;
-GRANT SELECT ON TABLE
-  public.stocks,
-  public.last_daily_quotes,
-  public."DailyQuotes",
-  public.quote_history_record
-TO stock_mcp_reader;
+```dotenv
+DATA_SOURCE=api
+STOCK_RUST_API_BASE_URL=http://127.0.0.1:9002
+STOCK_RUST_API_KEY=replace-with-a-dedicated-upstream-key
+MCP_API_KEY=replace-with-an-initial-client-key
+MCP_API_KEY_PEPPER=replace-with-at-least-32-random-bytes
+MCP_ADMIN_TOKEN=replace-with-a-different-32-byte-random-secret
 ```
 
-**不可**授予 `INSERT`、`UPDATE`、`DELETE`、`TRUNCATE`、`CREATE`、`ALTER`、`DROP` 或任意 function 的 `EXECUTE` 權限。
+`MCP_API_KEY` is only a bootstrap value. It is imported when the API-key SQLite database is empty and can be removed from the environment after the first successful import.
 
-## 啟動
+Start the server:
 
 ```bash
-# 本機開發(自動載入 .env)
-make dev            # 或 go run .
-
-# 編譯後執行
-make start
-
-# Docker
-docker compose -f docker-compose.example.yml up --build
+go run .
 ```
 
-> 要部署到正式機器,請先看 [部署目錄與檔案結構](#部署目錄與檔案結構):哪些檔案必須放、放在哪一層,以及最常見的啟動失敗原因(相對路徑是相對於**工作目錄**而非執行檔位置)。
+The checked-in `.env.example` uses port `9005`; the application default is `3000` when `PORT` is unset.
 
-健康檢查(不需 API key):
+Verify it:
 
 ```bash
-curl http://127.0.0.1:3000/healthz   # liveness:進程是否活著
-# {"status":"ok"}
-
-curl http://127.0.0.1:3000/readyz    # readiness:資料來源是否可用
-# {"status":"ok"}        資料來源正常
-# {"status":"unavailable","reason":"資料來源目前不可用"}   → HTTP 503
+curl http://127.0.0.1:9005/healthz
+curl http://127.0.0.1:9005/readyz
 ```
 
-## MCP endpoint 與驗證
+Expected responses are `{"status":"ok"}`. `/readyz` returns HTTP 503 when the selected data source is unavailable.
 
-- `POST /mcp`:MCP JSON-RPC 請求(stateless 模式下唯一支援的方法)
-- `GET /mcp`、`DELETE /mcp`:回 `405 Method Not Allowed`。MCP `2026-07-28` 規格已移除 session 與 SSE 長連線,詳見「MCP 協定相容性」
+## MCP client configuration
 
-所有 MCP 請求仍沿用原本的 header，不需修改 Client:
+The endpoint accepts authenticated `POST` requests at `/mcp` by default:
 
 ```http
 Authorization: Bearer <MCP_API_KEY>
 ```
 
-驗證失敗回傳 HTTP 401 且不會查詢資料庫;超過 rate limit 回傳 HTTP 429。
-
-MCP client 設定範例(以 Claude Code 為例):
+Claude Code example:
 
 ```bash
-claude mcp add --transport http stock-mcp https://your-domain.example/mcp \
+claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
   --header "Authorization: Bearer <MCP_API_KEY>"
 ```
 
-## 多組 MCP API Key 管理
+The server uses stateless Streamable HTTP. It does not provide stdio transport, server-side sessions, or an SSE subscription endpoint; `GET /mcp` and `DELETE /mcp` return `405 Method Not Allowed`.
 
-管理頁位於：
+## Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `APP_ENV` | `development` | `development`, `production`, or `test` |
+| `HOST` | `127.0.0.1` | Listen address; use `0.0.0.0` inside a container |
+| `PORT` | `3000` | HTTP port (`.env.example` overrides it to `9005`) |
+| `MCP_PATH` | `/mcp` | MCP endpoint path |
+| `TRUST_PROXY` | `false` | Trust proxy-appended client IP information |
+| `TRUSTED_PROXY_HOPS` | `1` | Number of trusted proxies that append `X-Forwarded-For` |
+| `DATA_SOURCE` | `api` | Data source; new deployments must use `api` |
+| `STOCK_RUST_API_BASE_URL` | required in API mode | Upstream Data API base URL |
+| `STOCK_RUST_API_KEY` | required in API mode | Dedicated upstream bearer key |
+| `API_TIMEOUT_MS` | `5000` | Upstream HTTP timeout |
+| `MCP_API_KEY` | empty | One-time compatibility bootstrap key |
+| `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | SQLite API-key database path |
+| `MCP_API_KEY_PEPPER` | required | HMAC pepper of at least 32 bytes |
+| `MCP_ADMIN_TOKEN` | required | Separate administration secret of at least 32 bytes |
+| `MCP_TRUSTED_ORIGINS` | empty | Comma-separated allowed browser origins |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
+| `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per API key and source IP per window |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+
+The upstream key, MCP client keys, pepper, and admin token must all be separate secrets. Do not commit `.env`.
+
+The deprecated DB compatibility mode additionally uses `DATABASE_URL`, `DB_POOL_MAX`, `DB_CONNECTION_TIMEOUT_MS`, and `DB_STATEMENT_TIMEOUT_MS`. These settings will disappear when DB mode is removed.
+
+## API-key administration
+
+Open the embedded UI at:
 
 ```text
-https://your-domain.example/admin/mcp-api-keys
+https://mcp.example.com/admin/mcp-api-keys
 ```
 
-頁面會要求輸入獨立的 `MCP_ADMIN_TOKEN`。此 token 只在登入那一次送出，之後由伺服器換發 **HttpOnly + Secure + SameSite=Strict** 的工作階段 Cookie（`POST /api/admin/session`），因此重新整理頁面不需再次輸入。Token 本身不寫入 URL、`localStorage` 或 `sessionStorage`，JavaScript 也讀不到工作階段 Cookie。工作階段 8 小時到期，按「登出」（`DELETE /api/admin/session`）即刻撤銷；工作階段存放於行程記憶體，服務重啟後需重新登入。
+Sign in once with `MCP_ADMIN_TOKEN`. The server exchanges it for an in-memory, eight-hour `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. The token is not stored in browser storage.
 
-管理 API 同時接受 `Authorization: Bearer <MCP_ADMIN_TOKEN>`（供 curl 與自動化腳本使用）。管理頁 HTML 本身不含資料或秘密，所有資料 API 都需要管理者驗證並套用 Origin 保護。
+The administration API also accepts `Authorization: Bearer <MCP_ADMIN_TOKEN>` for automation:
 
-可用功能包含 List、Create、Edit、Enable、Disable、Rotate、Delete、Refresh，以及建立／輪替後的一次性 Copy。完整 API Key 只在 Create 或 Rotate 成功回應中出現一次，關閉視窗後無法透過 List、Get 或 Update 取回。
+| Method | Endpoint | Action |
+| --- | --- | --- |
+| `POST` / `DELETE` | `/api/admin/session` | Sign in or sign out |
+| `GET` / `POST` | `/api/admin/mcp-api-keys` | List or create keys |
+| `GET` / `PATCH` / `DELETE` | `/api/admin/mcp-api-keys/{id}` | Read, update, or revoke a key |
+| `POST` | `/api/admin/mcp-api-keys/{id}/enable` | Enable a key |
+| `POST` | `/api/admin/mcp-api-keys/{id}/disable` | Disable a key |
+| `POST` | `/api/admin/mcp-api-keys/{id}/rotate` | Rotate a key |
 
-新 Key 格式：
+Complete API keys are returned only once, after creation or rotation. SQLite stores a public prefix and `HMAC-SHA-256(pepper, full-key)`, never the plaintext key. Changes are published to an immutable in-memory snapshot immediately after the database transaction commits.
 
-```text
-mcp_live_<public-id>_<256-bit-url-safe-secret>
-```
+The API-key store supports one Go process with one local SQLite volume. Do not share the same SQLite file between replicas. A multi-replica deployment requires a shared relational key store and a cross-process refresh mechanism.
 
-SQLite 只保存 public prefix 與 `HMAC-SHA-256(pepper, full-key)`，不保存明文或可逆密文。驗證先由 public ID 直接定位 snapshot 中的單筆 credential，再以常數時間比較 HMAC；MCP request 熱路徑不查 SQLite。舊格式 `MCP_API_KEY` 匯入後也用 HMAC 派生的 lookup prefix 直接定位，不需掃描全表。
+## Docker
 
-### 管理 REST API
-
-所有端點都要求 `Authorization: Bearer <MCP_ADMIN_TOKEN>`、限制 request body、回傳 `Cache-Control: no-store`，錯誤格式固定為 `{"error":{"code":"...","message":"..."}}`。
-
-| Method | Endpoint | 功能 |
-|---|---|---|
-| `GET` | `/api/admin/mcp-api-keys` | 清單 |
-| `POST` | `/api/admin/mcp-api-keys` | 建立；輸入 `name`、`description`、`expiresAt` |
-| `GET` | `/api/admin/mcp-api-keys/{id}` | 非敏感 metadata |
-| `PATCH` | `/api/admin/mcp-api-keys/{id}` | 更新 name／description／expiresAt；需帶 version |
-| `POST` | `/api/admin/mcp-api-keys/{id}/enable` | 啟用；body 為 `{"version":N}` |
-| `POST` | `/api/admin/mcp-api-keys/{id}/disable` | 停用；body 為 `{"version":N}` |
-| `POST` | `/api/admin/mcp-api-keys/{id}/rotate` | 輪替並一次性回傳新 Key |
-| `DELETE` | `/api/admin/mcp-api-keys/{id}` | soft-delete／revoke；body 為 `{"version":N}` |
-
-Create 範例：
-
-```json
-{
-  "name": "Production Client",
-  "description": "Used by production MCP client",
-  "expiresAt": null
-}
-```
-
-Create／Rotate 成功回應才會額外包含：
-
-```json
-{
-  "item": {
-    "id": "...",
-    "name": "Production Client",
-    "maskedKey": "mcp_live_ab12..._••••••••••••",
-    "status": "active",
-    "version": 1
-  },
-  "apiKey": "mcp_live_ab12..._<one-time-secret>",
-  "notice": "完整 API Key 只顯示這一次，關閉後無法再次取得。"
-}
-```
-
-`version` 是樂觀鎖；過期或重複操作會回 409。停用或刪除最後一組尚未到期的 active Key 也會回 409，避免 MCP 存取被意外全部鎖死；即使如此，管理存取仍由獨立 `MCP_ADMIN_TOKEN` 保護，可用來建立替代 Key。
-
-### 即時生效與 last-used
-
-管理 transaction 會在同一筆 SQLite transaction 內取得完整 active credentials，commit 成功後以 `atomic.Pointer` 一次替換不可變 snapshot，然後才回應管理 API。停用、刪除或輪替後，後續新請求立即讀到新 snapshot；已進入 handler 的請求不強制中止。snapshot 建立是純記憶體操作，不存在 DB commit 成功後 reload I/O 失敗而保留 revoked Key 的窗口；明確 Reload 若失敗則保留上一份完整 snapshot，不發布 partial state。
-
-成功驗證後的 `last_used_at` 以記憶體節流，同一 Key 最多每分鐘排程一次，背景批次更新 SQLite；寫入失敗不影響 MCP request，graceful shutdown 會盡力 flush。
-
-### 舊 `MCP_API_KEY` 遷移
-
-啟動時若 SQLite 沒有任何 Key 且 `MCP_API_KEY` 有值，會匯入為 `Migrated MCP_API_KEY`，不在 log 輸出原值。資料庫已有任何 Key 時不再重複匯入。確認管理頁可以使用後，可從部署環境移除 `MCP_API_KEY`；它不是 CRUD 的持久化來源。
-
-### SQLite、備份與 Pepper
-
-- migration 是可重複執行的 `CREATE TABLE/INDEX IF NOT EXISTS`，啟用 foreign keys、5 秒 busy timeout 與 WAL。
-- 程式會以 `0700` 建立資料夾並盡力將 DB 設為 `0600`。資料檔、`-wal`、`-shm` 已列入 `.gitignore`。
-- Docker Compose 使用 named volume `mcp-api-key-data:/data`。自行 `docker run` 時也必須掛載 `/data`，否則重建容器會失去 Key。
-- 執行中備份請使用 SQLite backup 工具或先正常停止服務，再一起複製 `.db`、`-wal`、`-shm`；還原前先停止服務。備份雖不含明文 Key，仍應視為敏感資料。
-- Pepper 必須另存於 secret manager／離線備份，不在 SQLite 內。資料庫保存 pepper check；設定錯誤或遺失時服務會明確拒絕啟動，不會靜默使用空 pepper。恢復方式是還原正確 pepper；若永久遺失，只能保留舊 DB 作稽核備份、改用全新 DB＋新 pepper，並由 `MCP_API_KEY` bootstrap 或管理頁重新建立所有 Client Key。
-- Pepper 不可直接原地輪替，因為既有 HMAC 無法在沒有明文 Key 的情況下重算。要換 pepper，需建立新 DB 並輪替所有 Client。
-
-### 單一與多執行個體
-
-此實作明確支援「單一 Go process＋本機 SQLite volume」。SQLite 檔案不應由多台主機或多個 replica 共用，記憶體 snapshot 也不會跨程序同步；因此不可將同一份 `/data` 掛到多個 replicas 後宣稱一致性。需要水平擴充時，應先把 Key repository 移到部署環境已有的共享關聯式資料庫，再加入 version polling／通知機制；本功能沒有導入 Redis 或 message broker。
-
-## MCP tools
-
-所有 tool 回傳一段繁體中文文字摘要與 `structuredContent`;價格資料一律包含 `data_kind`、`data_as_of`、`is_realtime: false`、`disclaimer`。
-
-> 唯一的例外是 [`get_market_movers`](#get_market_movers):盤中查詢時它回傳的是即時排行,`is_realtime` 會是 `true`。其餘工具在任何時候都是 `false`。
-
-### `search_stock`
-
-以代號或名稱關鍵字搜尋(代號完全符合優先)。查無資料回傳空陣列,不是錯誤。
-
-```json
-{"name": "search_stock", "arguments": {"query": "台積電", "limit": 10}}
-```
-
-### `get_latest_daily_quote`
-
-查詢最新一筆日報價。股票存在但沒有報價時 `quote` 為 `null`;股票不存在回傳 tool error「找不到股票代號:{symbol}」。`data_as_of` 依序取 `updated_time` → `record_time` → `date`。
-
-```json
-{"name": "get_latest_daily_quote", "arguments": {"symbol": "2330"}}
-```
-
-### `get_price_history`
-
-歷史日線,按日期新到舊排序;`from` 不可晚於 `to`,`limit` 預設 30(1–365)。
-
-```json
-{"name": "get_price_history", "arguments": {"symbol": "2330", "from": "2026-06-01", "to": "2026-07-13", "limit": 30}}
-```
-
-### `get_stock_profile`
-
-基本資料、最新報價、近一季/近四季 EPS、每股淨值、ROE、權值、發行股數與歷史高低點。缺失資料一律回傳 `null`,不以 0 或猜測值取代。
-
-```json
-{"name": "get_stock_profile", "arguments": {"symbol": "2330"}}
-```
-
-> **關聯假設**:`quote_history_record.security_code` 與 `stocks."SecurityCode"` 為等價關聯(沿用原始規格書明確指定的假設,非本專案自行推測)。
-
-### `get_realtime_snapshot`
-
-僅在 `DATA_SOURCE=api` 出現。資料來自第三方站點採集的快照，`is_realtime` 固定為 `false`，並以 `updated_at` 作為 `data_as_of`；非交易時段或個股無快照時會回 tool error，建議改查 `get_latest_daily_quote`。
-
-### `get_monthly_revenue_history`
-
-僅在 `DATA_SOURCE=api` 出現。查詢單一股票的月營收歷史（當月/累計營收、月增率、年增率、當月股價高低均價），依月份新到舊排序。`from`/`to` 為 `YYYY-MM` 月份區間（選填），`limit` 預設 24（1–120）。查無資料回傳空陣列；股票不存在回傳 tool error「找不到股票代號:{symbol}」。
-
-```json
-{"name": "get_monthly_revenue_history", "arguments": {"symbol": "2330", "from": "2024-01", "to": "2026-06", "limit": 24}}
-```
-
-### `get_financial_statement_history`
-
-僅在 `DATA_SOURCE=api` 出現。查詢單一股票的季/年度財報（毛利率、營益率、稅前/稅後淨利率、每股淨值、每股營收、EPS、ROE、ROA）。`period_type` 可選 `quarterly`（預設）、`annual`、`all`；`quarter` 欄位以 `A` 代表年度資料、`Q1`–`Q4` 代表季度。`limit` 預設 12（1–40）。
-
-```json
-{"name": "get_financial_statement_history", "arguments": {"symbol": "2330", "period_type": "quarterly", "limit": 12}}
-```
-
-### `get_dividend_history`
-
-僅在 `DATA_SOURCE=api` 出現。查詢單一股票的歷年股利（現金/股票股利與其盈餘/公積細項、盈餘分配率、除息日/除權日/發放日）。`from_year`/`to_year` 依**股利所屬年度**（`dividend_year`）篩選，範圍 1990 至目前年度加一；`limit` 預設 20（1–80）。尚未公布的日期一律為 `null`。
-
-```json
-{"name": "get_dividend_history", "arguments": {"symbol": "2330", "from_year": 2020, "to_year": 2026, "limit": 30}}
-```
-
-> 三個歷史財務工具的免責聲明與價格工具不同：`本資料來自 stock_rust 已蒐集與計算的歷史資料,可能有延遲,僅供資訊參考,不構成投資建議。`
-
-### `get_stock_valuation`
-
-僅在 `DATA_SOURCE=api` 出現。查詢個股最新或指定日期以前最近一筆估值模型結果；指定日期採 31 天回溯窗口，股票存在但窗口內沒有資料時 `valuation` 與 `data_as_of` 都是 `null`。`cheap`、`fair`、`expensive` 是歷史模型算出的估值分界，`valuation_band` 為 `undervalued`、`fair_valued`、`overvalued` 或 `highly_overvalued`，不是目標價或買賣建議。
-
-```json
-{"name": "get_stock_valuation", "arguments": {"symbol": "2330", "date": "2026-07-16"}}
-```
-
-### `get_market_breadth`
-
-僅在 `DATA_SOURCE=api` 出現。查詢市場漲跌家數、5/20/60/120/240 日均線上下家數及估值分布。`market` 可選 `all`（預設）、`twse`、`tpex`；`days` 預設 1、範圍 1–60，回傳最近有統計資料的交易日，不補非交易日。`history` 固定由新到舊，`breadth` 固定等於 `history[0]`。
-
-```json
-{"name": "get_market_breadth", "arguments": {"market": "all", "date": "2026-07-16", "days": 20}}
-```
-
-### `get_dividend_yield_ranking`
-
-僅在 `DATA_SOURCE=api` 出現。查詢指定日期以前最近資料日的殖利率排行，可依市場與正整數 `industry_id` 篩選，`limit` 預設 20（1–50）。`market=all` 只包含上市與上櫃，不包含公開發行及興櫃；未知產業或合法條件查無資料時 `stocks` 為空陣列。
-
-```json
-{"name": "get_dividend_yield_ranking", "arguments": {"date": "2026-07-16", "market": "twse", "industry_id": 24, "limit": 20}}
-```
-
-> 三個分析工具都回傳繁體中文摘要與完整 `structuredContent`，並包含 `data_kind`、Data API 決定的 `data_as_of`、`is_realtime: false` 與分析型免責聲明；工具不提供買進、賣出、目標價或報酬保證。
-
-### `screen_stocks`
-
-僅在 `DATA_SOURCE=api` 出現。用固定白名單條件篩選股票：單一市場（`twse`/`tpex`）、產業、估值區間、最低營收年增率、EPS、ROE 或殖利率。至少要有一個實質條件；預設範圍 `market=all`、排序與 `limit` 不算篩選條件，避免把工具當成全市場資料匯出。
-
-`sort_by` 只允許 `stock_symbol`、`revenue_yoy`、`eps`、`roe`、`dividend_yield`、`valuation_percentage`，`sort_order` 只允許 `asc`/`desc`，`limit` 預設 20（1–50）。每檔股票採自己最新且仍在新鮮度期限內的資料，因此結果分別附 `revenue_month`、`financial_period`、`valuation_date`、`yield_date`；過期或缺失指標維持 `null`，不可假設所有指標來自同一天。
-
-```json
-{"name": "screen_stocks", "arguments": {"market": "twse", "industry_id": 24, "valuation_band": "undervalued", "min_revenue_yoy_percent": 10, "min_eps": 5, "min_roe_percent": 10, "min_dividend_yield_percent": 3, "sort_by": "dividend_yield", "sort_order": "desc", "limit": 20}}
-```
-
-回應的 `data_kind` 為 `stock_screening_result`，混合指標沒有單一正確資料日，所以最外層 `data_as_of` 固定為 `null`；查無符合項目時 `stocks` 為空陣列。結果只描述歷史資料符合情形，不替使用者做投資決策。
-
-### `get_market_index_history`
-
-僅在 `DATA_SOURCE=api` 出現。查詢台股大盤 TAIEX 加權指數的歷史走勢（收盤指數、漲跌點數、成交金額/筆數/股數），依日期新到舊排序，與 `get_market_breadth` 互補（前者看指數點位，後者看市場內部強弱）。`from`/`to` 為 `YYYY-MM-DD` 日期區間（選填，`from` 不可晚於 `to`），`limit` 預設 30（1–365）。查無資料回傳空陣列且 `data_as_of` 為 `null`（大盤指數沒有「代號不存在」的 404 語意）。
-
-```json
-{"name": "get_market_index_history", "arguments": {"from": "2026-06-01", "to": "2026-07-17", "limit": 30}}
-```
-
-回應的 `data_kind` 為 `market_index_history`，`data_as_of` 取實際回傳資料最新一筆的日期；`index`、`change`、`trade_value`、`transaction`、`trading_volume` 缺值一律為 `null`。
-
-### `get_dividend_calendar`
-
-僅在 `DATA_SOURCE=api` 出現。查詢日期區間內的除權息與股利發放行事曆，依事件日期由近到遠（`event_date ASC`）排序。`event_type` 可選 `ex_dividend`（除息）、`ex_rights`（除權）、`cash_payable`（現金股利發放）、`stock_payable`（股票股利發放）或 `all`（預設）；`from` 未提供時預設查詢當日、`to` 預設 `from` 加 30 天，兩者都提供時 `from` 不可晚於 `to` 且區間不可超過 92 天；`limit` 預設 50（1–200）。同一筆股利若有多個日期落在區間內會輸出多筆事件（每筆一個 `event_type`）。
-
-```json
-{"name": "get_dividend_calendar", "arguments": {"from": "2026-07-01", "to": "2026-07-31", "event_type": "all", "limit": 50}}
-```
-
-回應的 `data_kind` 為 `dividend_calendar`；混合事件沒有單一統計日期，最外層 `data_as_of` 固定為 `null`，各事件日期在每筆 `event_date` 內。查無事件時 `events` 為空陣列。
-
-### `get_qfii_holding_ranking`
-
-僅在 `DATA_SOURCE=api` 出現。查詢外資（QFII）持股比例或持股數排行，可依市場與正整數 `industry_id` 篩選；`market=all` 只包含上市與上櫃。`sort_by` 可選 `percentage`（外資持股比例，預設）或 `shares`（外資持股數），一律由高到低；`limit` 預設 20（1–50）。已排除暫停上市與外資零持股的股票。
-
-> **快照限制**：這是**最近一次每日更新的當前快照**，資料庫沒有歷史序列，因此**無法回答「外資最近增持/減持了哪些股票」這類趨勢問題**；`data_as_of` 也因為沒有列級更新日期而固定為 `null`，摘要文字會明確標示快照語意。
-
-```json
-{"name": "get_qfii_holding_ranking", "arguments": {"market": "twse", "industry_id": 24, "sort_by": "percentage", "limit": 20}}
-```
-
-回應的 `data_kind` 為 `qfii_holding_ranking`；`qfii_shares_held` 與 `issued_share` 為整數股數，缺值為 `null`。查無資料時 `stocks` 為空陣列。
-
-### `get_market_movers`
-
-僅在 `DATA_SOURCE=api` 出現。查詢當日漲跌幅或成交量排行。`rank_by` 可選 `top_gainers`（漲幅由高到低，預設）、`top_losers`（跌幅由深到淺）或 `top_volume`（成交量由大到小）；`market` 可選 `all`（上市＋上櫃，預設）、`twse`、`tpex`；`limit` 預設 20（1–50）。已排除暫停上市與當日零成交的股票，同值一律以股票代號由小到大穩定排序。
-
-**資料來源由伺服器端自動切換**，呼叫端不需要（也不可以）指定：
-
-| 時段 | `source` | `is_realtime` | 資料內容 |
-|---|---|---|---|
-| 盤中 | `realtime` | `true` | 第三方網站採集的即時報價快照，附 `snapshot_updated_at` |
-| 收盤後 | `closing` | `false` | 當日最終收盤日線 |
-
-> **13:30–15:00 空窗**：台股 13:30 收盤時即時採集停止，但當日日線要到 15:00 的收盤排程才寫入。這段時間查詢會拿到 `source=closing` 且 `data_as_of` 為**前一交易日**，摘要會明確標示「今日收盤資料尚未產生」。假日與長假期間同理。
-
-> **成交量有兩個欄位**：即時來源給 `volume_lots`（張）、收盤來源給 `volume_shares`（股），來源沒有的那個固定為 `null`。看似除以 1000 就能統一，但零股交易會讓換算失真，因此契約選擇誠實而非方便。同理，即時來源沒有 `trade_value`／`transaction`，收盤來源沒有 `last_close`／`source_site`。也因為即時快照沒有成交金額，**不提供成交金額排行**——同一個參數在兩個時段語意不同，比不提供更危險。
-
-```json
-{"name": "get_market_movers", "arguments": {"rank_by": "top_gainers", "market": "all", "limit": 20}}
-```
-
-回應的 `data_kind` 為 `market_movers`。這是所有工具中**唯一 `is_realtime` 可能為 `true`** 的分析型輸出；`data_as_of` 永遠有值（即時為今日、收盤為該交易日）。查無符合條件的股票時 `movers` 為空陣列。
-
-## 安全設計
-
-- 股票資料來源維持唯讀；PostgreSQL SQL 集中在 `stock/repository.go` 且全部參數化。API Key 只寫入獨立 SQLite。
-- 多組 API key 以 HMAC-SHA-256＋server-side pepper 保存驗證資料，並以 `crypto/subtle` 常數時間比較。
-- rate limit 以「非敏感 Key ID + 來源 IP」計數;預設 60 次/分鐘,可由環境變數調整。
-- 管理 API 使用獨立 admin token、Origin 防護、64 KiB body limit 與 `no-store`。
-- 停用、輪替、soft-delete 後以 atomic snapshot 立即失效；最後一組 active Key 不可停用或刪除。
-- 每條查詢套用 `statement_timeout`(預設 5 秒);歷史查詢皆有最大筆數限制。
-- 錯誤回應與 log 不包含資料庫主機、帳密、SQL 原文、堆疊或 Authorization header。
-- log 為結構化 JSON(`log/slog`),不記錄任何敏感資訊。
-
-## 部署目錄與檔案結構
-
-本服務執行期只依賴**兩樣東西**:執行檔本身,以及提供環境變數的來源。管理頁的 HTML/CSS/JS 已用 `go:embed` 編進執行檔(見 `web/admin_api.go`),**不需要**隨部署複製任何前端檔案或 `web/` 目錄。
-
-### ⚠️ 最容易踩的雷:相對路徑是相對於「工作目錄」,不是執行檔位置
-
-`.env` 與 `MCP_API_KEY_DB_PATH` 的預設值 `data/mcp-api-keys.db` 都是**相對路徑**,而且相對的是**啟動時的工作目錄(cwd)**:
+Build and run from source:
 
 ```bash
-cd /opt/stock_mcp && ./stock-mcp_linux_arm64   # ✅ 讀到 /opt/stock_mcp/.env
-cd / && /opt/stock_mcp/stock-mcp_linux_arm64   # ❌ 讀不到 .env，改在 /data 建資料庫
+docker compose -f docker-compose.example.yml up --build
 ```
 
-`control.sh` 的 `start` 是以 `./$BINARY_NAME` 啟動,cwd 必然等於部署目錄,所以照它操作不會有問題。但若自行寫 systemd unit,**務必設定 `WorkingDirectory=/opt/stock_mcp`**,否則會出現「.env 明明放好了卻說缺少環境變數」的狀況。
+The Compose example publishes `127.0.0.1:9004` to container port `3000` and persists API-key state in the `mcp-api-key-data` named volume. The image runs as a non-root user and uses the executable's `-health-check` mode because the distroless runtime contains no shell, `curl`, or `wget`.
 
-### 裸機部署(control.sh)
+`Dockerfile_live` and `control.sh` provide a separate ARM deployment flow for binaries produced by `build.ps1`. They support Linux ARM64 and ARMv7 and expect the selected `stock-mcp_linux_*` binary at the deployment root.
 
-部署目錄預設為 `/opt/stock_mcp`(`control.sh` 的 `DEPLOY_DIR`):
+## Reverse proxy
 
-```text
-/opt/stock_mcp/
-├── stock-mcp_linux_arm64      # ← 必要。執行檔,需 chmod +x
-│                              #   檔名依硬體架構,由 control.sh 的 uname -m 自動選擇:
-│                              #   aarch64/arm64 → _linux_arm64、armv7l → _linux_armv7
-├── .env                       # ← 必要。權限建議 600(內含 API key 與 admin token)
-├── control.sh                 # ← 必要。啟停腳本,需 chmod +x
-├── data/                      # 自動建立(0700),存放 SQLite API key 資料庫
-│   └── mcp-api-keys.db        #   路徑由 MCP_API_KEY_DB_PATH 決定
-├── nohup.out                  # 自動產生,start 時的 JSON log
-└── log_backup/                # 自動建立,stop 時把 nohup.out 依時間戳搬進來
-```
-
-`data/` 目錄由程式以 `os.MkdirAll(..., 0700)` 自動建立(見 `apikey/sqlite.go` 的 `OpenSQLite`),**不需要手動 mkdir**,但部署目錄本身必須對執行身分可寫,否則會以「無法建立 API key 資料庫目錄」啟動失敗。
-
-更新流程(`./control.sh update`)預期新的執行檔放在 `/tmp/<BINARY_NAME>`,檔名必須與架構相符;舊執行檔會被改名為 `<BINARY_NAME>.<時間戳>` 留在同目錄作為備份並移除執行權限。
-
-### Docker 部署
-
-`Dockerfile_live` 走的是「開發機交叉編譯 → 裝置端只做打包」的路線,build context **只接受**這兩個確切檔名(見 `Dockerfile_live.dockerignore` 的白名單):
-
-```text
-/opt/stock_mcp/                    # docker build 的執行目錄
-├── stock-mcp_linux_arm64          # ← 放自己平台需要的那一個即可
-├── stock-mcp_linux_armv7          #   兩個都放也可以，BuildKit 依目標平台自動挑選
-├── Dockerfile_live                # ← 必要
-├── Dockerfile_live.dockerignore   # ← 必要，缺少會導致建置失敗，原因見下方說明
-└── .env                           # ← 必要。但不會進 image，由 --env-file 在啟動時注入
-```
-
-`Dockerfile_live.dockerignore` 不可省略。Docker 會優先套用與 Dockerfile 同名的 ignore 檔,找不到才退回專案根目錄的 `.dockerignore`——而 `.dockerignore` 是給「從原始碼建置」的 `Dockerfile` 用的,裡面明確排除了 `stock-mcp_linux_*`。少了這個檔案,執行檔會被排除在 build context 之外,`COPY stock-mcp_linux_* /src/` 因為匹配不到任何檔案而失敗:
-
-```text
-failed to compute cache key: "/stock-mcp_linux_*" not found
-```
-
-(同名 ignore 檔是 BuildKit 的行為;Docker 23 之後預設啟用 BuildKit,若環境刻意關閉則不適用。)
-
-容器內的路徑固定為:
-
-| 容器內路徑 | 內容 | 說明 |
-| --- | --- | --- |
-| `/app/stock-mcp` | 執行檔 | 以 uid/gid `65532`(nonroot)執行 |
-| `/data` | SQLite 資料庫 | `control.sh` 掛載具名 volume `stock-mcp-api-key-data`,並以 `-e MCP_API_KEY_DB_PATH=/data/mcp-api-keys.db` 覆寫成絕對路徑 |
-
-> 秘密刻意不烘進 image。`.env` 不會被 `COPY`(白名單擋掉),而是由 `docker run --env-file .env` 在啟動時注入,避免秘密殘留在 image layer 裡。
->
-> API key 資料庫放在具名 volume 而非容器內,容器重建後既有的 API key 才不會消失。**若改用 bind mount,請確認目錄對 uid 65532 可寫**,否則容器會因無法建立資料庫而啟動失敗。
-
-### 啟動失敗的對照表
-
-| 錯誤訊息 | 原因 | 處理 |
-| --- | --- | --- |
-| `缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes` | `.env` 沒被讀到,或該值不足 32 bytes | 確認 cwd 是部署目錄;檢查 `.env` 是否存在該項 |
-| `缺少必要的環境變數 MCP_ADMIN_TOKEN，或長度少於 32 bytes` | 同上 | 同上 |
-| `MCP_ADMIN_TOKEN 不可與 MCP_API_KEY 相同` | 兩個秘密設成同一個值 | 改成兩個不同的隨機值 |
-| `缺少必要的環境變數:DATABASE_URL` | `DATA_SOURCE=db` 但沒給連線字串 | 補上,或改用 `DATA_SOURCE=api` |
-| `api 模式需要 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY` | `DATA_SOURCE=api` 但缺少上游設定 | 補齊這兩項 |
-| `無法建立 API key 資料庫目錄` | 部署目錄(或掛載點)對執行身分不可寫 | 修正目錄擁有者/權限 |
-| `MCP_API_KEY_PEPPER 與既有資料庫不相符` | pepper 被換掉,但沿用舊的 SQLite 檔 | 還原原本的 pepper;pepper 一旦更換,既有 API key 全數失效 |
-
-> `.env` **不存在本身不是錯誤**——程式設計成允許純以環境變數注入設定(容器情境),因此找不到 `.env` 時會靜默略過,直到某個必要變數缺失才報錯。這正是「檔案放錯位置」最常見的表現形式:錯誤訊息指向環境變數,實際原因卻是 `.env` 沒被讀到。
-
-## HTTPS 部署(反向代理)
-
-正式環境**必須**使用 HTTPS,本服務假設放在反向代理後方、只綁定 `127.0.0.1`。
-
-Caddy 範例(自動簽發憑證):
+Production traffic must use HTTPS. A minimal Caddy configuration is:
 
 ```caddyfile
 mcp.example.com {
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy 127.0.0.1:9005
 }
 ```
 
-Nginx 片段:
+Minimal Nginx configuration:
 
 ```nginx
-location /mcp {
-    proxy_pass http://127.0.0.1:3000;
+location / {
+    proxy_pass http://127.0.0.1:9005;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_buffering off;   # SSE 串流必須關閉緩衝
-    proxy_read_timeout 3600s;
-}
-
-location = /healthz {
-    proxy_pass http://127.0.0.1:3000/healthz;
-}
-
-location = /readyz {
-    proxy_pass http://127.0.0.1:3000/readyz;
-}
-
-# 建議再以 VPN、IP allowlist 或額外邊界驗證限制管理路由。
-location /admin/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
-}
-
-location /api/admin/ {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_set_header Host $host;
 }
 ```
 
-放在代理後方時將 `TRUST_PROXY=true`,rate limit 才會使用真實用戶端 IP。
+Set `TRUST_PROXY=true` only when the service is actually behind a trusted proxy. `TRUSTED_PROXY_HOPS` must match the number of proxies that append `X-Forwarded-For`: use `1` for client → Nginx → server, or `2` for client → CDN → Nginx → server. A value that is too large can make the rate-limit IP identity spoofable.
 
-**`TRUSTED_PROXY_HOPS` 必須與實際的代理層數一致。** `X-Forwarded-For` 是逗號分隔的清單,每經過一層代理就在**最右邊**附加一個 IP;清單左邊的部分是用戶端自己送來的,任何人都能偽造。以上面的 Nginx 設定為例,本服務收到的值是:
+Restrict the administration routes at the network edge when possible:
 
-```
-X-Forwarded-For: <用戶端自己填的內容>, <連到 Nginx 的真實來源 IP>
-```
+- `/admin/`
+- `/api/admin/`
 
-服務因此從右邊往左數,跳過 `TRUSTED_PROXY_HOPS - 1` 項後取用。設定值對照:
+## Data and security semantics
 
-| 部署拓撲 | `TRUSTED_PROXY_HOPS` |
-| --- | --- |
-| 用戶端 → Nginx → 本服務 | `1`(預設) |
-| 用戶端 → Cloudflare/CDN → Nginx → 本服務 | `2` |
+- `get_market_movers` is the only tool whose `is_realtime` value can be `true`.
+- Between the Taiwan market close and availability of the final daily data, movers may fall back to the previous trading day; the response reports its actual source and date.
+- `get_realtime_snapshot` is a third-party near-real-time snapshot but is deliberately marked as not guaranteed real-time.
+- Valuation bands, rankings, and screening results describe historical model output and are not targets or trading recommendations.
+- QFII holdings are a latest snapshot, not a time series; the tool cannot infer accumulation or reduction trends.
+- The MCP endpoint has a 1 MiB request-body limit; administration requests have a 64 KiB limit.
+- Authentication failures are separately rate-limited before normal per-key request limiting.
+- Secrets and authorization headers are excluded from logs.
 
-設得**太大**會取到清單更左邊、由用戶端可控的位置,讓攻擊者每個請求偽造一個假 IP 就能取得無限的限流額度;設得**太小**則會把代理自己的位址當成用戶端,使所有人共用同一份額度。層數與清單長度不符、或取出的值不是合法 IP 時,服務會退回使用 TCP 連線的 `RemoteAddr`(寧可過度限流,也不採信可能被偽造的值)。
-
-### 健康檢查
-
-| 端點 | 用途 | 行為 |
-| --- | --- | --- |
-| `GET /healthz` | liveness(存活) | 只要 HTTP 伺服器能回應就回 200,不碰任何外部相依 |
-| `GET /readyz` | readiness(就緒) | 額外確認資料來源(Data API 或資料庫)可用;不可用時回 503 |
-
-兩者都不需要 API key。負載平衡器與 k8s 應使用 `/readyz` 決定是否把流量導向這個實例,`/healthz` 則用於判斷是否需要重啟容器。`/readyz` 的檢查結果會快取 2 秒,避免高頻探測本身變成後端的額外負載;回應內容不含任何底層錯誤細節(這個端點不需認證,而底層錯誤可能包含內網位址)。
-
-兩個端點的請求 log 為 `debug` 等級,不會在預設的 `info` 等級產生洗版。
-
-執行檔本身也提供健康檢查模式,供容器 `HEALTHCHECK` 使用:
+## Development
 
 ```bash
-stock-mcp -health-check   # 呼叫本機 /readyz,結束碼 0 = 就緒,1 = 未就緒
+make test        # go test ./...
+make lint        # go vet ./...
+make fmt-check   # verify gofmt formatting
+make build       # build ./stock-mcp
 ```
 
-之所以需要這個模式,是因為執行階段 image 用的是 `gcr.io/distroless/static`——裡面沒有 shell、curl 或 wget,無法用常見的 `HEALTHCHECK CMD curl -f ...` 寫法。讓執行檔自己提供檢查模式是 distroless 的標準解法,不需要為了健康檢查而在 image 裡多裝任何工具。`Dockerfile` 與 `docker-compose.example.yml` 都已接上。
-
-### 跨來源保護
-
-服務會擋下 `Origin` 與自身 `Host` 不符的請求(回 403),符合 MCP 安全最佳實務對 Origin 驗證的要求。
-
-- **非瀏覽器用戶端不受影響**:Claude Desktop、Claude Code、MCP Inspector、`curl` 等都不會送出 `Origin` header,沒有 `Origin` 的請求一律放行。
-- 若反向代理會改寫 `Host`(例如對外是 `mcp.example.com`、轉發時改成 `127.0.0.1:3000`),請在 Nginx 加上 `proxy_set_header Host $host;`,或把對外網域加入 `MCP_TRUSTED_ORIGINS`。
-- 需要讓特定網頁前端跨網域呼叫時,把該來源加入 `MCP_TRUSTED_ORIGINS`。
-
-## MCP 協定相容性
-
-| 項目 | 說明 |
-| --- | --- |
-| Transport | 僅 Streamable HTTP,且運作在 **stateless 模式**(單一 endpoint 只處理 POST)。**不支援 stdio** |
-| 支援的 Protocol Version | `2026-07-28`(預設)、`2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05` |
-| 版本協商 | 由 go-sdk 依用戶端送出的 `protocolVersion` 自動協商;送出不支援的版本時回退到最新版 |
-| Capabilities | 僅 Tools(無 Resources / Prompts / Sampling);全部工具皆標記 `readOnlyHint: true` |
-| Session | **無**。`2026-07-28`(SEP-2575)移除了 `initialize` 交握與 `Mcp-Session-Id`,每個請求自帶協定版本與用戶端身分。舊協定用戶端仍可照常 POST `initialize`,只是不會拿到 session id |
-| GET / DELETE | 回 `405`。stateless 模式沒有可推送的長連線,也沒有 session 可終止 |
-| SSE resume | 未啟用 `EventStore`,不支援 `Last-Event-ID` 續傳。所有工具皆為唯讀查詢,重連後重查即可 |
-| 請求大小上限 | 單一請求 body 上限 1 MiB,超過回 413 |
-
-> 支援的版本清單取決於 `go.mod` 裡的 `github.com/modelcontextprotocol/go-sdk` 版本(目前 v1.7.0);升級 SDK 時請一併確認此表。
->
-> go-sdk 只在 stateless 模式提供 `2026-07-28`:若把 `StreamableHTTPOptions.Stateless` 改回 `false`,最新協定的用戶端會全部收到 400。`TestStatelessTransport` 與 `TestE2ELatestProtocol` 就是為了擋住這個退化。
-
-## 測試
-
-```bash
-make test        # 單元測試(不需要資料庫)
-make lint        # go vet
-make fmt-check   # gofmt 檢查
-```
-
-整合測試需明確設定 `TEST_DATABASE_URL` 才會執行,未設定時自動跳過——預設不要求連線真實資料庫:
+PostgreSQL integration tests are opt-in:
 
 ```bash
 TEST_DATABASE_URL=postgresql://... go test ./stock/ -run TestRepositoryIntegration -v
 ```
 
-## 已知限制
+## Known limitations
 
-- **資料新鮮度取決於 `stock_rust` 專案寫入資料庫的頻率**;本服務只是資料庫的唯讀視圖,不主動抓取任何交易所資料。
-- rate limiter 為單機記憶體實作；水平擴充時每個 instance 會各自計數。
-- API Key repository 與驗證 snapshot 是單一程序＋本機 SQLite 設計，不支援多 replica 共用同一 SQLite volume。
-- 第一版資料來源僅限既有 PostgreSQL,無任何即時行情來源。
+- Data freshness depends on the upstream `stock_rust` collection and processing schedule.
+- Direct PostgreSQL mode is deprecated, exposes only the four core tools, and will be removed in a future release.
+- Rate-limit counters and API-key verification snapshots are process-local.
+- The SQLite API-key repository is designed for a single process and local persistent volume.
+- The server exposes MCP tools only; it does not expose Resources, Prompts, or Sampling.
+- All output is informational and does not constitute investment advice.
