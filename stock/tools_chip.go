@@ -84,7 +84,7 @@ type ChipEnvelope struct {
 }
 
 // ChipQuerier 是 get_chip_data 對資料來源的需求介面;只有 *APIClient 實作,
-// db 模式不會出現這個工具。
+// 只實作基本 Querier 的資料來源不會出現這個工具。
 type ChipQuerier interface {
 	StockChip(ctx context.Context, symbol string, days int) (*ChipEnvelope, error)
 }
