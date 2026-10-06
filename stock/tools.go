@@ -274,6 +274,23 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cts.stockChip)
 	}
+
+	if cagr, ok := q.(CagrQuerier); ok {
+		cgs := &cagrToolset{cagr: cagr, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_cagr_ranking",
+			Description: "查詢全市場年化報酬率(CAGR)排行:以固定金額回測 M3～Y10 期間的報酬,可選報酬口徑(只看股價、含股利、股利再投入)、" +
+				"市場與產業。適合回答「近五年報酬最高的股票」這類問題。樣本只含目前仍上市櫃的股票,有存活者偏誤。",
+			InputSchema: cagrRankingSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, cgs.cagrRanking)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_stock_cagr",
+			Description: "查詢指定股票 M3、M6、Y1、Y2、Y3、Y5、Y7、Y10 各期間的年化報酬率與總報酬(固定金額回測,可選報酬口徑)。",
+			InputSchema: stockCagrSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, cgs.stockCagr)
+	}
 }
 
 // snapshotToolset 將獨立快照介面與記錄函式綁定，避免擴充既有日線 Querier。
