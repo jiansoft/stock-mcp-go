@@ -96,16 +96,7 @@ type Config struct {
 	// 有一份全新的額度)。
 	TrustedProxyHops int
 
-	// DatabaseURL、DBPoolMax、DBConnectTimeout、DBStatementTimeout:
-	// PostgreSQL 連線設定。DatabaseURL 內含帳號密碼,屬敏感資訊,任何
-	// 時候都不可寫入 log 或錯誤訊息。
-	DatabaseURL        string
-	DBPoolMax          int32
-	DBConnectTimeout   time.Duration
-	DBStatementTimeout time.Duration
-	// DataSource 決定資料來源；db 為過渡期直連 PostgreSQL，api 改走 stock_rust Data API。
-	DataSource string
-	// StockRustAPIBaseURL、StockRustAPIKey、APITimeout 是 api 模式的內網 HTTP 設定。
+	// StockRustAPIBaseURL、StockRustAPIKey、APITimeout 是唯一資料來源 stock_rust Data API 的設定。
 	StockRustAPIBaseURL string
 	StockRustAPIKey     string
 	APITimeout          time.Duration
@@ -197,25 +188,18 @@ func Load() (*Config, error) {
 	}
 	cfg.TrustedProxyHops = proxyHops
 
-	// 以下兩個是「必要」環境變數:跟前面幾個「有安全預設值」的變數不同,
-	// 這裡故意不呼叫 getEnv 提供預設值——資料庫連線字串與 API 金鑰沒有
-	// 「安全的預設值」可言,任何預設值(例如空字串)都會導致服務用一個
-	// 錯誤或不安全的設定啟動,因此設計上直接用 os.Getenv 讀取,若讀到
-	// 空字串就立刻拒絕啟動。錯誤訊息只提「缺少哪個變數名稱」,絕不提
-	// 使用者可能已經(錯誤地)填入的值——即使那個值是空字串,只提名稱
-	// 的習慣能避免日後改程式碼時不小心把敏感值也一起印出來。
-	cfg.DataSource = getEnv("DATA_SOURCE", "api")
-	if cfg.DataSource != "db" && cfg.DataSource != "api" {
-		return nil, fmt.Errorf("環境變數 DATA_SOURCE 的值格式不正確:只能是 db 或 api")
-	}
-	cfg.DatabaseURL = os.Getenv("DATABASE_URL")
-	if cfg.DataSource == "db" && cfg.DatabaseURL == "" {
-		return nil, fmt.Errorf("缺少必要的環境變數:DATABASE_URL")
+	// 以下是「必要」環境變數:上游位址與金鑰沒有安全的預設值,讀到空字串就
+	// 拒絕啟動。錯誤訊息只提變數名稱,不提值,避免日後改程式時把敏感值印出來。
+	//
+	// 直連 PostgreSQL 的 db 模式已移除(2026-10)。DATA_SOURCE=db 明確拒絕,
+	// 避免舊設定以為還在讀資料庫;其他舊的 DATABASE_URL、DB_* 變數一律忽略。
+	if os.Getenv("DATA_SOURCE") == "db" {
+		return nil, fmt.Errorf("DATA_SOURCE=db 已不再支援:直連資料庫模式已移除,請刪除 DATA_SOURCE 並設定 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
 	}
 	cfg.StockRustAPIBaseURL = os.Getenv("STOCK_RUST_API_BASE_URL")
 	cfg.StockRustAPIKey = os.Getenv("STOCK_RUST_API_KEY")
-	if cfg.DataSource == "api" && (cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "") {
-		return nil, fmt.Errorf("api 模式需要 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
+	if cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "" {
+		return nil, fmt.Errorf("缺少必要的環境變數 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
 	}
 	apiTimeoutMS, err := intEnv("API_TIMEOUT_MS", 5000, 1, 600_000)
 	if err != nil {
@@ -241,24 +225,6 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.TrustedOrigins = origins
-
-	poolMax, err := intEnv("DB_POOL_MAX", 10, 1, 1000)
-	if err != nil {
-		return nil, err
-	}
-	cfg.DBPoolMax = int32(poolMax)
-
-	connTimeoutMS, err := intEnv("DB_CONNECTION_TIMEOUT_MS", 5000, 1, 600_000)
-	if err != nil {
-		return nil, err
-	}
-	cfg.DBConnectTimeout = time.Duration(connTimeoutMS) * time.Millisecond
-
-	stmtTimeoutMS, err := intEnv("DB_STATEMENT_TIMEOUT_MS", 5000, 1, 600_000)
-	if err != nil {
-		return nil, err
-	}
-	cfg.DBStatementTimeout = time.Duration(stmtTimeoutMS) * time.Millisecond
 
 	windowMS, err := intEnv("RATE_LIMIT_WINDOW_MS", 60_000, 1, 86_400_000)
 	if err != nil {

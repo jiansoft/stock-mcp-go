@@ -35,8 +35,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"stockmcp/config"
 )
 
 // initializeBody 是一個最小但合法的 MCP initialize 請求。
@@ -386,63 +384,25 @@ func reserveTestPort(t *testing.T) int {
 func setRunEnv(t *testing.T, upstreamURL string, port int, keyDBPath string) {
 	t.Helper()
 	values := map[string]string{
-		"APP_ENV":                  "test",
-		"HOST":                     "127.0.0.1",
-		"PORT":                     strconv.Itoa(port),
-		"MCP_PATH":                 "/mcp",
-		"TRUST_PROXY":              "false",
-		"TRUSTED_PROXY_HOPS":       "1",
-		"DATA_SOURCE":              "api",
-		"STOCK_RUST_API_BASE_URL":  upstreamURL,
-		"STOCK_RUST_API_KEY":       "upstream-test-key",
-		"API_TIMEOUT_MS":           "1000",
-		"DATABASE_URL":             "",
-		"MCP_API_KEY":              "bootstrap-client-key-for-run-tests",
-		"MCP_API_KEY_DB_PATH":      keyDBPath,
-		"MCP_API_KEY_PEPPER":       "run-test-pepper-value-at-least-32-bytes",
-		"MCP_ADMIN_TOKEN":          "run-test-admin-token-at-least-32-bytes",
-		"MCP_TRUSTED_ORIGINS":      "",
-		"RATE_LIMIT_WINDOW_MS":     "60000",
-		"RATE_LIMIT_MAX_REQUESTS":  "60",
-		"LOG_LEVEL":                "error",
-		"DB_POOL_MAX":              "10",
-		"DB_CONNECTION_TIMEOUT_MS": "1000",
-		"DB_STATEMENT_TIMEOUT_MS":  "1000",
+		"APP_ENV":                 "test",
+		"HOST":                    "127.0.0.1",
+		"PORT":                    strconv.Itoa(port),
+		"MCP_PATH":                "/mcp",
+		"TRUST_PROXY":             "false",
+		"TRUSTED_PROXY_HOPS":      "1",
+		"STOCK_RUST_API_BASE_URL": upstreamURL,
+		"STOCK_RUST_API_KEY":      "upstream-test-key",
+		"API_TIMEOUT_MS":          "1000",
+		"MCP_API_KEY":             "bootstrap-client-key-for-run-tests",
+		"MCP_API_KEY_DB_PATH":     keyDBPath,
+		"MCP_API_KEY_PEPPER":      "run-test-pepper-value-at-least-32-bytes",
+		"MCP_ADMIN_TOKEN":         "run-test-admin-token-at-least-32-bytes",
+		"MCP_TRUSTED_ORIGINS":     "",
+		"RATE_LIMIT_WINDOW_MS":    "60000",
+		"RATE_LIMIT_MAX_REQUESTS": "60",
+		"LOG_LEVEL":               "error",
 	}
 	for name, value := range values {
 		t.Setenv(name, value)
 	}
-}
-
-func TestNewPoolRejectsInvalidAndUnreachableDatabase(t *testing.T) {
-	t.Run("invalid URL does not echo secret", func(t *testing.T) {
-		const secret = "should-not-appear"
-		_, err := newPool(t.Context(), &config.Config{DatabaseURL: "://" + secret})
-		if err == nil {
-			t.Fatal("無效 DATABASE_URL 應失敗")
-		}
-		if strings.Contains(err.Error(), secret) {
-			t.Fatalf("錯誤不可洩漏連線字串內容:%v", err)
-		}
-	})
-
-	t.Run("unreachable database fails during startup ping", func(t *testing.T) {
-		port := reserveTestPort(t)
-		cfg := &config.Config{
-			DatabaseURL:        "postgresql://reader:secret@127.0.0.1:" + strconv.Itoa(port) + "/stock?sslmode=disable",
-			DBPoolMax:          1,
-			DBConnectTimeout:   200 * time.Millisecond,
-			DBStatementTimeout: time.Second,
-		}
-		pool, err := newPool(t.Context(), cfg)
-		if pool != nil {
-			pool.Close()
-		}
-		if err == nil {
-			t.Fatal("無服務監聽時 startup ping 應失敗")
-		}
-		if strings.Contains(err.Error(), "secret") {
-			t.Fatalf("連線錯誤不可洩漏密碼:%v", err)
-		}
-	})
 }

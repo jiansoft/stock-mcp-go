@@ -412,7 +412,7 @@ type DividendHistoryOptions struct {
 //
 // 與 SnapshotQuerier 相同的設計:介面由消費端(tools.go)定義,AddTools
 // 以型別斷言檢查注入的資料來源是否具備這組能力——目前只有 *APIClient
-// 實作;db 模式的 *Repository 沒有實作,因此 db 模式不會註冊這三個工具,
+// 實作;目前只有 *APIClient 實作,
 // 也就不會對使用者暴露「叫了一定失敗」的功能。
 type FinancialQuerier interface {
 	MonthlyRevenueHistory(context.Context, string, RevenueHistoryOptions) (*MonthlyRevenueHistory, error)
@@ -861,7 +861,7 @@ type MarketMovers struct {
 //
 // 與 FinancialQuerier/AnalyticsQuerier 相同的設計:介面由消費端
 // (tools.go)定義,AddTools 以型別斷言檢查注入的資料來源是否具備這組
-// 能力,db 模式的 *Repository 沒有實作,因此不會暴露必然失敗的工具。
+// 能力,目前只有 *APIClient 實作。
 // 三個方法都回傳完整 Data API envelope(§5.2 實作決策),讓 data_as_of
 // 與空陣列語意維持由伺服器端單一來源決定。
 type MarketDataQuerier interface {

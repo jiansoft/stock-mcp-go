@@ -18,11 +18,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -164,23 +162,8 @@ func run(ctx context.Context) error {
 		}
 	}()
 
-	var repo stock.Querier
-	var closeDataSource func()
-	if cfg.DataSource == "api" {
-		repo = stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout)
-		closeDataSource = func() {}
-	} else {
-		pool, err := newPool(ctx, cfg)
-		if err != nil {
-			return err
-		}
-		repo = stock.NewRepository(pool)
-		closeDataSource = pool.Close
-	}
-	// defer pool.Close() 確保無論 run 函式從哪一個 return 離開,都會
-	// 關閉資料庫連線池、釋放底層的網路連線,不會因為程式提前返回而讓
-	// 連線一直開著。
-	defer closeDataSource()
+	// 唯一的資料來源是 stock_rust Data API(直連資料庫的 db 模式已於 2026-10 移除)。
+	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout)
 
 	// mcp.NewServer 建立一個空的 MCP server 實例(此時還沒有註冊任何
 	// 工具),Implementation 這個欄位是給 MCP 用戶端在初始化交握
@@ -213,14 +196,8 @@ func run(ctx context.Context) error {
 
 	mcpHandler := newMCPHandler(server)
 
-	// 把資料來源的健康檢查能力交給 web 層當作 /readyz 的判斷依據。用型別
-	// 斷言偵測(而不是擴充 Querier 介面)的原則與 stock.AddTools 一致;
-	// stock/assertions.go 有編譯期斷言保證兩種資料來源都實作了這個介面,
-	// 所以這裡實務上一定會成功,判斷 ok 只是為了不對未來的實作做硬性要求。
-	var readiness func(context.Context) error
-	if hc, ok := repo.(stock.HealthChecker); ok {
-		readiness = hc.Health
-	}
+	// /readyz 以 Data API 的健康檢查判斷本服務能否正常回應查詢。
+	readiness := repo.Health
 
 	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService))
 
@@ -370,57 +347,4 @@ func shutdownServer(logger *slog.Logger, srv *http.Server, timeout time.Duration
 		return srv.Close()
 	}
 	return nil
-}
-
-// newPool 建立 PostgreSQL 連線池:套用連線數上限、連線逾時,並以
-// statement_timeout(PostgreSQL 伺服器端設定,限制單一條查詢語句最長
-// 可以執行多久)限制每一條查詢的最長執行時間,避免一條異常緩慢的查詢
-// (例如因為資料庫負載過高、或查詢條件不慎命中全表掃描)長時間佔用
-// 連線池裡的連線,拖累其他請求。
-//
-// 啟動時額外呼叫一次 Ping,及早在啟動階段就發現連線設定錯誤(例如帳號
-// 密碼錯誤、資料庫主機無法連線),而不是等到第一次真正查詢時才發現
-// ——啟動階段失敗會讓部署工具(Docker、systemd 等)立刻知道這次啟動
-// 失敗,比服務「看起來啟動成功、但第一個請求進來才發現連不上資料庫」
-// 更容易被監控與察覺。
-func newPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, error) {
-	pcfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
-	if err != nil {
-		// 不可把 err 原文包進回傳的錯誤裡:pgx 在解析連線字串失敗時,
-		// 錯誤訊息裡可能包含連線字串的片段(依錯誤發生的位置而定),
-		// 而連線字串本身通常含有資料庫密碼,絕不能讓這種內容外洩到
-		// 啟動失敗的訊息裡。這裡刻意捨棄 err 的內容,只回傳一句固定、
-		// 不含任何動態內容的通用訊息。
-		return nil, fmt.Errorf("環境變數 DATABASE_URL 的值格式不正確")
-	}
-	pcfg.MaxConns = cfg.DBPoolMax
-	pcfg.ConnConfig.ConnectTimeout = cfg.DBConnectTimeout
-	// RuntimeParams 是連線建立後,會在 PostgreSQL 連線 session 一開始
-	// 就執行的 SET 參數;這裡設定 statement_timeout(單位是毫秒的字串
-	// 形式,PostgreSQL 這個參數接受的格式),讓連線池裡的每一條連線都
-	// 自動套用這個逾時限制,不需要每次查詢都額外下一次 SET 指令。
-	pcfg.ConnConfig.RuntimeParams["statement_timeout"] =
-		strconv.FormatInt(cfg.DBStatementTimeout.Milliseconds(), 10)
-
-	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
-	if err != nil {
-		return nil, fmt.Errorf("建立資料庫連線池失敗")
-	}
-
-	// pgxpool.NewWithConfig 本身不會立刻嘗試連線(它是惰性的:真正需要
-	// 用連線時才會建立),所以這裡明確呼叫 Ping 強制建立一次連線並確認
-	// 連得通,才能在啟動階段就發現「連線字串格式正確,但資料庫主機
-	// 連不上/帳密錯誤」這種問題。context.WithTimeout 避免 Ping 在
-	// 資料庫真的連不上時無限期卡住,超過 DBConnectTimeout 就放棄並回報
-	// 錯誤。
-	pingCtx, cancel := context.WithTimeout(ctx, cfg.DBConnectTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		// Ping 失敗時,先把已經建立的連線池關閉(pool.Close()),避免
-		// 這個明知道連不上資料庫的連線池仍然被留在記憶體裡佔用資源,
-		// 才回傳錯誤讓上層知道啟動失敗。
-		pool.Close()
-		return nil, fmt.Errorf("無法連線到資料庫,請確認 DATABASE_URL 與資料庫狀態")
-	}
-	return pool, nil
 }

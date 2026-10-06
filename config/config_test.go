@@ -18,16 +18,15 @@ func setRequired(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
 		"APP_ENV", "HOST", "PORT", "MCP_PATH", "TRUST_PROXY",
-		"DB_POOL_MAX", "DB_CONNECTION_TIMEOUT_MS", "DB_STATEMENT_TIMEOUT_MS",
+		"DATA_SOURCE",
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
 	} {
 		t.Setenv(name, "")
 	}
-	// 舊有資料庫情境明確指定 db，避免受正式預設 api 影響。
-	t.Setenv("DATA_SOURCE", "db")
-	t.Setenv("DATABASE_URL", "postgresql://reader:secret@127.0.0.1:5432/stock")
+	t.Setenv("STOCK_RUST_API_BASE_URL", "http://127.0.0.1:9002")
+	t.Setenv("STOCK_RUST_API_KEY", "upstream-secret")
 	t.Setenv("MCP_API_KEY", "test-key")
 	t.Setenv("MCP_API_KEY_PEPPER", "test-pepper-32-bytes-minimum-value")
 	t.Setenv("MCP_ADMIN_TOKEN", "test-admin-token-32-bytes-minimum")
@@ -43,18 +42,14 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 	}{
 		{name: "HOST", env: "HOST", value: "localhost", needle: "HOST"},
 		{name: "MCP_PATH", env: "MCP_PATH", value: "mcp", needle: "MCP_PATH"},
-		{name: "DATA_SOURCE", env: "DATA_SOURCE", value: "other", needle: "DATA_SOURCE"},
+		{name: "DATA_SOURCE=db 已移除", env: "DATA_SOURCE", value: "db", needle: "DATA_SOURCE=db"},
 		{name: "TRUSTED_PROXY_HOPS", env: "TRUSTED_PROXY_HOPS", value: "0", needle: "TRUSTED_PROXY_HOPS"},
-		{name: "DB_POOL_MAX", env: "DB_POOL_MAX", value: "0", needle: "DB_POOL_MAX"},
-		{name: "DB_CONNECTION_TIMEOUT_MS", env: "DB_CONNECTION_TIMEOUT_MS", value: "0", needle: "DB_CONNECTION_TIMEOUT_MS"},
-		{name: "DB_STATEMENT_TIMEOUT_MS", env: "DB_STATEMENT_TIMEOUT_MS", value: "0", needle: "DB_STATEMENT_TIMEOUT_MS"},
 		{name: "RATE_LIMIT_WINDOW_MS", env: "RATE_LIMIT_WINDOW_MS", value: "0", needle: "RATE_LIMIT_WINDOW_MS"},
 		{name: "RATE_LIMIT_MAX_REQUESTS", env: "RATE_LIMIT_MAX_REQUESTS", value: "0", needle: "RATE_LIMIT_MAX_REQUESTS"},
 		{name: "LOG_LEVEL", env: "LOG_LEVEL", value: "verbose", needle: "LOG_LEVEL"},
 		{
-			name: "API mode missing upstream",
+			name: "missing upstream",
 			setup: func(t *testing.T) {
-				t.Setenv("DATA_SOURCE", "api")
 				t.Setenv("STOCK_RUST_API_BASE_URL", "")
 				t.Setenv("STOCK_RUST_API_KEY", "")
 			},
@@ -63,11 +58,6 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 		{
 			name: "API_TIMEOUT_MS",
 			env:  "API_TIMEOUT_MS", value: "0",
-			setup: func(t *testing.T) {
-				t.Setenv("DATA_SOURCE", "api")
-				t.Setenv("STOCK_RUST_API_BASE_URL", "http://127.0.0.1")
-				t.Setenv("STOCK_RUST_API_KEY", "upstream")
-			},
 			needle: "API_TIMEOUT_MS",
 		},
 		{
@@ -105,19 +95,29 @@ func TestAddr(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	t.Run("缺少 DATABASE_URL 必須拒絕啟動且不洩漏值", func(t *testing.T) {
+	t.Run("缺少上游金鑰必須拒絕啟動且不洩漏值", func(t *testing.T) {
 		setRequired(t)
-		t.Setenv("DATABASE_URL", "")
+		t.Setenv("STOCK_RUST_API_KEY", "")
 
 		_, err := Load()
 		if err == nil {
 			t.Fatal("預期回傳錯誤,實際成功")
 		}
-		if !strings.Contains(err.Error(), "DATABASE_URL") {
+		if !strings.Contains(err.Error(), "STOCK_RUST_API_KEY") {
 			t.Errorf("錯誤訊息應包含變數名稱,實際為:%v", err)
 		}
 		if strings.Contains(err.Error(), "secret") {
 			t.Errorf("錯誤訊息不可包含敏感值:%v", err)
+		}
+	})
+
+	t.Run("舊的 DATABASE_URL 與 DB_* 變數一律忽略", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("DATABASE_URL", "postgresql://reader:secret@127.0.0.1:5432/stock")
+		t.Setenv("DB_POOL_MAX", "0")
+
+		if _, err := Load(); err != nil {
+			t.Fatalf("舊變數不應影響啟動:%v", err)
 		}
 	})
 
@@ -163,8 +163,8 @@ func TestLoad(t *testing.T) {
 		if cfg.TrustProxy {
 			t.Error("TRUST_PROXY 預設應為 false")
 		}
-		if cfg.DBPoolMax != 10 || cfg.DBStatementTimeout != 5*time.Second {
-			t.Errorf("資料庫預設值不正確:%+v", cfg)
+		if cfg.APITimeout != 5*time.Second {
+			t.Errorf("API_TIMEOUT_MS 預設值不正確:%+v", cfg)
 		}
 		if cfg.RateLimitWindow != time.Minute || cfg.RateLimitMax != 60 {
 			t.Errorf("rate limit 預設值不正確:%+v", cfg)
