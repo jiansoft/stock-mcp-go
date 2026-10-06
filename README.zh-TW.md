@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 16 個唯讀工具
+- 由 `stock_rust` Data API 提供 17 個唯讀工具
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -61,6 +61,7 @@ stock-mcp-go
 | `get_dividend_calendar` | API | 查詢除權息與股利發放事件 |
 | `get_qfii_holding_ranking` | API | 查詢最新外資持股快照排行 |
 | `get_market_movers` | API | 查詢漲幅、跌幅或成交量排行，自動選擇盤中或收盤資料 |
+| `get_chip_data` | API | 查詢個股籌碼：每日三大法人與融資融券、外資投信連續買賣超、千張大戶、董監設質與主力進出 |
 
 所有工具都是唯讀。輸出包含 `data_kind`、`data_as_of`、`is_realtime` 與免責聲明；缺失資料維持 `null`，不會以 0 或推測值代替。
 

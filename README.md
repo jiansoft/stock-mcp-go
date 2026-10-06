@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 16 read-only tools backed by the `stock_rust` Data API
+- 17 read-only tools backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -61,6 +61,7 @@ stock-mcp-go
 | `get_dividend_calendar` | API | Query ex-dividend, ex-rights, and dividend-payment events |
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
 | `get_market_movers` | API | Rank daily gainers, losers, or volume; automatically selects intraday or closing data |
+| `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
 
 Every tool is read-only. Outputs include `data_kind`, `data_as_of`, `is_realtime`, and a disclaimer. Missing values remain `null`; the server does not invent zeroes or estimates.
 
