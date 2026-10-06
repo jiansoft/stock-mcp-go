@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 17 個唯讀工具
+- 由 `stock_rust` Data API 提供 19 個唯讀工具
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -18,6 +18,8 @@
 - 依 API Key 與用戶端 IP 進行流量限制
 - Origin 驗證、request body 上限、結構化 log 與 graceful shutdown
 - 提供 liveness 與會實際檢查資料來源的 readiness endpoint
+- 每次工具呼叫記一筆結構化 log（工具名稱、結果、耗時、API Key 前綴）
+- 內嵌 Swagger UI（`/docs`）與 OpenAPI 3.1 文件（`/openapi.json`），由實際註冊的工具產生
 - Distroless、non-root 容器映像與內建健康檢查
 
 ## 系統架構
@@ -35,11 +37,11 @@ stock-mcp-go
     ├── web/                          驗證、限流與 HTTP 安全
     ├── apikey/                       SQLite Key store 與記憶體 snapshot
     └── stock/                        MCP tools 與 Data API client
-          └── api 模式 ─────────────► stock_rust Data API
+          └── HTTP ─────────────────► stock_rust Data API
 ```
 
-> [!WARNING]
-> 直連 PostgreSQL 的 `db` 模式已棄用，只暫時保留作為遷移期比對，並將在後續版本移除。新部署請勿使用 DB 模式。目前 DB 模式只提供 `search_stock`、`get_latest_daily_quote`、`get_price_history` 與 `get_stock_profile`。
+> [!NOTE]
+> 直連 PostgreSQL 的 `db` 模式已於 2026-10 移除，`stock_rust` Data API 是唯一資料來源。設定 `DATA_SOURCE=db` 會拒絕啟動；舊的 `DATABASE_URL`、`DB_*` 變數會被忽略，可以從 `.env` 刪除。
 
 ## MCP 工具
 
@@ -62,6 +64,8 @@ stock-mcp-go
 | `get_qfii_holding_ranking` | API | 查詢最新外資持股快照排行 |
 | `get_market_movers` | API | 查詢漲幅、跌幅或成交量排行，自動選擇盤中或收盤資料 |
 | `get_chip_data` | API | 查詢個股籌碼：每日三大法人與融資融券、外資投信連續買賣超、千張大戶、董監設質與主力進出 |
+| `get_cagr_ranking` | API | 查詢 M3～Y10 年化報酬率排行（可選只看股價、含股利或股利再投入），可依市場與產業篩選 |
+| `get_stock_cagr` | API | 查詢個股各期間的年化報酬率與總報酬 |
 
 所有工具都是唯讀。輸出包含 `data_kind`、`data_as_of`、`is_realtime` 與免責聲明；缺失資料維持 `null`，不會以 0 或推測值代替。
 
@@ -79,10 +83,9 @@ cd stock-mcp-go
 cp .env.example .env
 ```
 
-預設 API 模式至少需要設定：
+至少需要設定：
 
 ```dotenv
-DATA_SOURCE=api
 STOCK_RUST_API_BASE_URL=http://127.0.0.1:9002
 STOCK_RUST_API_KEY=replace-with-a-dedicated-upstream-key
 MCP_API_KEY=replace-with-an-initial-client-key
@@ -107,7 +110,9 @@ curl http://127.0.0.1:9005/healthz
 curl http://127.0.0.1:9005/readyz
 ```
 
-正常回應為 `{"status":"ok"}`。選定的資料來源無法使用時，`/readyz` 會回 HTTP 503。
+正常回應為 `{"status":"ok"}`。上游 Data API 無法使用或金鑰失效時，`/readyz` 會回 HTTP 503。
+
+API 文件：瀏覽器開啟 `http://127.0.0.1:9005/docs`（Swagger UI，不需驗證）。文件由實際註冊的工具產生，`tools/call` 的參數依工具分別列出；Try it out 填入 MCP API Key 即可直接呼叫，頁面會自動補上 MCP 要求的 `Accept: application/json, text/event-stream`。
 
 ## MCP Client 設定
 
@@ -136,9 +141,8 @@ claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
 | `MCP_PATH` | `/mcp` | MCP endpoint 路徑 |
 | `TRUST_PROXY` | `false` | 是否信任代理附加的用戶端 IP 資訊 |
 | `TRUSTED_PROXY_HOPS` | `1` | 會附加 `X-Forwarded-For` 的受信任代理層數 |
-| `DATA_SOURCE` | `api` | 資料來源；新部署必須使用 `api` |
-| `STOCK_RUST_API_BASE_URL` | API 模式必填 | 上游 Data API base URL |
-| `STOCK_RUST_API_KEY` | API 模式必填 | 上游專用 Bearer Key |
+| `STOCK_RUST_API_BASE_URL` | 必填 | 上游 Data API base URL |
+| `STOCK_RUST_API_KEY` | 必填 | 上游專用 Bearer Key |
 | `API_TIMEOUT_MS` | `5000` | 上游 HTTP timeout |
 | `MCP_API_KEY` | 空 | 一次性相容 bootstrap Key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | API Key SQLite 路徑 |
@@ -151,7 +155,7 @@ claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
 
 上游 Key、MCP Client Key、pepper 與 admin token 都必須使用不同的秘密。請勿提交 `.env`。
 
-已棄用的 DB 相容模式另外使用 `DATABASE_URL`、`DB_POOL_MAX`、`DB_CONNECTION_TIMEOUT_MS` 與 `DB_STATEMENT_TIMEOUT_MS`；DB 模式移除後，這些設定也會一併消失。
+工具呼叫 log：每次 `tools/call` 記一筆 `msg="MCP 工具呼叫"`，欄位為 `tool`、`status`（`ok`、`tool_error`、`protocol_error`）、`duration_ms` 與呼叫端的 `key_prefix`；不記錄參數內容。正式環境建議 `LOG_LEVEL=info`。
 
 ## API Key 管理
 
@@ -189,6 +193,15 @@ docker compose -f docker-compose.example.yml up --build
 Compose 範例會把 `127.0.0.1:9004` 映射到容器 port `3000`，並用 `mcp-api-key-data` named volume 保存 API Key 狀態。映像以 non-root 身分執行；因 distroless runtime 沒有 shell、`curl` 或 `wget`，健康檢查會使用執行檔內建的 `-health-check` 模式。
 
 `Dockerfile_live` 與 `control.sh` 則提供另一套預先編譯 ARM binary 的部署流程。`build.ps1` 支援 Linux ARM64 與 ARMv7，部署時需把對應的 `stock-mcp_linux_*` binary 放在部署目錄根層。
+
+### 部署到 Raspberry Pi（原生程序）
+
+```powershell
+.\scripts\deploy-armv7.ps1 -Build        # 交叉編譯、上傳、control.sh update、驗證
+.\scripts\deploy-armv7.ps1 -StageOnly    # 只上傳到 /tmp 並比對 sha256
+```
+
+腳本會檢查 ELF 架構、比對上傳後的 sha256，更新後確認程序、埠、`/healthz`、`/readyz` 與啟動 log；失敗時印出回滾指令（`control.sh` 會把舊檔備份成 `<執行檔>.<時間戳>`）。預設目標為 `pi@192.168.111.138:/opt/stock_mcp`、port `9005`。
 
 ## 反向代理
 
@@ -238,16 +251,9 @@ make fmt-check   # 檢查 gofmt
 make build       # 建置 ./stock-mcp
 ```
 
-PostgreSQL 整合測試需要明確啟用：
-
-```bash
-TEST_DATABASE_URL=postgresql://... go test ./stock/ -run TestRepositoryIntegration -v
-```
-
 ## 已知限制
 
 - 資料新鮮度取決於上游 `stock_rust` 的蒐集與處理排程。
-- 直連 PostgreSQL 模式已棄用，只提供 4 個核心工具，並將於後續版本移除。
 - Rate limit 計數與 API Key 驗證 snapshot 都只存在單一 process。
 - SQLite API Key repository 只支援單一 process 與本機持久化 volume。
 - 本服務只提供 MCP Tools，不提供 Resources、Prompts 或 Sampling。

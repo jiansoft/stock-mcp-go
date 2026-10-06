@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 17 read-only tools backed by the `stock_rust` Data API
+- 19 read-only tools backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -18,6 +18,8 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 - Per-key and per-client-IP rate limiting
 - Origin validation, request-size limits, structured logging, and graceful shutdown
 - Liveness and data-source-aware readiness endpoints
+- One structured log entry per tool call (tool, result, duration, API-key prefix)
+- Embedded Swagger UI (`/docs`) and an OpenAPI 3.1 document (`/openapi.json`) generated from the registered tools
 - Distroless, non-root container image with a built-in health check
 
 ## Architecture
@@ -35,11 +37,11 @@ stock-mcp-go
     ├── web/                          auth, rate limiting, HTTP security
     ├── apikey/                       SQLite key store and in-memory snapshot
     └── stock/                        MCP tools and Data API client
-          └── api mode ─────────────► stock_rust Data API
+          └── HTTP ─────────────────► stock_rust Data API
 ```
 
-> [!WARNING]
-> Direct PostgreSQL access through `db` mode is deprecated, retained only for short-term migration comparison, and will be removed in a future release. Do not use it for new deployments. It currently exposes only `search_stock`, `get_latest_daily_quote`, `get_price_history`, and `get_stock_profile`.
+> [!NOTE]
+> Direct PostgreSQL access (`db` mode) was removed in October 2026; the `stock_rust` Data API is the only data source. `DATA_SOURCE=db` is rejected at startup, while leftover `DATABASE_URL` and `DB_*` variables are ignored and can be deleted.
 
 ## MCP tools
 
@@ -62,6 +64,8 @@ stock-mcp-go
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
 | `get_market_movers` | API | Rank daily gainers, losers, or volume; automatically selects intraday or closing data |
 | `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
+| `get_cagr_ranking` | API | Rank stocks by annualized return over M3-Y10 (price only, with dividends, or reinvested), filterable by market and industry |
+| `get_stock_cagr` | API | Annualized and total return for one stock over every period |
 
 Every tool is read-only. Outputs include `data_kind`, `data_as_of`, `is_realtime`, and a disclaimer. Missing values remain `null`; the server does not invent zeroes or estimates.
 
@@ -79,10 +83,9 @@ cd stock-mcp-go
 cp .env.example .env
 ```
 
-At minimum, configure these values for the default API mode:
+At minimum, configure these values:
 
 ```dotenv
-DATA_SOURCE=api
 STOCK_RUST_API_BASE_URL=http://127.0.0.1:9002
 STOCK_RUST_API_KEY=replace-with-a-dedicated-upstream-key
 MCP_API_KEY=replace-with-an-initial-client-key
@@ -107,7 +110,9 @@ curl http://127.0.0.1:9005/healthz
 curl http://127.0.0.1:9005/readyz
 ```
 
-Expected responses are `{"status":"ok"}`. `/readyz` returns HTTP 503 when the selected data source is unavailable.
+Expected responses are `{"status":"ok"}`. `/readyz` returns HTTP 503 when the upstream Data API is unavailable or rejects the key.
+
+API documentation: open `http://127.0.0.1:9005/docs` (Swagger UI, no authentication). It is generated from the registered tools, so `tools/call` lists each tool's arguments; Try it out works with an MCP API key and adds the `Accept: application/json, text/event-stream` header that MCP requires.
 
 ## MCP client configuration
 
@@ -136,9 +141,8 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | `MCP_PATH` | `/mcp` | MCP endpoint path |
 | `TRUST_PROXY` | `false` | Trust proxy-appended client IP information |
 | `TRUSTED_PROXY_HOPS` | `1` | Number of trusted proxies that append `X-Forwarded-For` |
-| `DATA_SOURCE` | `api` | Data source; new deployments must use `api` |
-| `STOCK_RUST_API_BASE_URL` | required in API mode | Upstream Data API base URL |
-| `STOCK_RUST_API_KEY` | required in API mode | Dedicated upstream bearer key |
+| `STOCK_RUST_API_BASE_URL` | required | Upstream Data API base URL |
+| `STOCK_RUST_API_KEY` | required | Dedicated upstream bearer key |
 | `API_TIMEOUT_MS` | `5000` | Upstream HTTP timeout |
 | `MCP_API_KEY` | empty | One-time compatibility bootstrap key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | SQLite API-key database path |
@@ -151,7 +155,7 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 
 The upstream key, MCP client keys, pepper, and admin token must all be separate secrets. Do not commit `.env`.
 
-The deprecated DB compatibility mode additionally uses `DATABASE_URL`, `DB_POOL_MAX`, `DB_CONNECTION_TIMEOUT_MS`, and `DB_STATEMENT_TIMEOUT_MS`. These settings will disappear when DB mode is removed.
+Tool-call log: every `tools/call` writes one `msg="MCP 工具呼叫"` entry with `tool`, `status` (`ok`, `tool_error`, `protocol_error`), `duration_ms`, and the caller's `key_prefix`; arguments are not logged. Use `LOG_LEVEL=info` in production.
 
 ## API-key administration
 
@@ -189,6 +193,15 @@ docker compose -f docker-compose.example.yml up --build
 The Compose example publishes `127.0.0.1:9004` to container port `3000` and persists API-key state in the `mcp-api-key-data` named volume. The image runs as a non-root user and uses the executable's `-health-check` mode because the distroless runtime contains no shell, `curl`, or `wget`.
 
 `Dockerfile_live` and `control.sh` provide a separate ARM deployment flow for binaries produced by `build.ps1`. They support Linux ARM64 and ARMv7 and expect the selected `stock-mcp_linux_*` binary at the deployment root.
+
+### Deploying to a Raspberry Pi (native process)
+
+```powershell
+.\scripts\deploy-armv7.ps1 -Build        # cross-compile, upload, control.sh update, verify
+.\scripts\deploy-armv7.ps1 -StageOnly    # upload to /tmp and verify sha256 only
+```
+
+The script checks the ELF architecture and the uploaded sha256, then verifies the process, port, `/healthz`, `/readyz`, and the startup log, printing rollback commands on failure (`control.sh` keeps the previous binary as `<binary>.<timestamp>`). Defaults: `pi@192.168.111.138:/opt/stock_mcp`, port `9005`.
 
 ## Reverse proxy
 
@@ -238,16 +251,9 @@ make fmt-check   # verify gofmt formatting
 make build       # build ./stock-mcp
 ```
 
-PostgreSQL integration tests are opt-in:
-
-```bash
-TEST_DATABASE_URL=postgresql://... go test ./stock/ -run TestRepositoryIntegration -v
-```
-
 ## Known limitations
 
 - Data freshness depends on the upstream `stock_rust` collection and processing schedule.
-- Direct PostgreSQL mode is deprecated, exposes only the four core tools, and will be removed in a future release.
 - Rate-limit counters and API-key verification snapshots are process-local.
 - The SQLite API-key repository is designed for a single process and local persistent volume.
 - The server exposes MCP tools only; it does not expose Resources, Prompts, or Sampling.

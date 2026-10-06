@@ -38,9 +38,7 @@ jobs:
             exit 1
           fi
 
-      # 未設定 TEST_DATABASE_URL 時,stock 套件的資料庫整合測試
-      # (TestRepositoryIntegration)會自動略過,見 stock/repository_test.go
-      # 與 README「已知限制」章節——CI 不連真實資料庫,只跑純邏輯測試。
+      # 全部測試都以假的 Data API(httptest)與記憶體內 MCP 連線執行,不連任何外部服務。
       - name: go test and coverage
         env:
           MIN_COVERAGE: '85.0'
