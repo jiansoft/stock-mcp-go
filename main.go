@@ -200,7 +200,17 @@ func run(ctx context.Context) error {
 	// /readyz 以 Data API 的健康檢查判斷本服務能否正常回應查詢。
 	readiness := repo.Health
 
-	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService))
+	// /docs 的 Swagger UI 與 /openapi.json 由實際註冊的工具產生,工具清單永遠與服務一致。
+	tools, err := listRegisteredTools(ctx, server)
+	if err != nil {
+		return err
+	}
+	openAPI, err := buildOpenAPI(cfg.MCPPath, "0.1.0", tools)
+	if err != nil {
+		return fmt.Errorf("產生 OpenAPI 文件:%w", err)
+	}
+
+	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService, web.WithOpenAPI(openAPI)))
 
 	// 這裡用一個「容量為 1 的 channel」搭配一個獨立的 goroutine 啟動
 	// HTTP 伺服器,而不是直接在目前這個 goroutine 呼叫

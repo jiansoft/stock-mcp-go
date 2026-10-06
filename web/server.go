@@ -37,7 +37,19 @@ import (
 // readiness 由呼叫端注入,用來檢查資料來源是否可用;傳 nil 代表不檢查,
 // 此時 /readyz 的行為與 /healthz 相同。
 func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, readiness func(context.Context) error) http.Handler {
-	return newHandler(cfg, logger, mcpHandler, readiness, staticAuthenticator(cfg.APIKey), nil)
+	return newHandler(cfg, logger, mcpHandler, readiness, staticAuthenticator(cfg.APIKey), nil, nil)
+}
+
+// Option 調整 NewHandlerWithAPIKeys 組出的路由。
+type Option func(*handlerOptions)
+
+type handlerOptions struct {
+	openAPI []byte
+}
+
+// WithOpenAPI 提供 /openapi.json 的內容,並啟用 /docs 的 Swagger UI。
+func WithOpenAPI(document []byte) Option {
+	return func(o *handlerOptions) { o.openAPI = document }
 }
 
 // NewHandlerWithAPIKeys 是正式環境使用的路由組裝器，MCP 驗證與管理 API
@@ -48,8 +60,13 @@ func NewHandlerWithAPIKeys(
 	mcpHandler http.Handler,
 	readiness func(context.Context) error,
 	keys *apikey.Service,
+	opts ...Option,
 ) http.Handler {
-	return newHandler(cfg, logger, mcpHandler, readiness, keys, keys)
+	var options handlerOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return newHandler(cfg, logger, mcpHandler, readiness, keys, keys, options.openAPI)
 }
 
 func newHandler(
@@ -59,6 +76,7 @@ func newHandler(
 	readiness func(context.Context) error,
 	authenticator Authenticator,
 	keys *apikey.Service,
+	openAPI []byte,
 ) http.Handler {
 	// http.NewServeMux() 是 Go 標準函式庫內建的 HTTP 路由器(從 Go 1.22
 	// 起原生支援依 HTTP 方法(GET/POST/...)搭配路徑做路由,不需要再
@@ -86,6 +104,7 @@ func newHandler(
 	if keys != nil {
 		registerAPIKeyAdmin(mux, cfg, keys)
 	}
+	registerDocs(mux, openAPI)
 
 	return withRequestLog(logger, mux)
 }
