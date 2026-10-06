@@ -179,6 +179,7 @@ func run(ctx context.Context) error {
 	// 記錄」的回呼函式,這裡選擇接到 logger.Error,把 stock 套件內部
 	// 的錯誤訊息當成一般文字格式化後,用結構化 log 的 Error 等級記錄
 	// 下來。
+	server.AddReceivingMiddleware(toolCallLogging(logger))
 	stock.AddTools(server, repo, func(format string, args ...any) {
 		// 先問 logger 這個等級是否會被輸出,再決定要不要做字串格式化:
 		// 如果 LOG_LEVEL 設得比 error 高,Sprintf 的成本就完全省下來了。

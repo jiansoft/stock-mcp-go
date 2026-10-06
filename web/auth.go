@@ -58,7 +58,13 @@ func (a staticAuthenticator) Authenticate(_ context.Context, token string) (apik
 type principalContextKey struct{}
 
 func authenticatedPrincipal(r *http.Request) (apikey.Principal, bool) {
-	principal, ok := r.Context().Value(principalContextKey{}).(apikey.Principal)
+	return PrincipalFromContext(r.Context())
+}
+
+// PrincipalFromContext 取出通過 API key 驗證的呼叫端身分(只有 key id 與前綴,不含金鑰本身)。
+// 未經驗證的請求回傳 false。
+func PrincipalFromContext(ctx context.Context) (apikey.Principal, bool) {
+	principal, ok := ctx.Value(principalContextKey{}).(apikey.Principal)
 	return principal, ok
 }
 
