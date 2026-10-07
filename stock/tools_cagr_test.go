@@ -94,6 +94,9 @@ func TestCagrRankingTool(t *testing.T) {
 			{StockSymbol: "9999", Name: "資料不足"},
 		},
 	}}
+	if _, _, err := newCagrToolset(f).cagrRanking(t.Context(), nil, CagrRankingInput{Period: "y1h"}); err != nil || f.gotOpt.Period != "Y1H" {
+		t.Fatalf("Y1H(一年半)應被接受並正規化:%v %+v", err, f.gotOpt)
+	}
 	result, output, err := newCagrToolset(f).cagrRanking(t.Context(), nil, CagrRankingInput{Period: "y5"})
 	if err != nil {
 		t.Fatalf("cagrRanking 不應失敗:%v", err)

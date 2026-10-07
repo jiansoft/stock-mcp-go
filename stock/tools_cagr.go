@@ -19,7 +19,7 @@ import (
 )
 
 // cagrPeriods 是 Data API 支援的統計期間,依長度由短到長。
-var cagrPeriods = []string{"M3", "M6", "Y1", "Y2", "Y3", "Y5", "Y7", "Y10"}
+var cagrPeriods = []string{"M3", "M6", "Y1", "Y1H", "Y2", "Y3", "Y5", "Y7", "Y10"}
 
 // cagrMetrics 是報酬口徑。
 var cagrMetrics = []string{"price", "total", "reinvested"}
@@ -221,9 +221,9 @@ func cagrRankingSchema() *jsonschema.Schema {
 		Properties: map[string]*jsonschema.Schema{
 			"period": {
 				Type:        "string",
-				Enum:        []any{"M3", "M6", "Y1", "Y2", "Y3", "Y5", "Y7", "Y10"},
+				Enum:        []any{"M3", "M6", "Y1", "Y1H", "Y2", "Y3", "Y5", "Y7", "Y10"},
 				Default:     []byte(`"Y1"`),
-				Description: "統計期間:M3、M6(月)或 Y1～Y10(年),預設 Y1",
+				Description: "統計期間:M3、M6(月)、Y1、Y1H(一年半)、Y2、Y3、Y5、Y7、Y10(年),預設 Y1",
 			},
 			"metric": cagrMetricSchema(),
 			"sort": {
