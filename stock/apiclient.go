@@ -1,5 +1,5 @@
 // Package stock 的 API client 實作讓 MCP 在不持有資料庫憑證的情況下，透過
-// stock_rust 的版本化 Data API 取得與 Repository 相同的唯讀資料。
+// stock_rust 的版本化 Data API 取得唯讀資料;這是本服務唯一的資料來源。
 package stock
 
 import (

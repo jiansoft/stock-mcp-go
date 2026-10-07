@@ -17,13 +17,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # setup-go 目前會把 go.mod 的預發行版本 go1.27rc2 誤解析成尚未發布的
-      # 穩定版 1.27。使用它支援的 SemVer RC 寫法明確指定同一個 toolchain；
-      # Go 1.27 正式發布後可改回 go-version-file: go.mod。
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.27.0-rc.2'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: go build
@@ -41,9 +38,7 @@ jobs:
             exit 1
           fi
 
-      # 未設定 TEST_DATABASE_URL 時,stock 套件的資料庫整合測試
-      # (TestRepositoryIntegration)會自動略過,見 stock/repository_test.go
-      # 與 README「已知限制」章節——CI 不連真實資料庫,只跑純邏輯測試。
+      # 全部測試都以假的 Data API(httptest)與記憶體內 MCP 連線執行,不連任何外部服務。
       - name: go test and coverage
         env:
           MIN_COVERAGE: '85.0'

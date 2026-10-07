@@ -24,19 +24,17 @@ package stock
 // 編譯器必須驗證這個指標型別確實實作了該介面,不符合就直接編譯失敗。
 // 因為值是 nil 且變數名稱是 _,不會有任何配置或執行期成本。
 var (
-	// 兩種資料來源都必須滿足四個核心工具所需的最小介面。
-	_ Querier = (*Repository)(nil)
+	// 唯一的資料來源 *APIClient 必須滿足核心工具與各組能力介面。
 	_ Querier = (*APIClient)(nil)
 
-	// 以下各組能力目前只有 *APIClient 具備(db 模式為過渡期的比對用途,
-	// 刻意不實作,因此 db 模式下這些工具不會出現在 tools/list)。
 	_ SnapshotQuerier   = (*APIClient)(nil)
 	_ FinancialQuerier  = (*APIClient)(nil)
 	_ AnalyticsQuerier  = (*APIClient)(nil)
 	_ Screener          = (*APIClient)(nil)
 	_ MarketDataQuerier = (*APIClient)(nil)
 
-	// 健康檢查兩種資料來源都必須支援,/readyz 才能真實反映後端狀態。
-	_ HealthChecker = (*Repository)(nil)
+	_ ChipQuerier = (*APIClient)(nil)
+
+	// 健康檢查必須支援,/readyz 才能真實反映後端狀態。
 	_ HealthChecker = (*APIClient)(nil)
 )

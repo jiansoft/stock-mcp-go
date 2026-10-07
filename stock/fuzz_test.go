@@ -200,37 +200,3 @@ func TestValidateDividendYears(t *testing.T) {
 		}
 	})
 }
-
-// TestEscapeLike 驗證 ILIKE 樣式的萬用字元轉義。
-func TestEscapeLike(t *testing.T) {
-	tests := []struct {
-		name, in, want string
-	}{
-		{"一般文字不變", "台積電", "台積電"},
-		{"百分號被轉義", "%", `\%`},
-		{"底線被轉義", "_", `\_`},
-		{"反斜線被轉義", `\`, `\\`},
-		{"混合", `a%b_c\d`, `a\%b\_c\\d`},
-		{"空字串", "", ""},
-		{"已經轉義過的內容會被再次轉義(不做猜測)", `\%`, `\\\%`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := escapeLike(tt.in); got != tt.want {
-				t.Errorf("escapeLike(%q) = %q,預期 %q", tt.in, got, tt.want)
-			}
-		})
-	}
-
-	t.Run("單一 % 不再變成比對全部的樣式", func(t *testing.T) {
-		// 這是這個轉義真正要防的行為:未轉義時樣式會是 "%%%",意思是
-		// 「比對所有資料」,一次搜尋就變成全表掃描。
-		pattern := "%" + escapeLike("%") + "%"
-		if pattern == "%%%" {
-			t.Fatal("單一 %% 仍會產生比對全部的樣式")
-		}
-		if pattern != `%\%%` {
-			t.Errorf("樣式不正確:%q", pattern)
-		}
-	})
-}

@@ -33,14 +33,3 @@ func (c *APIClient) Health(ctx context.Context) error {
 	}
 	return nil
 }
-
-// Health 確認資料庫連線池仍可取得可用連線。
-//
-// pgxpool 的 Ping 會從連線池借一條連線、送出一次最輕量的往返確認,能同時
-// 涵蓋「連線池已耗盡」「資料庫主機不可達」「認證失效」這幾種故障。
-func (r *Repository) Health(ctx context.Context) error {
-	if err := r.pool.Ping(ctx); err != nil {
-		return fmt.Errorf("資料庫健康檢查失敗:%w", err)
-	}
-	return nil
-}

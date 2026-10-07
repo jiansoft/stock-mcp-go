@@ -31,7 +31,7 @@ RUN set -eu; \
 # distroless static 已內建 CA 憑證與 tzdata（含 Asia/Taipei），不需再從 debian 複製。
 FROM gcr.io/distroless/static-debian13:nonroot
 
-# 秘密（MCP_API_KEY、DATABASE_URL 等）一律在啟動時以 --env-file 注入
+# 秘密（MCP_API_KEY、STOCK_RUST_API_KEY 等）一律在啟動時以 --env-file 注入
 # （見 control.sh），不 COPY .env 進 image，避免秘密殘留在 image layer。
 # HOST 預設綁 0.0.0.0：容器內必須綁定所有介面才能被 port mapping 轉進來；
 # 對外存取範圍由 docker run 的 -p 參數（見 control.sh，對外 9004 → 容器內 3000）
