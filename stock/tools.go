@@ -248,7 +248,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, cgs.cagrRanking)
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "get_stock_cagr",
-			Description: "查詢指定股票 M3、M6、Y1、Y2、Y3、Y5、Y7、Y10 各期間的年化報酬率與總報酬(固定金額回測,可選報酬口徑)。",
+			Description: "查詢指定股票 M3、M6、Y1、Y1H(一年半)、Y2、Y3、Y5、Y7、Y10 各期間的年化報酬率與總報酬(固定金額回測,可選報酬口徑)。",
 			InputSchema: stockCagrSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cgs.stockCagr)
