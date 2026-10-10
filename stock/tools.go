@@ -237,6 +237,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, cts.stockChip)
 	}
 
+	// 三大報表工具同樣以型別斷言偵測能力:只有 *APIClient 實作 FinancialReportQuerier。
+	if reports, ok := q.(FinancialReportQuerier); ok {
+		rts := &financialReportToolset{reports: reports, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_financial_reports",
+			Description: "查詢指定股票的三大財務報表:損益表(營收、毛利、營業利益、淨利、EPS)、資產負債表(資產、負債、權益、每股淨值)" +
+				"與現金流量表(營業/投資/融資/自由現金流)。可選單季或年度,依期間新到舊。金額單位為新台幣千元,每股數值單位為元;" +
+				"與 get_financial_statement_history(比率與每股數據)互補。",
+			InputSchema: financialReportSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, rts.financialReports)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
