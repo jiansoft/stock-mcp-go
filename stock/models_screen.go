@@ -12,11 +12,15 @@ import "context"
 // 過期仍保留來源期間，讓呼叫端理解指標為何是 null。不同股票採各自最新
 // 一期資料，不能假設所有指標來自同一天。
 type ScreenedStock struct {
-	StockSymbol          string   `json:"stock_symbol"`
-	Name                 string   `json:"name"`
-	MarketID             int32    `json:"market_id"`
-	IndustryID           int32    `json:"industry_id"`
-	RevenueYOYPercent    *float64 `json:"revenue_yoy_percent"`
+	StockSymbol       string   `json:"stock_symbol"`
+	Name              string   `json:"name"`
+	MarketID          int32    `json:"market_id"`
+	IndustryID        int32    `json:"industry_id"`
+	RevenueYOYPercent *float64 `json:"revenue_yoy_percent"`
+	// 營收動能:從最新月份往回連續年增的月數(最多 12)與近 3 個月合計營收年增率;
+	// 最新營收過期時兩者皆為 nil,三個月不相連時近 3 月年增率為 nil。
+	RevenueYOYStreak     *int     `json:"revenue_yoy_streak"`
+	RevenueYOY3MPercent  *float64 `json:"revenue_yoy_3m_percent"`
 	EarningsPerShare     *float64 `json:"earnings_per_share"`
 	ReturnOnEquity       *float64 `json:"return_on_equity"`
 	DividendYieldPercent *float64 `json:"dividend_yield_percent"`
@@ -55,6 +59,8 @@ type ScreenOptions struct {
 	IndustryID              int
 	ValuationBand           string
 	MinRevenueYOYPercent    *float64
+	MinRevenueYOYStreak     *int
+	MinRevenueYOY3MPercent  *float64
 	MinEPS                  *float64
 	MinROEPercent           *float64
 	MinDividendYieldPercent *float64
