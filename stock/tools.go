@@ -288,6 +288,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, vts.valuationBand)
 	}
 
+	if portfolio, ok := q.(PortfolioQuerier); ok {
+		pts := &portfolioToolset{portfolio: portfolio, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_portfolio_summary",
+			Description: "查詢使用者目前持股的組合總覽(個人持股資料):總市值、成本、未實現損益、目前持股累計已領股利、" +
+				"產業分布,以及市值加權殖利率與 Piotroski F 分數;並依市值列出各持股的權重、損益、殖利率與 F 分數。" +
+				"member_id 預設 0 為全部會員合計。",
+			InputSchema: portfolioSummarySchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, pts.portfolioSummary)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

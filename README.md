@@ -70,6 +70,7 @@ stock-mcp-go
 | `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
 | `get_cagr_ranking` | API | Rank stocks by annualized return over M3-Y10 (price only, with dividends, or reinvested), filterable by market and industry |
 | `get_stock_cagr` | API | Annualized and total return for one stock over every period |
+| `get_portfolio_summary` | API | Personal holdings overview: market value, cost, unrealized gain, dividends received, industry weights, and market-value-weighted dividend yield and F-score (`member_id=0` for all members) |
 
 Every tool is read-only. Outputs include `data_kind`, `data_as_of`, `is_realtime`, and a disclaimer. Missing values remain `null`; the server does not invent zeroes or estimates.
 
