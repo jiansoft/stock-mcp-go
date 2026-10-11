@@ -55,6 +55,7 @@ stock-mcp-go
 | `get_monthly_revenue_history` | API | 查詢單月與累計營收歷史 |
 | `get_financial_statement_history` | API | 查詢季度或年度財務指標 |
 | `get_financial_reports` | API | 查詢單季或年度三大財務報表：損益表、資產負債表、現金流量表（金額單位新台幣千元） |
+| `get_financial_health` | API | 以 Piotroski F 分數評估年度財務體質（9 項指標與前一年度比較，附本期數值與比較基準） |
 | `get_dividend_history` | API | 查詢歷年現金與股票股利 |
 | `get_stock_valuation` | API | 查詢最新或指定日期以前的估值模型結果 |
 | `get_market_breadth` | API | 查詢漲跌家數、均線上下家數與估值分布 |

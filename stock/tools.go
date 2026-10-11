@@ -250,6 +250,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, rts.financialReports)
 	}
 
+	if health, ok := q.(FinancialHealthQuerier); ok {
+		hts := &financialHealthToolset{health: health, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_financial_health",
+			Description: "以 Piotroski F 分數評估指定股票的年度財務體質:比較評分年度與前一年度的 9 項指標" +
+				"(獲利能力 4 項、財務槓桿與流動性 3 項、經營效率 2 項),每項通過得 1 分,並附本期數值與比較基準。" +
+				"資料不足或不適用(例如金融業沒有流動負債分類)的指標不計分,evaluated 為可判定項數。",
+			InputSchema: financialHealthSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, hts.financialHealth)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
