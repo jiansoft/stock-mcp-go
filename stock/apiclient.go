@@ -262,6 +262,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinRevenueYOYPercent != nil {
 		values.Set("min_revenue_yoy_percent", formatFloat(*opt.MinRevenueYOYPercent))
 	}
+	if opt.MinRevenueYOYStreak != nil {
+		values.Set("min_revenue_yoy_streak", fmt.Sprint(*opt.MinRevenueYOYStreak))
+	}
+	if opt.MinRevenueYOY3MPercent != nil {
+		values.Set("min_revenue_yoy_3m_percent", formatFloat(*opt.MinRevenueYOY3MPercent))
+	}
 	if opt.MinEPS != nil {
 		values.Set("min_eps", formatFloat(*opt.MinEPS))
 	}
