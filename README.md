@@ -59,6 +59,7 @@ stock-mcp-go
 | `get_financial_health` | API | Score annual financial health with the Piotroski F-score (9 criteria vs. the prior year, each with its value and baseline) |
 | `get_dividend_history` | API | Query historical cash and stock dividends |
 | `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
+| `get_valuation_band` | API | Where the current P/E and P/B sit in their own history (1-10 years): percentile, min/P25/median/P75/max, and the implied price at each quartile |
 | `get_market_breadth` | API | Get advances/declines, moving-average breadth, and valuation distribution |
 | `get_dividend_yield_ranking` | API | Rank TWSE/TPEX stocks by historical dividend yield |
 | `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental, valuation, and financial-health filters (Piotroski F-score, gross margin, debt ratio, trailing free cash flow) |

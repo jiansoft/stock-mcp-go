@@ -273,6 +273,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, dts.dividendFill)
 	}
 
+	if band, ok := q.(ValuationBandQuerier); ok {
+		vts := &valuationBandToolset{band: band, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_valuation_band",
+			Description: "查詢指定股票本益比與股價淨值比在近幾年(預設 5 年)的歷史區間:目前值位於第幾百分位、" +
+				"最低/P25/中位數/P75/最高,以及估值倍數回到各分位時對應的股價。適合回答「現在估值在歷史上算高還是低」。" +
+				"虧損(本益比 ≤ 0)的日子不算樣本;ETF 沒有本益比。",
+			InputSchema: valuationBandSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, vts.valuationBand)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
