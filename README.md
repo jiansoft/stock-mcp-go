@@ -54,6 +54,7 @@ stock-mcp-go
 | `get_realtime_snapshot` | API | Get a third-party near-real-time snapshot; not guaranteed real-time |
 | `get_monthly_revenue_history` | API | Query monthly and cumulative revenue history |
 | `get_financial_statement_history` | API | Query quarterly or annual financial metrics |
+| `get_financial_reports` | API | Query quarterly or annual income statements, balance sheets, and cash flow statements (amounts in thousand TWD) |
 | `get_dividend_history` | API | Query historical cash and stock dividends |
 | `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
 | `get_market_breadth` | API | Get advances/declines, moving-average breadth, and valuation distribution |
