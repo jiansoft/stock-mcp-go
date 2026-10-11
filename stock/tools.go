@@ -262,6 +262,17 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.financialHealth)
 	}
 
+	if fill, ok := q.(DividendFillQuerier); ok {
+		dts := &dividendFillToolset{fill: fill, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_dividend_fill",
+			Description: "查詢指定股票最近幾次除權息的填息結果:除權息前一日收盤為填息價,除權息日起第幾個交易日收盤回到填息價" +
+				"(當日填息算第 1 天);尚未填息者列出已過交易日數與距填息價的差距。另附已填息次數、平均與中位數填息天數。",
+			InputSchema: dividendFillSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, dts.dividendFill)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
