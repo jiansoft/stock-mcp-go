@@ -55,6 +55,7 @@ stock-mcp-go
 | `get_monthly_revenue_history` | API | Query monthly and cumulative revenue history |
 | `get_financial_statement_history` | API | Query quarterly or annual financial metrics |
 | `get_financial_reports` | API | Query quarterly or annual income statements, balance sheets, and cash flow statements (amounts in thousand TWD) |
+| `get_dividend_fill` | API | Ex-dividend gap fill: how many trading days the price took to recover the pre-ex close, with averages and the gap for unfilled events |
 | `get_financial_health` | API | Score annual financial health with the Piotroski F-score (9 criteria vs. the prior year, each with its value and baseline) |
 | `get_dividend_history` | API | Query historical cash and stock dividends |
 | `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
