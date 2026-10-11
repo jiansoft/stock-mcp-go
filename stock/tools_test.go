@@ -1322,6 +1322,12 @@ func TestScreenStocksIsReadOnly(t *testing.T) {
 			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 				t.Error("screen_stocks 必須有 ReadOnlyHint=true")
 			}
+			// 模型靠描述決定要不要用這個工具,財務體質條件必須寫進描述。
+			for _, want := range []string{"F 分數", "毛利率", "負債比", "自由現金流"} {
+				if !strings.Contains(tool.Description, want) {
+					t.Errorf("screen_stocks 描述缺少 %q:%s", want, tool.Description)
+				}
+			}
 		}
 	}
 	if !found {
