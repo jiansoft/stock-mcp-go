@@ -26,6 +26,15 @@ type ScreenedStock struct {
 	FinancialPeriod      *string  `json:"financial_period"`
 	ValuationDate        *string  `json:"valuation_date"`
 	YieldDate            *string  `json:"yield_date"`
+	// 財務體質:F 分數(0–9)與可判定項數在評分年度落後超過 2 年時為 nil;
+	// 毛利率、負債比與近四季自由現金流(千元)在季報落後超過兩季時為 nil。
+	FScore             *int     `json:"f_score"`
+	FScoreEvaluated    *int     `json:"f_score_evaluated"`
+	FScoreYear         *int     `json:"f_score_year"`
+	GrossMarginPercent *float64 `json:"gross_margin_percent"`
+	DebtRatioPercent   *float64 `json:"debt_ratio_percent"`
+	FreeCashFlowTTM    *int64   `json:"free_cash_flow_ttm"`
+	HealthPeriod       *string  `json:"health_period"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -49,6 +58,10 @@ type ScreenOptions struct {
 	MinEPS                  *float64
 	MinROEPercent           *float64
 	MinDividendYieldPercent *float64
+	MinFScore               *int
+	MinGrossMarginPercent   *float64
+	MaxDebtRatioPercent     *float64
+	PositiveFreeCashFlow    bool
 	SortBy                  string
 	SortOrder               string
 	Limit                   int

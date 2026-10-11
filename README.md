@@ -60,7 +60,7 @@ stock-mcp-go
 | `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
 | `get_market_breadth` | API | Get advances/declines, moving-average breadth, and valuation distribution |
 | `get_dividend_yield_ranking` | API | Rank TWSE/TPEX stocks by historical dividend yield |
-| `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental and valuation filters |
+| `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental, valuation, and financial-health filters (Piotroski F-score, gross margin, debt ratio, trailing free cash flow) |
 | `get_market_index_history` | API | Query TAIEX index history |
 | `get_dividend_calendar` | API | Query ex-dividend, ex-rights, and dividend-payment events |
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
