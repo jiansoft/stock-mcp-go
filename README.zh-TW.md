@@ -60,7 +60,7 @@ stock-mcp-go
 | `get_stock_valuation` | API | 查詢最新或指定日期以前的估值模型結果 |
 | `get_market_breadth` | API | 查詢漲跌家數、均線上下家數與估值分布 |
 | `get_dividend_yield_ranking` | API | 查詢上市櫃股票歷史殖利率排行 |
-| `screen_stocks` | API | 以白名單內的基本面與估值條件篩選股票 |
+| `screen_stocks` | API | 以白名單內的基本面、估值與財務體質條件（F 分數、毛利率、負債比、近四季自由現金流）篩選股票 |
 | `get_market_index_history` | API | 查詢台股加權指數歷史 |
 | `get_dividend_calendar` | API | 查詢除權息與股利發放事件 |
 | `get_qfii_holding_ranking` | API | 查詢最新外資持股快照排行 |

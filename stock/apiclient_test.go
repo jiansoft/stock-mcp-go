@@ -472,7 +472,7 @@ func TestAPIClientScreenStocks(t *testing.T) {
 		w.Header().Set("content-type", "application/json")
 		switch r.URL.Query().Get("industry_id") {
 		case "24":
-			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":[{"stock_symbol":"2330","name":"台積電","market_id":2,"industry_id":24,"revenue_yoy_percent":26.9,"earnings_per_share":13.94,"return_on_equity":8.9,"dividend_yield_percent":2.1,"valuation_band":"fair_valued","valuation_percentage":130.6,"revenue_month":"2026-06","financial_period":"2026-Q1","valuation_date":"2026-07-16","yield_date":null}]}`))
+			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":[{"stock_symbol":"2330","name":"台積電","market_id":2,"industry_id":24,"revenue_yoy_percent":26.9,"earnings_per_share":13.94,"return_on_equity":8.9,"dividend_yield_percent":2.1,"valuation_band":"fair_valued","valuation_percentage":130.6,"revenue_month":"2026-06","financial_period":"2026-Q1","valuation_date":"2026-07-16","yield_date":null,"f_score":8,"f_score_evaluated":9,"f_score_year":2025,"gross_margin_percent":59.5,"debt_ratio_percent":30.9,"free_cash_flow_ttm":1130582218,"health_period":"2026-Q2"}]}`))
 		default:
 			// 刻意回 stocks:null，驗證 client 對外防禦性轉成 []。
 			_, _ = w.Write([]byte(`{"data_as_of":null,"stocks":null}`))
@@ -484,6 +484,7 @@ func TestAPIClientScreenStocks(t *testing.T) {
 	result, err := client.ScreenStocks(t.Context(), ScreenOptions{
 		Market: "twse", IndustryID: 24, ValuationBand: "fair_valued",
 		MinRevenueYOYPercent: &zero, MinEPS: ptr(5.0), MinROEPercent: ptr(8.0), MinDividendYieldPercent: ptr(2.0),
+		MinFScore: ptr(7), MinGrossMarginPercent: ptr(30.5), MaxDebtRatioPercent: ptr(50.0), PositiveFreeCashFlow: true,
 		SortBy: "dividend_yield", SortOrder: "desc", Limit: 20,
 	})
 	if err != nil || result == nil || len(result.Stocks) != 1 {
@@ -493,7 +494,11 @@ func TestAPIClientScreenStocks(t *testing.T) {
 	if result.DataAsOf != nil || stock.StockSymbol != "2330" || stock.YieldDate != nil || *stock.RevenueYOYPercent != 26.9 {
 		t.Fatalf("screen envelope/null 欄位解析錯誤:%#v", result)
 	}
-	wantQuery := "industry_id=24&limit=20&market=twse&min_dividend_yield_percent=2&min_eps=5&min_revenue_yoy_percent=0&min_roe_percent=8&sort_by=dividend_yield&sort_order=desc&valuation_band=fair_valued"
+	if *stock.FScore != 8 || *stock.FScoreEvaluated != 9 || *stock.FScoreYear != 2025 || *stock.GrossMarginPercent != 59.5 ||
+		*stock.DebtRatioPercent != 30.9 || *stock.FreeCashFlowTTM != 1130582218 || *stock.HealthPeriod != "2026-Q2" {
+		t.Fatalf("財務體質欄位解析錯誤:%#v", stock)
+	}
+	wantQuery := "industry_id=24&limit=20&market=twse&max_debt_ratio_percent=50&min_dividend_yield_percent=2&min_eps=5&min_f_score=7&min_gross_margin_percent=30.5&min_revenue_yoy_percent=0&min_roe_percent=8&positive_free_cash_flow=true&sort_by=dividend_yield&sort_order=desc&valuation_band=fair_valued"
 	if gotQuery != wantQuery {
 		t.Fatalf("screen query string 錯誤:\n got %q\nwant %q", gotQuery, wantQuery)
 	}

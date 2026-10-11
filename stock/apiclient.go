@@ -271,6 +271,18 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinDividendYieldPercent != nil {
 		values.Set("min_dividend_yield_percent", formatFloat(*opt.MinDividendYieldPercent))
 	}
+	if opt.MinFScore != nil {
+		values.Set("min_f_score", fmt.Sprint(*opt.MinFScore))
+	}
+	if opt.MinGrossMarginPercent != nil {
+		values.Set("min_gross_margin_percent", formatFloat(*opt.MinGrossMarginPercent))
+	}
+	if opt.MaxDebtRatioPercent != nil {
+		values.Set("max_debt_ratio_percent", formatFloat(*opt.MaxDebtRatioPercent))
+	}
+	if opt.PositiveFreeCashFlow {
+		values.Set("positive_free_cash_flow", "true")
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
