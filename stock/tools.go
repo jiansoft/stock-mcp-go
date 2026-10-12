@@ -288,6 +288,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, vts.valuationBand)
 	}
 
+	if peers, ok := q.(PeersQuerier); ok {
+		pts := &peersToolset{peers: peers, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_stock_peers",
+			Description: "查詢指定股票與同產業個股(上市櫃、未下市、不含 ETF)的比較:市值、本益比、股價淨值比、殖利率、" +
+				"Piotroski F 分數、單季毛利率、最新月營收年增率,以及各指標的產業中位數與目標股名次(第幾名/有效樣本數)。" +
+				"適合回答「跟同業比起來估值貴不貴、體質好不好」。本益比、股價淨值比越低名次越前,其餘指標越高名次越前。",
+			InputSchema: peersSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, pts.stockPeers)
+	}
+
 	if portfolio, ok := q.(PortfolioQuerier); ok {
 		pts := &portfolioToolset{portfolio: portfolio, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
