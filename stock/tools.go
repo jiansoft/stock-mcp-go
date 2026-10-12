@@ -300,6 +300,17 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, pts.portfolioSummary)
 	}
 
+	if history, ok := q.(PortfolioHistoryQuerier); ok {
+		hts := &portfolioHistoryToolset{history: history, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_portfolio_history",
+			Description: "查詢使用者持股近幾個月(預設 12)的績效(個人持股資料):時間加權報酬(扣除買賣金額、只看股價、不含現金股利)、" +
+				"年化報酬、最大回撤與高低點日期、各月報酬,並與同期加權指數比較。member_id 預設 0 為全部會員合計。",
+			InputSchema: portfolioHistorySchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, hts.portfolioHistory)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
