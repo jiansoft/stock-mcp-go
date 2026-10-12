@@ -19,8 +19,10 @@ type ScreenedStock struct {
 	RevenueYOYPercent *float64 `json:"revenue_yoy_percent"`
 	// 營收動能:從最新月份往回連續年增的月數(最多 12)與近 3 個月合計營收年增率;
 	// 最新營收過期時兩者皆為 nil,三個月不相連時近 3 月年增率為 nil。
-	RevenueYOYStreak     *int     `json:"revenue_yoy_streak"`
-	RevenueYOY3MPercent  *float64 `json:"revenue_yoy_3m_percent"`
+	RevenueYOYStreak    *int     `json:"revenue_yoy_streak"`
+	RevenueYOY3MPercent *float64 `json:"revenue_yoy_3m_percent"`
+	// MonthlyRevenue 是最新一個月營收(千元);最新營收過期時為 nil。
+	MonthlyRevenue       *float64 `json:"monthly_revenue"`
 	EarningsPerShare     *float64 `json:"earnings_per_share"`
 	ReturnOnEquity       *float64 `json:"return_on_equity"`
 	DividendYieldPercent *float64 `json:"dividend_yield_percent"`
@@ -61,6 +63,7 @@ type ScreenOptions struct {
 	MinRevenueYOYPercent    *float64
 	MinRevenueYOYStreak     *int
 	MinRevenueYOY3MPercent  *float64
+	MinMonthlyRevenue       *float64
 	MinEPS                  *float64
 	MinROEPercent           *float64
 	MinDividendYieldPercent *float64
