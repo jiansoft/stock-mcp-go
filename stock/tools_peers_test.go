@@ -62,6 +62,8 @@ func TestAPIClientStockPeers(t *testing.T) {
 				`"target":{"stock_symbol":"2330","name":"台積電","market_id":2,"closing_price":2540,"market_cap":6.5e13,"price_earning_ratio":29.44,` +
 				`"price_to_book_ratio":10.24,"dividend_yield_percent":null,"f_score":9,"gross_margin_percent":67.72,"revenue_yoy_percent":54.64},` +
 				`"metrics":[{"metric":"price_earning_ratio","better":"lower","target":29.44,"industry_median":35.1,"rank":1,"samples":2}],"peers":[]}`))
+		case "/api/v1/stocks/5000/peers":
+			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -81,6 +83,19 @@ func TestAPIClientStockPeers(t *testing.T) {
 	}
 	if _, err := client.StockPeers(t.Context(), "9999", 20); !errors.Is(err, ErrStockNotFound) {
 		t.Fatalf("404 應回 ErrStockNotFound:%v", err)
+	}
+	if peers, err := client.StockPeers(t.Context(), "5000", 20); err == nil || errors.Is(err, ErrStockNotFound) || peers != nil {
+		t.Fatalf("500 應回一般錯誤而非 ErrStockNotFound:%#v, %v", peers, err)
+	}
+}
+
+// TestCapToHundredMillion 驗證元換算億元的四捨五入與 nil 原樣回傳。
+func TestCapToHundredMillion(t *testing.T) {
+	if got := capToHundredMillion(nil); got != nil {
+		t.Fatalf("nil 應原樣回傳:%v", *got)
+	}
+	if got := capToHundredMillion(ptr(12345678900.0)); got == nil || *got != 123.46 {
+		t.Fatalf("123.456789 億應四捨五入為 123.46:%v", got)
 	}
 }
 
