@@ -37,6 +37,7 @@ type ScreenStocksInput struct {
 	MinRevenueYOYPercent    *float64 `json:"min_revenue_yoy_percent,omitempty"`
 	MinRevenueYOYStreak     *int     `json:"min_revenue_yoy_streak,omitempty"`
 	MinRevenueYOY3MPercent  *float64 `json:"min_revenue_yoy_3m_percent,omitempty"`
+	MinMonthlyRevenue       *float64 `json:"min_monthly_revenue,omitempty"`
 	MinEPS                  *float64 `json:"min_eps,omitempty"`
 	MinROEPercent           *float64 `json:"min_roe_percent,omitempty"`
 	MinDividendYieldPercent *float64 `json:"min_dividend_yield_percent,omitempty"`
@@ -72,6 +73,8 @@ func screenStocksSchema() *jsonschema.Schema {
 				Description: "最少連續月營收年增月數(1–12,從最新月份往回數、月份須相連)",
 			},
 			"min_revenue_yoy_3m_percent": number(-100, 10000, "最低近 3 個月累計月營收年增率百分比"),
+			"min_monthly_revenue": number(0, 1e12,
+				"最新一個月營收下限(新台幣千元,例如 10000 為 1,000 萬元);用來排除營收太小、年增率因低基期失真的股票"),
 			"min_eps":                    number(-10000, 10000, "最低每股盈餘 EPS"),
 			"min_roe_percent":            number(-10000, 10000, "最低股東權益報酬率百分比"),
 			"min_dividend_yield_percent": number(0, 1000, "最低殖利率百分比"),
@@ -87,7 +90,7 @@ func screenStocksSchema() *jsonschema.Schema {
 			},
 			"sort_by": {
 				Type:        "string",
-				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio"},
+				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio"},
 				Default:     []byte(`"stock_symbol"`),
 				Description: "固定白名單排序欄位",
 			},
@@ -154,6 +157,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	}{
 		{"min_revenue_yoy_percent", in.MinRevenueYOYPercent, -100, 10000},
 		{"min_revenue_yoy_3m_percent", in.MinRevenueYOY3MPercent, -100, 10000},
+		{"min_monthly_revenue", in.MinMonthlyRevenue, 0, 1e12},
 		{"min_eps", in.MinEPS, -10000, 10000},
 		{"min_roe_percent", in.MinROEPercent, -10000, 10000},
 		{"min_dividend_yield_percent", in.MinDividendYieldPercent, 0, 1000},
@@ -174,7 +178,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
 	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
-		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
+		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
@@ -185,7 +189,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		sortBy = "stock_symbol"
 	}
 	validSort := map[string]bool{
-		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
+		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true,
 	}
 	if !validSort[sortBy] {
@@ -206,7 +210,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	envelope, err := ts.screener.ScreenStocks(ctx, ScreenOptions{
 		Market: market, IndustryID: in.IndustryID, ValuationBand: valuationBand,
 		MinRevenueYOYPercent: in.MinRevenueYOYPercent, MinRevenueYOYStreak: in.MinRevenueYOYStreak,
-		MinRevenueYOY3MPercent: in.MinRevenueYOY3MPercent, MinEPS: in.MinEPS,
+		MinRevenueYOY3MPercent: in.MinRevenueYOY3MPercent, MinMonthlyRevenue: in.MinMonthlyRevenue, MinEPS: in.MinEPS,
 		MinROEPercent: in.MinROEPercent, MinDividendYieldPercent: in.MinDividendYieldPercent,
 		MinFScore: in.MinFScore, MinGrossMarginPercent: in.MinGrossMarginPercent,
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
@@ -220,9 +224,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s%%、連續年增 %s 個月、近 3 月累計年增 %s%%、EPS %s、ROE %s%%、殖利率 %s%%、F 分數 %s（%s 年）、毛利率 %s%%、負債比 %s%%、近四季自由現金流 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s%%、連續年增 %s 個月、近 3 月累計年增 %s%%、最新月營收 %s、EPS %s、ROE %s%%、殖利率 %s%%、F 分數 %s（%s 年）、毛利率 %s%%、負債比 %s%%、近四季自由現金流 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
-			displayFloat(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayFloat(first.RevenueYOY3MPercent), displayFloat(first.EarningsPerShare), displayFloat(first.ReturnOnEquity), displayFloat(first.DividendYieldPercent),
+			displayFloat(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayFloat(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayFloat(first.ReturnOnEquity), displayFloat(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
 			displayFloat(first.GrossMarginPercent), displayFloat(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
@@ -232,6 +236,14 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
 		DataAsOf: envelope.DataAsOf, Stocks: envelope.Stocks,
 	}, nil
+}
+
+// thousandsToHundredMillion 把千元金額換算成「X 億元」;nil 回「無」。
+func thousandsToHundredMillion(thousands *float64) string {
+	if thousands == nil {
+		return "無"
+	}
+	return fmt.Sprintf("%.2f 億元", *thousands/100_000)
 }
 
 // fScoreText 以「分數/可判定項數」表示 F 分數;無資料回「無」。
