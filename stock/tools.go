@@ -311,6 +311,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.portfolioHistory)
 	}
 
+	if forecast, ok := q.(DividendForecastQuerier); ok {
+		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_dividend_forecast",
+			Description: "以使用者目前持股預估未來幾個月(預設 12)每月會收到的現金股利(個人持股資料):已公告的配息直接列入," +
+				"過去 12 個月的配息往後推一年估算;回傳每月合計、各筆明細(股數、每股股利、發放日、依據)與預估殖利率。" +
+				"只含現金股利,不扣二代健保與稅。member_id 預設 0 為全部會員合計。",
+			InputSchema: dividendForecastSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, fts.dividendForecast)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
