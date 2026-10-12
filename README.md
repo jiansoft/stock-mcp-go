@@ -60,6 +60,7 @@ stock-mcp-go
 | `get_dividend_history` | API | Query historical cash and stock dividends |
 | `get_stock_valuation` | API | Get the latest or date-relative valuation model result |
 | `get_valuation_band` | API | Where the current P/E and P/B sit in their own history (1-10 years): percentile, min/P25/median/P75/max, and the implied price at each quartile |
+| `get_stock_peers` | API | Compare a stock with its industry peers (listed/OTC, excluding ETFs): market cap, P/E, P/B, dividend yield, F-score, gross margin, and latest monthly revenue YoY, with the industry median and the stock's rank for each metric |
 | `get_market_breadth` | API | Get advances/declines, moving-average breadth, and valuation distribution |
 | `get_dividend_yield_ranking` | API | Rank TWSE/TPEX stocks by historical dividend yield |
 | `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental, valuation, financial-health (Piotroski F-score, gross margin, debt ratio, trailing free cash flow), revenue-momentum filters (consecutive months of YoY growth, trailing 3-month YoY), and a minimum latest monthly revenue to exclude low-base distortions |
