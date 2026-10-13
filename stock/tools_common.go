@@ -197,14 +197,14 @@ func formatFloat(v float64) string {
 
 // breadthMarketSchema 描述市場廣度統計表本身的市場列。
 //
-// `all` 必須忠實描述 Data API 查詢的 id 0 合併列；它和排行／選股直接
-// 過濾 stocks 表的 `IN (2, 4)` 不是同一種底層語意，因此不可共用說明。
+// `all` 是 Data API 統計表的 id 0 合併列；stock_rust #169 起只加總上市與上櫃，
+// 範圍與排行／選股直接過濾 stocks 表的 `IN (2, 4)` 相同，但資料來源是統計表。
 func breadthMarketSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:        "string",
 		Enum:        []any{"all", "twse", "tpex"},
 		Default:     []byte(`"all"`),
-		Description: "統計列:all(市場 id 0 的全市場合併列)、twse(上市 id 2)或 tpex(上櫃 id 4)",
+		Description: "統計列:all(上市+上櫃合併列,市場 id 0,不含興櫃與公開發行)、twse(上市 id 2)或 tpex(上櫃 id 4)",
 	}
 }
 

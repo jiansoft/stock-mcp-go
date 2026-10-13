@@ -1241,8 +1241,8 @@ func TestScreenStocksTool(t *testing.T) {
 	t.Run("breadth 與排行選股使用不同 market 說明", func(t *testing.T) {
 		breadth := breadthMarketSchema().Description
 		listedOTC := listedOTCMarketSchema().Description
-		if !strings.Contains(breadth, "id 0") || strings.Contains(breadth, "不含公開發行") {
-			t.Fatalf("breadth all 必須描述統計表 id 0 合併列:%q", breadth)
+		if !strings.Contains(breadth, "id 0") || !strings.Contains(breadth, "上市+上櫃合併列") {
+			t.Fatalf("breadth all 必須描述統計表 id 0 的上市+上櫃合併列:%q", breadth)
 		}
 		if !strings.Contains(listedOTC, "不含公開發行與興櫃") || breadth == listedOTC {
 			t.Fatalf("排行/選股 all 必須描述上市加上櫃邊界:%q", listedOTC)
