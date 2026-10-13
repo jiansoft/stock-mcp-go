@@ -10,4 +10,6 @@ var (
 	// 這是可理解的正常資料狀態，不是認證、連線或伺服器故障；tool 層因此
 	// 可以回明確的「查無資料」，而不會誤報成未預期內部錯誤。
 	ErrMarketDataNotFound = errors.New("market data not found")
+	// ErrIndustryNotFound 表示查詢條件中的產業名稱不存在(Data API 回 422)。
+	ErrIndustryNotFound = errors.New("industry not found")
 )

@@ -312,6 +312,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, tts.technicalIndicators)
 	}
 
+	if signals, ok := q.(SignalsQuerier); ok {
+		sts := &signalsToolset{signals: signals, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_signal_stocks",
+			Description: "查詢某交易日(預設最新)出現技術訊號的上市櫃股票:均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
+				"RSI(14) 與 K 值超買超賣、52 週新高新低;可依市場、訊號種類、訊號來源與產業篩選,依成交值由大到小排序,並附各訊號家數。" +
+				"適合回答「今天哪些股票創 52 週新高」「哪些半導體股 KD 黃金交叉」「哪些股票跌破季線」。價格未還原除權息。",
+			InputSchema: signalsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.signalStocks)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

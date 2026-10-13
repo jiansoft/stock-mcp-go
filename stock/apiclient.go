@@ -452,7 +452,7 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 		return false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("資料 API 回傳非成功狀態:%d", resp.StatusCode)
+		return false, &apiStatusError{status: resp.StatusCode}
 	}
 	// 以 io.LimitReader 限制單一回應的最大解析量。Data API 是內網的受信任
 	// 服務,正常回應(即使是 365 筆日線或 200 筆行事曆事件)也只有數百 KB,
@@ -463,4 +463,14 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 		return false, fmt.Errorf("解析資料 API 回應:%w", err)
 	}
 	return true, nil
+}
+
+// apiStatusError 是 Data API 回傳的非成功狀態(404 以外);保留狀態碼讓工具層區分
+// 參數錯誤(422)與伺服器故障。
+type apiStatusError struct {
+	status int
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("資料 API 回傳非成功狀態:%d", e.status)
 }
