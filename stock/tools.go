@@ -300,6 +300,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, pts.stockPeers)
 	}
 
+	if technicals, ok := q.(TechnicalsQuerier); ok {
+		tts := &technicalsToolset{technicals: technicals, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_technical_indicators",
+			Description: "查詢指定股票截止日之前最近 N 個交易日(預設 20)的技術指標:5/10/20/60/120/240 日均線與乖離率、" +
+				"RSI(6/12/14)、KD(9,3,3)、MACD(12,26,9),以及最新一日的均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
+				"RSI 與 K 值超買超賣訊號。適合回答「技術面目前偏多還是偏空、有沒有交叉訊號」。價格未還原除權息。",
+			InputSchema: technicalsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, tts.technicalIndicators)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
