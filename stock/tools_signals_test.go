@@ -181,6 +181,11 @@ func TestSignalsSummary(t *testing.T) {
 	if strings.Contains(empty, "各訊號家數") || strings.Contains(empty, "另有") {
 		t.Errorf("無結果時不應列家數與未列出筆數:%s", empty)
 	}
+
+	adjusted := signalsSummary(&SignalsEnvelope{DataAsOf: "2026-10-13", Market: "all", Adjusted: true})
+	if !strings.Contains(adjusted, "all 市場 2026-10-13 技術訊號(收盤後計算,價格已還原權值):符合 0 筆。") {
+		t.Errorf("還原權值的口徑說明錯誤:%s", adjusted)
+	}
 }
 
 // TestSignalLabel 涵蓋交叉、站上跌破、52 週與未知名稱。
