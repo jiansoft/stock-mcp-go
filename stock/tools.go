@@ -300,6 +300,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, pts.stockPeers)
 	}
 
+	if industries, ok := q.(IndustriesQuerier); ok {
+		its := &industriesToolset{industries: industries, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_industry_performance",
+			Description: "查詢各產業(上市櫃普通股,不含 ETF)在指定交易日或近 N 個交易日的表現:市值加權漲跌幅、漲跌幅中位數、" +
+				"漲跌家數、成交值占比、本益比與股價淨值比中位數,以及產業內領漲、領跌個股;依市值加權漲跌幅由高到低排序。" +
+				"適合回答「今天(或這週、這個月)哪些產業最強、資金往哪裡去」。days 大於 1 時以期初收盤價計算,未還原除權息。",
+			InputSchema: industriesSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, its.industryPerformance)
+	}
+
 	if portfolio, ok := q.(PortfolioQuerier); ok {
 		pts := &portfolioToolset{portfolio: portfolio, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

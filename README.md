@@ -68,6 +68,7 @@ stock-mcp-go
 | `get_dividend_calendar` | API | Query ex-dividend, ex-rights, and dividend-payment events |
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
 | `get_market_movers` | API | Rank daily gainers, losers, or volume; automatically selects intraday or closing data |
+| `get_industry_performance` | API | Industry performance for a trading day or the last N trading days (listed/OTC common stocks): cap-weighted and median change, advancers/decliners, trading value share, median P/E and P/B, and each industry's top gainer and loser |
 | `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
 | `get_cagr_ranking` | API | Rank stocks by annualized return over M3-Y10 (price only, with dividends, or reinvested), filterable by market and industry |
 | `get_stock_cagr` | API | Annualized and total return for one stock over every period |
