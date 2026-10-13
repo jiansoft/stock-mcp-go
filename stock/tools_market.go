@@ -352,8 +352,8 @@ func moversMetricSummary(rankBy string, top Mover) string {
 		}
 		return fmt.Sprintf("成交量 %s 股", displayFloat(top.VolumeShares))
 	}
-	return fmt.Sprintf("漲跌幅 %s%%、成交價 %s 元",
-		displayFloat(top.ChangePercent), displayFloat(top.Price))
+	return fmt.Sprintf("漲跌幅 %s、成交價 %s 元",
+		displayPercent(top.ChangePercent), displayFloat(top.Price))
 }
 
 // marketMovers 執行 get_market_movers。
@@ -564,9 +564,9 @@ func (ts *marketDataToolset) qfiiHoldingRanking(ctx context.Context, _ *mcp.Call
 	summary := fmt.Sprintf("指定條件下沒有外資持股排行資料。%s\n免責聲明:%s", qfiiSnapshotNotice, AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		top := envelope.Stocks[0]
-		summary = fmt.Sprintf("取得 %s 市場外資(QFII)持股排行共 %d 檔(依 %s 排序);第 1 名為 %s %s,外資持股比例 %s%%、持股數 %s 股。%s\n免責聲明:%s",
+		summary = fmt.Sprintf("取得 %s 市場外資(QFII)持股排行共 %d 檔(依 %s 排序);第 1 名為 %s %s,外資持股比例 %s、持股數 %s 股。%s\n免責聲明:%s",
 			market, len(envelope.Stocks), sortBy, top.StockSymbol, top.Name,
-			displayFloat(top.QfiiShareHoldingPercentage), displayInt64(top.QfiiSharesHeld), qfiiSnapshotNotice, AnalysisDisclaimer)
+			displayPercent(top.QfiiShareHoldingPercentage), displayInt64(top.QfiiSharesHeld), qfiiSnapshotNotice, AnalysisDisclaimer)
 	}
 	return textResult(summary), QfiiRankingOutput{
 		DataKind: "qfii_holding_ranking", IsRealtime: false, Disclaimer: AnalysisDisclaimer,

@@ -194,9 +194,9 @@ func industryText(p *IndustryPerformance) string {
 	if name == "" {
 		name = "未分類"
 	}
-	return fmt.Sprintf("%s:加權 %s%%、中位數 %s%%,漲 %d 跌 %d 平 %d(共 %d 檔),成交值占 %s%%,本益比中位數 %s、股價淨值比中位數 %s;領漲 %s、領跌 %s",
-		name, displayFloat(p.CapWeightedChangePercent), displayFloat(p.MedianChangePercent),
-		p.Advancers, p.Decliners, p.Unchanged, p.Stocks, displayFloat(p.TradeValueSharePercent),
+	return fmt.Sprintf("%s:加權 %s、中位數 %s,漲 %d 跌 %d 平 %d(共 %d 檔),成交值占 %s,本益比中位數 %s、股價淨值比中位數 %s;領漲 %s、領跌 %s",
+		name, displayPercent(p.CapWeightedChangePercent), displayPercent(p.MedianChangePercent),
+		p.Advancers, p.Decliners, p.Unchanged, p.Stocks, displayPercent(p.TradeValueSharePercent),
 		displayFloat(p.MedianPriceEarningRatio), displayFloat(p.MedianPriceToBookRatio),
 		moverText(p.TopGainer), moverText(p.TopLoser))
 }

@@ -175,8 +175,8 @@ func peersSummary(e *PeersEnvelope) string {
 		if m.Rank != nil {
 			rank = fmt.Sprintf("第 %d／%d 名", *m.Rank, m.Samples)
 		}
-		b.printf("\n- %s(%s):目標 %s%s,%s,產業中位數 %s%s", label[0], direction,
-			displayFloat(target), label[1], rank, displayFloat(median), label[1])
+		b.printf("\n- %s(%s):目標 %s,%s,產業中位數 %s", label[0], direction,
+			displayWithUnit(target, label[1]), rank, displayWithUnit(median, label[1]))
 	}
 	if len(e.Peers) > 0 {
 		b.printf("\n市值前 %d 檔:", len(e.Peers))
@@ -196,9 +196,9 @@ func peerStockText(p *PeerStock) string {
 	if p.FScore != nil {
 		fScore = fmt.Sprint(*p.FScore)
 	}
-	return fmt.Sprintf("市值 %s 億元、本益比 %s、股價淨值比 %s、殖利率 %s%%、F 分數 %s、毛利率 %s%%、月營收年增 %s%%",
+	return fmt.Sprintf("市值 %s 億元、本益比 %s、股價淨值比 %s、殖利率 %s、F 分數 %s、毛利率 %s、月營收年增 %s",
 		displayFloat(capToHundredMillion(p.MarketCap)), displayFloat(p.PriceEarningRatio), displayFloat(p.PriceToBookRatio),
-		displayFloat(p.DividendYieldPercent), fScore, displayFloat(p.GrossMarginPercent), displayFloat(p.RevenueYOYPercent))
+		displayPercent(p.DividendYieldPercent), fScore, displayPercent(p.GrossMarginPercent), displayPercent(p.RevenueYOYPercent))
 }
 
 // capToHundredMillion 把元換算成億元(四捨五入到小數 2 位);nil 原樣回傳。

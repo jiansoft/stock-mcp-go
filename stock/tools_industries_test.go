@@ -129,16 +129,21 @@ func TestIndustryPerformanceTool(t *testing.T) {
 
 // TestIndustriesSummary 涵蓋全部列出、只列最強最弱、區間期初日與缺值顯示。
 func TestIndustriesSummary(t *testing.T) {
-	all := industriesSummary(sampleIndustries(4), 2)
+	sample := sampleIndustries(4)
+	sample.Industries[3].CapWeightedChangePercent, sample.Industries[3].TradeValueSharePercent = nil, nil
+	all := industriesSummary(sample, 2)
 	for _, want := range []string{
 		"all 市場 2026-10-12 當日各產業表現,共 4 個產業",
 		"1. 產業1:加權 4%、中位數 0.5%,漲 6 跌 3 平 1(共 10 檔),成交值占 1.25%,本益比中位數 15.2、股價淨值比中位數 無;領漲 無、領跌 無",
-		"4. 產業4:加權 1%",
+		"4. 產業4:加權 無、中位數 0.5%,漲 6 跌 3 平 1(共 10 檔),成交值占 無,",
 		"免責聲明",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("摘要缺少 %q:%s", want, all)
 		}
+	}
+	if strings.Contains(all, "無%") {
+		t.Errorf("缺值不應顯示成「無%%」:%s", all)
 	}
 	if strings.Contains(all, "最強") {
 		t.Errorf("產業數不超過 2×limit 時應全部列出:%s", all)
@@ -195,5 +200,15 @@ func TestIndustryPerformanceToolIsRegisteredReadOnly(t *testing.T) {
 	}
 	if !found {
 		t.Error("tools/list 缺少 get_industry_performance")
+	}
+}
+
+// TestDisplayPercent 驗證百分比缺值只顯示「無」。
+func TestDisplayPercent(t *testing.T) {
+	if got := displayPercent(nil); got != "無" {
+		t.Errorf("displayPercent(nil) = %q", got)
+	}
+	if got := displayPercent(ptr(-1.25)); got != "-1.25%" {
+		t.Errorf("displayPercent(-1.25) = %q", got)
 	}
 }

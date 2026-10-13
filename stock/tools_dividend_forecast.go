@@ -138,8 +138,8 @@ func dividendForecastText(f *DividendForecast) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s 元(已公告 %s 元、依去年同期推估 %s 元),預估殖利率 %s%%。",
-		scope, f.From, f.To, formatFloat(f.Total), formatFloat(f.AnnouncedTotal), formatFloat(f.EstimatedTotal), displayFloat(f.ForwardYieldPercent))
+	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s 元(已公告 %s 元、依去年同期推估 %s 元),預估殖利率 %s。",
+		scope, f.From, f.To, formatFloat(f.Total), formatFloat(f.AnnouncedTotal), formatFloat(f.EstimatedTotal), displayPercent(f.ForwardYieldPercent))
 
 	b.printf("\n每月入帳:")
 	for _, month := range f.Months {

@@ -130,14 +130,14 @@ func portfolioHistoryText(h *PortfolioHistory, months int) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s持股 %s 至 %s 的時間加權報酬 %s%%", scope, displayString(h.From), displayString(h.DataAsOf), displayFloat(h.ReturnPercent))
+	b.printf("%s持股 %s 至 %s 的時間加權報酬 %s", scope, displayString(h.From), displayString(h.DataAsOf), displayPercent(h.ReturnPercent))
 	if h.AnnualizedReturnPercent != nil {
-		b.printf("(年化 %s%%)", displayFloat(h.AnnualizedReturnPercent))
+		b.printf("(年化 %s)", displayPercent(h.AnnualizedReturnPercent))
 	}
-	b.printf(";同期加權指數 %s%%,超額報酬 %s 個百分點。", displayFloat(h.BenchmarkReturnPercent), displayFloat(h.ExcessReturnPercent))
+	b.printf(";同期加權指數 %s,超額報酬 %s 個百分點。", displayPercent(h.BenchmarkReturnPercent), displayFloat(h.ExcessReturnPercent))
 	b.printf("\n市值 %s → %s 元,期間投入 %s 元、賣出 %s 元。", displayFloat(h.StartValue), displayFloat(h.EndValue), displayFloat(h.Buys), displayFloat(h.Sells))
 	if h.MaxDrawdownPeak != nil {
-		b.printf("最大回撤 %s%%(%s 高點 → %s 低點)。", displayFloat(h.MaxDrawdownPercent), *h.MaxDrawdownPeak, displayString(h.MaxDrawdownTrough))
+		b.printf("最大回撤 %s(%s 高點 → %s 低點)。", displayPercent(h.MaxDrawdownPercent), *h.MaxDrawdownPeak, displayString(h.MaxDrawdownTrough))
 	} else {
 		b.printf("期間沒有回撤。")
 	}
@@ -149,7 +149,7 @@ func portfolioHistoryText(h *PortfolioHistory, months int) string {
 	if len(recent) > 0 {
 		b.printf("\n各月報酬(大盤):")
 		for _, month := range recent {
-			b.printf("\n- %s:%s%%(%s%%)", month.Month, formatFloat(month.ReturnPercent), displayFloat(month.BenchmarkReturnPercent))
+			b.printf("\n- %s:%s%%(%s)", month.Month, formatFloat(month.ReturnPercent), displayPercent(month.BenchmarkReturnPercent))
 		}
 	}
 	b.printf("\n報酬已扣除買賣金額、只看股價,不含現金股利;查全部會員時,會員開始記錄當天的市值視為投入。")
