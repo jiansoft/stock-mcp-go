@@ -166,7 +166,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, ats.stockValuation)
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "get_market_breadth",
-			Description: "查詢統計表既有市場列的漲跌家數、均線位置與估值分布；all 使用市場 id 0 的全市場合併統計列，可回傳最多 60 個資料日。",
+			Description: "查詢統計表既有市場列的漲跌家數、52 週新高／新低家數、均線位置與估值分布；all 使用市場 id 0 的全市場合併統計列，可回傳最多 60 個資料日。",
 			InputSchema: marketBreadthSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ats.marketBreadth)

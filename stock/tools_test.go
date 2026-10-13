@@ -1009,7 +1009,7 @@ func TestAnalyticsTools(t *testing.T) {
 	})
 
 	t.Run("市場廣度:預設值、序列與 breadth 等於 history 首筆", func(t *testing.T) {
-		point := MarketBreadthPoint{Date: "2026-07-16", Market: "all", Undervalued: 100, FairValued: 200, Overvalued: 300, HighlyOvervalued: 50, StocksUp: 700, StocksDown: 400, StocksUnchanged: 100}
+		point := MarketBreadthPoint{Date: "2026-07-16", Market: "all", Undervalued: 100, FairValued: 200, Overvalued: 300, HighlyOvervalued: 50, StocksUp: 700, StocksDown: 400, StocksUnchanged: 100, New52WeekHigh: 45, New52WeekLow: 37}
 		f := &fakeAnalyticsQuerier{breadth: &MarketBreadth{DataAsOf: "2026-07-16", Breadth: point, History: []MarketBreadthPoint{point}}}
 		res, out, err := newAnalyticsToolset(f).marketBreadth(t.Context(), nil, MarketBreadthInput{})
 		if err != nil {
@@ -1018,7 +1018,7 @@ func TestAnalyticsTools(t *testing.T) {
 		if f.gotBreadthOpt.Market != "all" || f.gotBreadthOpt.Days != 1 {
 			t.Fatalf("預設值錯誤:%+v", f.gotBreadthOpt)
 		}
-		for _, want := range []string{"2026-07-16", "上漲 700", "低估 100", "不構成投資建議"} {
+		for _, want := range []string{"2026-07-16", "上漲 700", "創 52 週新高 45 家、新低 37 家", "低估 100", "不構成投資建議"} {
 			if !strings.Contains(summaryOf(t, res), want) {
 				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
 			}
