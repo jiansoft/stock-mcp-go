@@ -69,6 +69,7 @@ stock-mcp-go
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |
 | `get_market_movers` | API | Rank daily gainers, losers, or volume; automatically selects intraday or closing data |
 | `get_industry_performance` | API | Industry performance for a trading day or the last N trading days (listed/OTC common stocks): cap-weighted and median change, advancers/decliners, trading value share, median P/E and P/B, and each industry's top gainer and loser |
+| `get_technical_indicators` | API | Technical indicators for the last N trading days (default 20): 5/10/20/60/120/240-day moving averages and bias, RSI(6/12/14), KD(9,3,3), MACD(12,26,9), plus the latest day's golden/death crosses, close crossing the monthly/quarterly/yearly MA, and overbought/oversold signals (prices not adjusted for dividends) |
 | `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
 | `get_cagr_ranking` | API | Rank stocks by annualized return over M3-Y10 (price only, with dividends, or reinvested), filterable by market and industry |
 | `get_stock_cagr` | API | Annualized and total return for one stock over every period |
