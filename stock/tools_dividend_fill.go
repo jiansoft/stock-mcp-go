@@ -166,8 +166,8 @@ func dividendFillSummary(e *DividendFillEnvelope) string {
 			b.printf("\n尚未填息:")
 		}
 		listed++
-		b.printf("\n- %s 除權息,已過 %d 個交易日,最新收盤 %s 元,距填息價 %s 元還差 %s%%",
-			event.ExDate, event.TradingDaysSinceEx, displayFloat(event.LatestClose), displayFloat(event.PreExClose), displayFloat(event.GapPercent))
+		b.printf("\n- %s 除權息,已過 %d 個交易日,最新收盤 %s 元,距填息價 %s 元還差 %s",
+			event.ExDate, event.TradingDaysSinceEx, displayFloat(event.LatestClose), displayFloat(event.PreExClose), displayPercent(event.GapPercent))
 	}
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()

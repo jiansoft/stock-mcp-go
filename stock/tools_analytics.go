@@ -239,9 +239,9 @@ func (ts *analyticsToolset) dividendYieldRanking(ctx context.Context, _ *mcp.Cal
 	summary := fmt.Sprintf("指定條件下沒有殖利率排行資料。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		top := envelope.Stocks[0]
-		summary = fmt.Sprintf("取得 %s 市場 %d 檔股票的殖利率排行(資料日 %s)；第 1 名為 %s %s,殖利率 %s%%。\n免責聲明:%s",
+		summary = fmt.Sprintf("取得 %s 市場 %d 檔股票的殖利率排行(資料日 %s)；第 1 名為 %s %s,殖利率 %s。\n免責聲明:%s",
 			market, len(envelope.Stocks), envelope.DataAsOf, top.StockSymbol, top.Name,
-			displayFloat(top.DividendYieldPercent), AnalysisDisclaimer)
+			displayPercent(top.DividendYieldPercent), AnalysisDisclaimer)
 	}
 	return textResult(summary), YieldRankingOutput{
 		DataKind: "dividend_yield_ranking", IsRealtime: false, Disclaimer: AnalysisDisclaimer,

@@ -151,9 +151,9 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s目前持有 %d 檔(報價截至 %s):市值 %s 元、成本 %s 元,未實現損益 %s 元(%s%%),目前持股累計已領股利 %s 元。",
+	b.printf("%s目前持有 %d 檔(報價截至 %s):市值 %s 元、成本 %s 元,未實現損益 %s 元(%s),目前持股累計已領股利 %s 元。",
 		scope, p.Symbols, displayString(p.DataAsOf), formatFloat(p.MarketValue), formatFloat(p.Cost),
-		formatFloat(p.UnrealizedGain), displayFloat(p.UnrealizedGainPercent), formatFloat(p.DividendsReceived))
+		formatFloat(p.UnrealizedGain), displayPercent(p.UnrealizedGainPercent), formatFloat(p.DividendsReceived))
 	b.printf("\n市值加權殖利率 %s;市值加權 F 分數 %s。", weightedText(p.WeightedDividendYield, "%"), weightedText(p.WeightedFScore, ""))
 
 	if len(p.Industries) > 0 {
@@ -181,9 +181,9 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 			b.printf("\n…其餘 %d 檔見結構化資料。", len(p.Holdings)-maxHoldingsInSummary)
 			break
 		}
-		b.printf("\n- %s %s:%d 股,權重 %s%%,未實現 %s%%,殖利率 %s%%,F 分數 %s",
-			holding.StockSymbol, holding.Name, holding.Shares, displayFloat(holding.WeightPercent),
-			displayFloat(holding.UnrealizedGainPercent), displayFloat(holding.DividendYieldPercent), displayInt(holding.FScore))
+		b.printf("\n- %s %s:%d 股,權重 %s,未實現 %s,殖利率 %s,F 分數 %s",
+			holding.StockSymbol, holding.Name, holding.Shares, displayPercent(holding.WeightPercent),
+			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayInt(holding.FScore))
 	}
 	b.printf("\n殖利率與 F 分數只用有該指標的部位加權,括號內為覆蓋的市值比例。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)

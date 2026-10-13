@@ -283,7 +283,7 @@ func (ts *toolset) latestDailyQuote(ctx context.Context, _ *mcp.CallToolRequest,
 	if q := latest.Quote; q != nil {
 		b.printf("日期:%s\n", q.Date)
 		b.printf("收盤價:%s\n", displayFloat(q.ClosingPrice))
-		b.printf("漲跌:%s (%s%%)\n", displayFloat(q.Change), displayFloat(q.ChangeRange))
+		b.printf("漲跌:%s (%s)\n", displayFloat(q.Change), displayPercent(q.ChangeRange))
 		b.printf("成交量:%s 股\n", displayFloat(q.TradingVolume))
 	} else {
 		// Quote 是 nil 代表股票存在,但資料庫還沒有這支股票的日報價

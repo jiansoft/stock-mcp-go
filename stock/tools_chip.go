@@ -187,13 +187,13 @@ func chipSummary(e *ChipEnvelope) string {
 	}
 	if len(e.HolderDistribution) > 0 {
 		h := e.HolderDistribution[0]
-		fmt.Fprintf(&b, "千張大戶 %s 持股 %s%%(%d 人)。", h.Date, displayFloat(h.MajorPercent), h.MajorHolders)
+		fmt.Fprintf(&b, "千張大戶 %s 持股 %s(%d 人)。", h.Date, displayPercent(h.MajorPercent), h.MajorHolders)
 	}
 	if e.Insider != nil {
-		fmt.Fprintf(&b, "董監 %s 設質比例 %s%%。", e.Insider.Month, displayFloat(e.Insider.PledgePercent))
+		fmt.Fprintf(&b, "董監 %s 設質比例 %s。", e.Insider.Month, displayPercent(e.Insider.PledgePercent))
 	}
 	if e.BrokerFlow != nil {
-		fmt.Fprintf(&b, "主力 %s %s 張(佔成交量 %s%%)。", e.BrokerFlow.Date, signedText(e.BrokerFlow.MainNet), displayFloat(e.BrokerFlow.MainShare))
+		fmt.Fprintf(&b, "主力 %s %s 張(佔成交量 %s)。", e.BrokerFlow.Date, signedText(e.BrokerFlow.MainNet), displayPercent(e.BrokerFlow.MainShare))
 	}
 	fmt.Fprintf(&b, "\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()

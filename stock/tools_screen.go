@@ -224,11 +224,11 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s%%、連續年增 %s 個月、近 3 月累計年增 %s%%、最新月營收 %s、EPS %s、ROE %s%%、殖利率 %s%%、F 分數 %s（%s 年）、毛利率 %s%%、負債比 %s%%、近四季自由現金流 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、負債比 %s、近四季自由現金流 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
-			displayFloat(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayFloat(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayFloat(first.ReturnOnEquity), displayFloat(first.DividendYieldPercent),
+			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
-			displayFloat(first.GrossMarginPercent), displayFloat(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
+			displayPercent(first.GrossMarginPercent), displayPercent(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
 	}

@@ -155,6 +155,19 @@ func displayFloat(v *float64) string {
 	return formatFloat(*v)
 }
 
+// displayPercent 顯示百分比;nil 顯示「無」而不是「無%」。
+func displayPercent(v *float64) string {
+	return displayWithUnit(v, "%")
+}
+
+// displayWithUnit 在數值後接單位;nil 只顯示「無」,不接單位。
+func displayWithUnit(v *float64, unit string) string {
+	if v == nil {
+		return "無"
+	}
+	return formatFloat(*v) + unit
+}
+
 // displayString 對 *string 做跟 displayFloat 相同的「nil 顯示無」處理。
 func displayString(v *string) string {
 	if v == nil {
