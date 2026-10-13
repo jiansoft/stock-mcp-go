@@ -48,26 +48,30 @@ type ValuationEnvelope struct {
 // MarketBreadthPoint 是單一交易日的市場漲跌、均線位置與估值分布統計。
 // 計數欄位由統計列提供，因此使用整數；Market 是 all、twse 或 tpex。
 type MarketBreadthPoint struct {
-	Date                     string  `json:"date"`
-	Market                   string  `json:"market"`
-	Undervalued              int32   `json:"undervalued"`
-	FairValued               int32   `json:"fair_valued"`
-	Overvalued               int32   `json:"overvalued"`
-	HighlyOvervalued         int32   `json:"highly_overvalued"`
-	Below5DayMovingAverage   int32   `json:"below_5_day_moving_average"`
-	Above5DayMovingAverage   int32   `json:"above_5_day_moving_average"`
-	Below20DayMovingAverage  int32   `json:"below_20_day_moving_average"`
-	Above20DayMovingAverage  int32   `json:"above_20_day_moving_average"`
-	Below60DayMovingAverage  int32   `json:"below_60_day_moving_average"`
-	Above60DayMovingAverage  int32   `json:"above_60_day_moving_average"`
-	Below120DayMovingAverage int32   `json:"below_120_day_moving_average"`
-	Above120DayMovingAverage int32   `json:"above_120_day_moving_average"`
-	Below240DayMovingAverage int32   `json:"below_240_day_moving_average"`
-	Above240DayMovingAverage int32   `json:"above_240_day_moving_average"`
-	StocksUp                 int32   `json:"stocks_up"`
-	StocksDown               int32   `json:"stocks_down"`
-	StocksUnchanged          int32   `json:"stocks_unchanged"`
-	UpdatedAt                *string `json:"updated_at"`
+	Date                     string `json:"date"`
+	Market                   string `json:"market"`
+	Undervalued              int32  `json:"undervalued"`
+	FairValued               int32  `json:"fair_valued"`
+	Overvalued               int32  `json:"overvalued"`
+	HighlyOvervalued         int32  `json:"highly_overvalued"`
+	Below5DayMovingAverage   int32  `json:"below_5_day_moving_average"`
+	Above5DayMovingAverage   int32  `json:"above_5_day_moving_average"`
+	Below20DayMovingAverage  int32  `json:"below_20_day_moving_average"`
+	Above20DayMovingAverage  int32  `json:"above_20_day_moving_average"`
+	Below60DayMovingAverage  int32  `json:"below_60_day_moving_average"`
+	Above60DayMovingAverage  int32  `json:"above_60_day_moving_average"`
+	Below120DayMovingAverage int32  `json:"below_120_day_moving_average"`
+	Above120DayMovingAverage int32  `json:"above_120_day_moving_average"`
+	Below240DayMovingAverage int32  `json:"below_240_day_moving_average"`
+	Above240DayMovingAverage int32  `json:"above_240_day_moving_average"`
+	StocksUp                 int32  `json:"stocks_up"`
+	StocksDown               int32  `json:"stocks_down"`
+	StocksUnchanged          int32  `json:"stocks_unchanged"`
+	// New52WeekHigh／New52WeekLow 是當日最高(最低)價突破前 52 週最高(最低)價的家數;
+	// 前 52 週不足 200 個交易日者不計。
+	New52WeekHigh int32   `json:"new_52_week_high"`
+	New52WeekLow  int32   `json:"new_52_week_low"`
+	UpdatedAt     *string `json:"updated_at"`
 }
 
 // MarketBreadth 是 market/breadth endpoint 的完整 envelope。

@@ -199,8 +199,8 @@ func (ts *analyticsToolset) marketBreadth(ctx context.Context, _ *mcp.CallToolRe
 	}
 
 	b := envelope.Breadth
-	summary := fmt.Sprintf("%s 市場最新統計日 %s:上漲 %d 家、下跌 %d 家、平盤 %d 家；低估 %d 家、公允 %d 家、高估 %d 家、極高估 %d 家。共回傳 %d 個交易日。\n免責聲明:%s",
-		market, b.Date, b.StocksUp, b.StocksDown, b.StocksUnchanged,
+	summary := fmt.Sprintf("%s 市場最新統計日 %s:上漲 %d 家、下跌 %d 家、平盤 %d 家；創 52 週新高 %d 家、新低 %d 家；低估 %d 家、公允 %d 家、高估 %d 家、極高估 %d 家。共回傳 %d 個交易日。\n免責聲明:%s",
+		market, b.Date, b.StocksUp, b.StocksDown, b.StocksUnchanged, b.New52WeekHigh, b.New52WeekLow,
 		b.Undervalued, b.FairValued, b.Overvalued, b.HighlyOvervalued, len(envelope.History), AnalysisDisclaimer)
 	return textResult(summary), MarketBreadthOutput{
 		DataKind: "market_breadth", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
