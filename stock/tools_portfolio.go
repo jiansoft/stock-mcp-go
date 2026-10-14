@@ -45,12 +45,19 @@ type PortfolioHolding struct {
 	DividendsReceived     float64  `json:"dividends_received"`
 	DividendYieldPercent  *float64 `json:"dividend_yield_percent"`
 	FScore                *int     `json:"f_score"`
+	// RSScore 是相對強度分數 1–99(資料日見 PortfolioSummary.RSAsOf);ETF 等沒有分數時為 nil。
+	RSScore *int `json:"rs_score"`
+	// ForeignStreak、TrustStreak 是外資、投信連續買賣超天數(正連買、負連賣),資料日見 ChipAsOf。
+	ForeignStreak *int `json:"foreign_streak"`
+	TrustStreak   *int `json:"trust_streak"`
 }
 
 // PortfolioSummary 是 portfolio/summary endpoint 的完整回應。
 type PortfolioSummary struct {
 	MemberID              int64               `json:"member_id"`
 	DataAsOf              *string             `json:"data_as_of"`
+	RSAsOf                *string             `json:"rs_as_of"`
+	ChipAsOf              *string             `json:"chip_as_of"`
 	Symbols               int                 `json:"symbols"`
 	MarketValue           float64             `json:"market_value"`
 	Cost                  float64             `json:"cost"`
@@ -181,10 +188,12 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 			b.printf("\n…其餘 %d 檔見結構化資料。", len(p.Holdings)-maxHoldingsInSummary)
 			break
 		}
-		b.printf("\n- %s %s:%d 股,權重 %s,未實現 %s,殖利率 %s,F 分數 %s",
+		b.printf("\n- %s %s:%d 股,權重 %s,未實現 %s,殖利率 %s,F 分數 %s,RS %s,外資%s,投信%s",
 			holding.StockSymbol, holding.Name, holding.Shares, displayPercent(holding.WeightPercent),
-			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayInt(holding.FScore))
+			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayInt(holding.FScore),
+			displayInt(holding.RSScore), streakDisplay(holding.ForeignStreak), streakDisplay(holding.TrustStreak))
 	}
+	b.printf("\nRS(相對強度 1–99)截至 %s、法人連續天數截至 %s。", displayString(p.RSAsOf), displayString(p.ChipAsOf))
 	b.printf("\n殖利率與 F 分數只用有該指標的部位加權,括號內為覆蓋的市值比例。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()

@@ -33,7 +33,7 @@ func (f *fakePortfolioQuerier) PortfolioSummary(_ context.Context, memberID int6
 // samplePortfolio 是兩個產業、兩檔持股的示意資料;第二檔沒有報價。
 func samplePortfolio() *PortfolioSummary {
 	return &PortfolioSummary{
-		MemberID: 0, DataAsOf: ptr("2026-10-08"), Symbols: 2,
+		MemberID: 0, DataAsOf: ptr("2026-10-08"), RSAsOf: ptr("2026-10-14"), ChipAsOf: ptr("2026-10-13"), Symbols: 2,
 		MarketValue: 100000, Cost: 90000, UnrealizedGain: 10000, UnrealizedGainPercent: ptr(11.11), DividendsReceived: 500,
 		WeightedDividendYield: &WeightedMetric{Value: 4.5, CoveragePercent: 100},
 		Industries: []PortfolioIndustry{
@@ -43,7 +43,7 @@ func samplePortfolio() *PortfolioSummary {
 		Holdings: []PortfolioHolding{
 			{StockSymbol: "2330", Name: "台積電", Shares: 2000, Cost: 90000, ClosingPrice: ptr(50.0), MarketValue: ptr(100000.0),
 				WeightPercent: ptr(100.0), UnrealizedGain: ptr(10000.0), UnrealizedGainPercent: ptr(11.11), DividendsReceived: 500,
-				DividendYieldPercent: ptr(4.5), FScore: ptr(6)},
+				DividendYieldPercent: ptr(4.5), FScore: ptr(6), RSScore: ptr(79), ForeignStreak: ptr(-6), TrustStreak: ptr(11)},
 			{StockSymbol: "9999", Name: "下市股", Shares: 100},
 		},
 	}
@@ -93,8 +93,9 @@ func TestPortfolioSummaryTool(t *testing.T) {
 		"全部會員目前持有 2 檔(報價截至 2026-10-08):市值 100000 元、成本 90000 元,未實現損益 10000 元(11.11%),目前持股累計已領股利 500 元。",
 		"市值加權殖利率 4.5%(覆蓋 100% 市值);市值加權 F 分數 無。",
 		"產業分布:半導體業 100%(1 檔)、未分類 0%(1 檔)。",
-		"- 2330 台積電:2000 股,權重 100%,未實現 11.11%,殖利率 4.5%,F 分數 6",
-		"- 9999 下市股:100 股,權重 無,未實現 無,殖利率 無,F 分數 無",
+		"- 2330 台積電:2000 股,權重 100%,未實現 11.11%,殖利率 4.5%,F 分數 6,RS 79,外資連續賣超 6 天,投信連續買超 11 天",
+		"- 9999 下市股:100 股,權重 無,未實現 無,殖利率 無,F 分數 無,RS 無,外資連續天數無資料,投信連續天數無資料",
+		"RS(相對強度 1–99)截至 2026-10-14、法人連續天數截至 2026-10-13。",
 		"免責聲明",
 	} {
 		if !strings.Contains(summary, want) {
