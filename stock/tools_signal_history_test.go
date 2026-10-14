@@ -68,7 +68,7 @@ func sampleStockSignals() *StockSignalsEnvelope {
 			{Date: "2026-10-13", Indicator: "kd", Kind: "golden_cross", Description: "K 值向上穿越 D 值",
 				ClosingPrice: ptr(2540.0), ChangePercent: ptr(1.2)},
 			{Date: "2026-09-01", Indicator: "close_ma60", Kind: "cross_below", Description: "收盤價跌破 60 日均線(季線)",
-				ClosingPrice: ptr(2300.0), ChangePercent: ptr(-2.5), Return5d: ptr(-1.5), Return20d: ptr(4.25)},
+				ClosingPrice: ptr(2300.0), ChangePercent: ptr(-2.5), Return5d: ptr(-1.5), Return20d: ptr(4.25), Return240d: ptr(-12.5)},
 		},
 	}
 }
@@ -136,7 +136,7 @@ func TestAPIClientStockSignals(t *testing.T) {
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"stock_symbol":"2330","from":"2026-04-17","to":"2026-10-13","adjusted":true,"total":1,` +
 				`"items":[{"date":"2026-10-13","indicator":"kd","kind":"golden_cross","description":"K 值向上穿越 D 值",` +
-				`"closing_price":2540,"change_percent":null,"return_5d":1.5,"return_20d":null,"return_60d":null}]}`))
+				`"closing_price":2540,"change_percent":null,"return_5d":1.5,"return_20d":null,"return_60d":null,"return_120d":null,"return_240d":-3.25}]}`))
 		case "/api/v1/stocks/9999/signals":
 			w.WriteHeader(http.StatusNotFound)
 		default:
@@ -147,7 +147,8 @@ func TestAPIClientStockSignals(t *testing.T) {
 	client := NewAPIClient(server.URL, "secret", time.Second)
 
 	envelope, err := client.StockSignals(t.Context(), "2330", StockSignalsOptions{Days: 180, Limit: 30})
-	if err != nil || envelope.Total != 1 || *envelope.Items[0].Return5d != 1.5 || envelope.Items[0].Return20d != nil {
+	if err != nil || envelope.Total != 1 || *envelope.Items[0].Return5d != 1.5 || envelope.Items[0].Return20d != nil ||
+		envelope.Items[0].Return120d != nil || *envelope.Items[0].Return240d != -3.25 {
 		t.Fatalf("StockSignals() = %#v, %v", envelope, err)
 	}
 	if gotQuery.Encode() != "days=180&limit=30" {
@@ -328,8 +329,8 @@ func TestStockSignalHistorySummary(t *testing.T) {
 	summary := stockSignalHistorySummary(sampleStockSignals())
 	for _, want := range []string{
 		"股票 2330 在 2026-04-17～2026-10-13 的技術訊號(之後報酬為訊號日收盤到之後第 N 個交易日收盤,依除權息、減資、分割還原,等同含息):共 3 筆。",
-		"- 2026-10-13 KD 黃金交叉:收盤 2540 元、漲跌 1.2%;之後 5 日 未滿、20 日 未滿、60 日 未滿;K 值向上穿越 D 值",
-		"- 2026-09-01 跌破季線:收盤 2300 元、漲跌 -2.5%;之後 5 日 -1.5%、20 日 4.25%、60 日 未滿",
+		"- 2026-10-13 KD 黃金交叉:收盤 2540 元、漲跌 1.2%;之後 5 日 未滿、20 日 未滿、60 日 未滿、120 日 未滿、240 日 未滿;K 值向上穿越 D 值",
+		"- 2026-09-01 跌破季線:收盤 2300 元、漲跌 -2.5%;之後 5 日 -1.5%、20 日 4.25%、60 日 未滿、120 日 未滿、240 日 -12.5%",
 		"另有 1 筆未列出",
 		"免責聲明",
 	} {

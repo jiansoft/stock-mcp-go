@@ -1,6 +1,6 @@
 // Package stock 的 get_signal_performance 與 get_stock_signal_history 工具:技術訊號的歷史表現。
 //
-// 資料來自 stock_rust Data API 的 GET /api/v1/market/signals/performance(各訊號出現後 5/20/60 個
+// 資料來自 stock_rust Data API 的 GET /api/v1/market/signals/performance(各訊號出現後 5/20/60/120/240 個
 // 交易日的還原報酬平均、中位數、勝率與相對大盤的超額報酬)與 GET /api/v1/stocks/{symbol}/signals
 // (個股期間內出現過的訊號與之後的報酬)。報酬依除權息、減資、分割還原,等同含息報酬。
 package stock
@@ -83,6 +83,8 @@ type StockSignalItem struct {
 	Return5d      *float64 `json:"return_5d"`
 	Return20d     *float64 `json:"return_20d"`
 	Return60d     *float64 `json:"return_60d"`
+	Return120d    *float64 `json:"return_120d"`
+	Return240d    *float64 `json:"return_240d"`
 }
 
 // StockSignalsEnvelope 是 stocks/{symbol}/signals endpoint 的完整回應。
@@ -481,9 +483,10 @@ func stockSignalHistorySummary(e *StockSignalsEnvelope) string {
 		return formatFloat(*v) + "%"
 	}
 	for _, item := range e.Items {
-		b.printf("\n- %s %s:收盤 %s 元、漲跌 %s;之後 5 日 %s、20 日 %s、60 日 %s;%s",
+		b.printf("\n- %s %s:收盤 %s 元、漲跌 %s;之後 5 日 %s、20 日 %s、60 日 %s、120 日 %s、240 日 %s;%s",
 			item.Date, signalLabel(item.Indicator, item.Kind), displayFloat(item.ClosingPrice), displayPercent(item.ChangePercent),
-			notYet(item.Return5d), notYet(item.Return20d), notYet(item.Return60d), item.Description)
+			notYet(item.Return5d), notYet(item.Return20d), notYet(item.Return60d),
+			notYet(item.Return120d), notYet(item.Return240d), item.Description)
 	}
 	if rest := e.Total - len(e.Items); rest > 0 {
 		b.printf("\n另有 %d 筆未列出,可提高 limit 或加上 kind、indicator 篩選。", rest)
