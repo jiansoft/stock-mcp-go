@@ -1196,7 +1196,7 @@ func TestScreenStocksTool(t *testing.T) {
 			{Market: "twse"}, {Market: "tpex"}, {IndustryID: 24}, {ValuationBand: "undervalued"},
 			{MinRevenueYOYPercent: &zero}, {MinRevenueYOYStreak: ptr(1)}, {MinRevenueYOY3MPercent: &zero}, {MinMonthlyRevenue: &zero}, {MinEPS: &zero}, {MinROEPercent: &zero}, {MinDividendYieldPercent: &zero},
 			{MinFScore: ptr(0)}, {MinGrossMarginPercent: &zero}, {MaxDebtRatioPercent: &zero}, {PositiveFreeCashFlow: true},
-			{MinRSScore: ptr(1)},
+			{MinRSScore: ptr(1)}, {MinForeignStreak: ptr(1)}, {MinTrustStreak: ptr(60)},
 		}
 		for _, in := range cases {
 			f := &fakeStockScreener{result: empty}
@@ -1245,6 +1245,10 @@ func TestScreenStocksTool(t *testing.T) {
 			{"f score high", ScreenStocksInput{MinFScore: ptr(10)}},
 			{"rs score low", ScreenStocksInput{MinRSScore: ptr(0)}},
 			{"rs score high", ScreenStocksInput{MinRSScore: ptr(100)}},
+			{"foreign streak low", ScreenStocksInput{MinForeignStreak: ptr(0)}},
+			{"foreign streak high", ScreenStocksInput{MinForeignStreak: ptr(61)}},
+			{"trust streak low", ScreenStocksInput{MinTrustStreak: ptr(0)}},
+			{"trust streak high", ScreenStocksInput{MinTrustStreak: ptr(61)}},
 			{"gross margin", ScreenStocksInput{MinGrossMarginPercent: ptr(100.1)}},
 			{"debt ratio", ScreenStocksInput{MaxDebtRatioPercent: ptr(-0.1)}},
 			{"revenue NaN", ScreenStocksInput{MinRevenueYOYPercent: ptr(math.NaN())}},
@@ -1287,14 +1291,14 @@ func TestScreenStocksTool(t *testing.T) {
 			RevenueMonth: ptr("2026-06"), FinancialPeriod: ptr("2026-Q1"), ValuationDate: ptr("2026-07-16"), YieldDate: nil,
 			FScore: ptr(8), FScoreEvaluated: ptr(9), FScoreYear: ptr(2025), GrossMarginPercent: ptr(59.5),
 			DebtRatioPercent: ptr(30.9), FreeCashFlowTTM: ptr(int64(1_130_582_218)), HealthPeriod: ptr("2026-Q2"),
-			RSScore: ptr(91),
-		}}, RSAsOf: ptr("2026-10-13")}
+			RSScore: ptr(91), ForeignStreak: ptr(-2), TrustStreak: ptr(5),
+		}}, RSAsOf: ptr("2026-10-13"), ChipAsOf: ptr("2026-10-12")}
 		f := &fakeStockScreener{result: fixture}
-		res, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", IndustryID: 24, MinRevenueYOYStreak: ptr(3), MinRevenueYOY3MPercent: ptr(12.5), MinMonthlyRevenue: ptr(10000.0), MinEPS: ptr(5.0), MinFScore: ptr(7), PositiveFreeCashFlow: true, MinRSScore: ptr(80), SortBy: "dividend_yield", SortOrder: "desc"})
+		res, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", IndustryID: 24, MinRevenueYOYStreak: ptr(3), MinRevenueYOY3MPercent: ptr(12.5), MinMonthlyRevenue: ptr(10000.0), MinEPS: ptr(5.0), MinFScore: ptr(7), PositiveFreeCashFlow: true, MinRSScore: ptr(80), MinTrustStreak: ptr(5), SortBy: "dividend_yield", SortOrder: "desc"})
 		if err != nil {
 			t.Fatalf("不應失敗:%v", err)
 		}
-		for _, want := range []string{"2330", "26.9", "連續年增 7 個月", "近 3 月累計年增 31.25%", "最新月營收 4151.86 億元", "13.94", "2026-06", "2026-Q1", "2026-07-16", "殖利率日 無", "F 分數 8/9 項（2025 年）", "毛利率 59.5%", "負債比 30.9%", "近四季自由現金流 11305.82 億元", "相對強度 91（2026-10-13）", "季報指標期 2026-Q2", "不構成買賣建議", "不構成投資建議"} {
+		for _, want := range []string{"2330", "26.9", "連續年增 7 個月", "近 3 月累計年增 31.25%", "最新月營收 4151.86 億元", "13.94", "2026-06", "2026-Q1", "2026-07-16", "殖利率日 無", "F 分數 8/9 項（2025 年）", "毛利率 59.5%", "負債比 30.9%", "近四季自由現金流 11305.82 億元", "相對強度 91（2026-10-13）", "外資連續賣超 2 天、投信連續買超 5 天（2026-10-12）", "季報指標期 2026-Q2", "不構成買賣建議", "不構成投資建議"} {
 			if !strings.Contains(summaryOf(t, res), want) {
 				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
 			}
@@ -1317,6 +1321,15 @@ func TestScreenStocksTool(t *testing.T) {
 		}
 		if f.gotOpt.MinRSScore == nil || *f.gotOpt.MinRSScore != 80 {
 			t.Errorf("相對強度門檻未傳給 client:%+v", f.gotOpt)
+		}
+		if got["chip_as_of"] != "2026-10-12" || stock["foreign_streak"] != -2.0 || stock["trust_streak"] != 5.0 {
+			t.Errorf("連續買賣超未原樣保留:%v", got)
+		}
+		if f.gotOpt.MinTrustStreak == nil || *f.gotOpt.MinTrustStreak != 5 || f.gotOpt.MinForeignStreak != nil {
+			t.Errorf("連續買超門檻未傳給 client:%+v", f.gotOpt)
+		}
+		if streakDisplay(nil) != "連續天數無資料" || streakDisplay(ptr(0)) != "最新一天無買賣超" {
+			t.Error("streakDisplay 的 nil 與 0 文字錯誤")
 		}
 		if f.gotOpt.MinFScore == nil || *f.gotOpt.MinFScore != 7 || !f.gotOpt.PositiveFreeCashFlow {
 			t.Errorf("財務體質條件未傳給 client:%+v", f.gotOpt)

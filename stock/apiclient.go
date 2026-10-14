@@ -299,6 +299,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinRSScore != nil {
 		values.Set("min_rs_score", fmt.Sprint(*opt.MinRSScore))
 	}
+	if opt.MinForeignStreak != nil {
+		values.Set("min_foreign_streak", fmt.Sprint(*opt.MinForeignStreak))
+	}
+	if opt.MinTrustStreak != nil {
+		values.Set("min_trust_streak", fmt.Sprint(*opt.MinTrustStreak))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
