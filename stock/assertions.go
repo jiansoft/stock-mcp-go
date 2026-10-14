@@ -35,6 +35,8 @@ var (
 
 	_ ChipQuerier = (*APIClient)(nil)
 
+	_ RelativeStrengthQuerier = (*APIClient)(nil)
+
 	// 健康檢查必須支援,/readyz 才能真實反映後端狀態。
 	_ HealthChecker = (*APIClient)(nil)
 )
