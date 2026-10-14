@@ -357,6 +357,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, rts.relativeStrength)
 	}
 
+	if rs, ok := q.(RelativeStrengthHistoryQuerier); ok {
+		hts := &relativeStrengthHistoryToolset{rs: rs, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_relative_strength_history",
+			Description: "查詢指定股票近 N 個交易日(預設 60,最多 120)的相對強度(RS)走勢:每天以上市櫃全體計分(與 get_relative_strength_ranking 同一算法)的分數、名次," +
+				"以及期間最高/最低分、分數變化與穿越 50、80 分的轉折。適合回答「這檔股票是在變強還是變弱」「什麼時候轉強的」。" +
+				"上市未滿 240 個交易日的股票沒有分數。過去表現不代表未來結果。",
+			InputSchema: relativeStrengthHistorySchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, hts.relativeStrengthHistory)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
