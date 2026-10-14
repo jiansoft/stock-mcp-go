@@ -394,6 +394,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, fts.institutionalFlow)
 	}
 
+	if fq, ok := q.(IndustryFlowQuerier); ok {
+		its := &industryFlowToolset{fq: fq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_industry_flow",
+			Description: "查詢三大法人(外資、投信、自營商或合計)在最近 N 個交易日(預設 5,最多 60)於各產業的資金流向:" +
+				"產業合計估計淨買賣金額(個股每日淨股數×當日收盤價加總)、占產業成交金額比例、買超與賣超家數、買超與賣超金額最大的各 3 檔;" +
+				"依淨額排名,order=asc 先列淨流出最多的產業。適合回答「外資這週把錢放到哪些產業」「投信在加碼還是減碼半導體」。" +
+				"ETF 為獨立產業列。籌碼資料每晚 21:50 入庫。",
+			InputSchema: industryFlowSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, its.industryFlow)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
