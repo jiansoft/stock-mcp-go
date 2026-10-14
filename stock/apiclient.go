@@ -55,8 +55,12 @@ func (c *APIClient) LatestDailyQuote(ctx context.Context, symbol string) (*Lates
 }
 
 // PriceHistory 查詢歷史日線；404 轉為 ErrStockNotFound 以維持 db/api 模式語意一致。
-func (c *APIClient) PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int) ([]HistoricalQuote, error) {
+// adjusted 為 true 時要求 Data API 附上還原權值價格。
+func (c *APIClient) PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int, adjusted bool) ([]HistoricalQuote, error) {
 	values := url.Values{"limit": []string{fmt.Sprint(limit)}}
+	if adjusted {
+		values.Set("adjusted", "true")
+	}
 	if from != nil {
 		values.Set("from", from.Format("2006-01-02"))
 	}

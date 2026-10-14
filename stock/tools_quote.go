@@ -76,10 +76,11 @@ type SymbolInput struct {
 
 // PriceHistoryInput 是 get_price_history 工具的輸入參數型別。
 type PriceHistoryInput struct {
-	Symbol string `json:"symbol"`
-	From   string `json:"from,omitempty"`
-	To     string `json:"to,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Symbol   string `json:"symbol"`
+	From     string `json:"from,omitempty"`
+	To       string `json:"to,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	Adjusted bool   `json:"adjusted,omitempty"`
 }
 
 // searchStockSchema 描述 search_stock 工具的輸入參數形狀:query 是
@@ -148,6 +149,11 @@ func priceHistorySchema() *jsonschema.Schema {
 				Default:     []byte("30"),
 				Description: "最大回傳筆數(預設 30,範圍 1 至 365)",
 			},
+			"adjusted": {
+				Type:        "boolean",
+				Default:     []byte("false"),
+				Description: "是否附上還原權值價格(依除權息、減資、分割調整,以回傳區間最新一筆為基準;預設 false)",
+			},
 		},
 		Required: []string{"symbol"},
 	}
@@ -194,11 +200,13 @@ type LatestQuoteOutput struct {
 
 // PriceHistoryOutput 是 get_price_history 的 structuredContent。
 type PriceHistoryOutput struct {
-	DataKind   string            `json:"data_kind"`
-	DataAsOf   *string           `json:"data_as_of"`
-	IsRealtime bool              `json:"is_realtime"`
-	Disclaimer string            `json:"disclaimer"`
-	Quotes     []HistoricalQuote `json:"quotes"`
+	DataKind   string  `json:"data_kind"`
+	DataAsOf   *string `json:"data_as_of"`
+	IsRealtime bool    `json:"is_realtime"`
+	Disclaimer string  `json:"disclaimer"`
+	// Adjusted 表示每筆日線是否附上還原權值價格。
+	Adjusted bool              `json:"adjusted"`
+	Quotes   []HistoricalQuote `json:"quotes"`
 }
 
 // ProfileOutput 是 get_stock_profile 的 structuredContent。
@@ -330,7 +338,7 @@ func (ts *toolset) priceHistory(ctx context.Context, _ *mcp.CallToolRequest, in 
 		return nil, nil, err
 	}
 
-	quotes, err := ts.q.PriceHistory(ctx, symbol, from, to, limit)
+	quotes, err := ts.q.PriceHistory(ctx, symbol, from, to, limit, in.Adjusted)
 	if err != nil {
 		if errors.Is(err, ErrStockNotFound) {
 			return nil, nil, fmt.Errorf("找不到股票代號:%s", in.Symbol)
@@ -346,7 +354,11 @@ func (ts *toolset) priceHistory(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if len(quotes) == 0 {
 		summary = fmt.Sprintf("未找到股票 %s 的歷史日線資料。\n免責聲明:%s", symbol, Disclaimer)
 	} else {
-		summary = fmt.Sprintf("取得股票 %s 共 %d 筆歷史日線資料。\n免責聲明:%s", symbol, len(quotes), Disclaimer)
+		summary = fmt.Sprintf("取得股票 %s 共 %d 筆歷史日線資料。", symbol, len(quotes))
+		if in.Adjusted {
+			summary += "每筆附還原權值價格(adjusted),以最新一筆為基準。"
+		}
+		summary += "\n免責聲明:" + Disclaimer
 	}
 
 	// 查詢結果已依日期新到舊排序(見 apiclient.go 的
@@ -363,6 +375,7 @@ func (ts *toolset) priceHistory(ctx context.Context, _ *mcp.CallToolRequest, in 
 		DataAsOf:   dataAsOf,
 		IsRealtime: false,
 		Disclaimer: Disclaimer,
+		Adjusted:   in.Adjusted,
 		Quotes:     quotes,
 	}
 	return textResult(summary), out, nil

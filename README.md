@@ -49,7 +49,7 @@ stock-mcp-go
 | --- | --- | --- |
 | `search_stock` | API | Search by stock symbol or Chinese/English name |
 | `get_latest_daily_quote` | API | Get the latest available daily quote |
-| `get_price_history` | API | Query historical daily prices by date range |
+| `get_price_history` | API | Query historical daily prices by date range; `adjusted=true` adds dividend/split-adjusted OHLC and the cumulative factor |
 | `get_stock_profile` | API | Get company details, quote, EPS, ROE, book value, and price extremes |
 | `get_realtime_snapshot` | API | Get a third-party near-real-time snapshot; not guaranteed real-time |
 | `get_monthly_revenue_history` | API | Query monthly and cumulative revenue history |

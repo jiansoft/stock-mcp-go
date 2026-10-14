@@ -62,7 +62,7 @@ const errInternal = "伺服器內部發生未預期錯誤,請稍後再試。"
 type Querier interface {
 	SearchStock(ctx context.Context, query string, limit int) ([]Stock, error)
 	LatestDailyQuote(ctx context.Context, symbol string) (*LatestDailyQuote, error)
-	PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int) ([]HistoricalQuote, error)
+	PriceHistory(ctx context.Context, symbol string, from, to *time.Time, limit int, adjusted bool) ([]HistoricalQuote, error)
 	StockProfile(ctx context.Context, symbol string) (*Profile, error)
 }
 
@@ -111,8 +111,9 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	}, ts.latestDailyQuote)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_price_history",
-		Description: "查詢指定股票代號的歷史日線資料,可選填日期範圍與筆數上限。",
+		Name: "get_price_history",
+		Description: "查詢指定股票代號的歷史日線資料,可選填日期範圍與筆數上限。adjusted=true 時每筆附上依除權息、減資、分割還原的開高低收" +
+			"與累計還原因子(以回傳區間最新一筆為基準),適合比較長期漲跌、計算含息報酬或判斷除權息前後的價位。",
 		InputSchema: priceHistorySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.priceHistory)
