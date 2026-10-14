@@ -49,7 +49,7 @@ func (e2eQuerier) LatestDailyQuote(context.Context, string) (*stock.LatestDailyQ
 	return nil, nil // nil 代表查無此股票,工具應回 tool-level error
 }
 
-func (e2eQuerier) PriceHistory(context.Context, string, *time.Time, *time.Time, int) ([]stock.HistoricalQuote, error) {
+func (e2eQuerier) PriceHistory(context.Context, string, *time.Time, *time.Time, int, bool) ([]stock.HistoricalQuote, error) {
 	return []stock.HistoricalQuote{}, nil
 }
 

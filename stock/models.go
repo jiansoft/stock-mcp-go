@@ -159,6 +159,19 @@ type HistoricalQuote struct {
 	PriceEarningRatio *float64 `json:"price_earning_ratio"`
 	PriceToBookRatio  *float64 `json:"price_to_book_ratio"`
 	RecordTime        *string  `json:"record_time"`
+	// Adjusted 是還原權值價格;只有查詢帶 adjusted=true 且當天有成交時才有。
+	Adjusted *AdjustedPrices `json:"adjusted,omitempty"`
+}
+
+// AdjustedPrices 是依除權息、減資、分割還原後的價格,以回傳區間最新一筆有成交的
+// 日線為基準(實際價格);漲跌、均線、本益比等其他欄位仍是原始值。
+type AdjustedPrices struct {
+	// Factor 是累計還原因子(原始價格 × 因子 = 還原價),基準日之後沒有事件時為 1。
+	Factor       float64  `json:"factor"`
+	OpeningPrice *float64 `json:"opening_price"`
+	HighestPrice *float64 `json:"highest_price"`
+	LowestPrice  *float64 `json:"lowest_price"`
+	ClosingPrice float64  `json:"closing_price"`
 }
 
 // QuoteHistoryRecord 是系統收錄範圍內的歷史高低點(對應

@@ -36,7 +36,8 @@ type fakeQuerier struct {
 	// gotSymbol 記錄「最後一次被呼叫時,傳進來的股票代號實際上是什麼」,
 	// 讓測試可以驗證 tools.go 的 normalizeSymbol(trim + 轉大寫)有沒有
 	// 真的在呼叫 Querier 之前被套用。
-	gotSymbol string
+	gotSymbol   string
+	gotAdjusted bool
 }
 
 // 以下四個方法讓 *fakeQuerier 滿足 Querier 介面(Go 的隱式介面實作:
@@ -51,8 +52,9 @@ func (f *fakeQuerier) LatestDailyQuote(_ context.Context, symbol string) (*Lates
 	return f.latest, nil
 }
 
-func (f *fakeQuerier) PriceHistory(_ context.Context, symbol string, from, to *time.Time, limit int) ([]HistoricalQuote, error) {
+func (f *fakeQuerier) PriceHistory(_ context.Context, symbol string, from, to *time.Time, limit int, adjusted bool) ([]HistoricalQuote, error) {
 	f.gotSymbol = symbol
+	f.gotAdjusted = adjusted
 	return f.history, nil
 }
 
@@ -411,6 +413,31 @@ func TestPriceHistoryTool(t *testing.T) {
 		}
 		if got.DataKind != "price_history" {
 			t.Errorf("data_kind 不正確:%q", got.DataKind)
+		}
+		if got.Adjusted {
+			t.Error("未要求時 adjusted 應為 false")
+		}
+	})
+
+	t.Run("adjusted 傳給資料來源並寫進摘要", func(t *testing.T) {
+		fq := &fakeQuerier{history: []HistoricalQuote{{
+			Date:     ptr("2026-07-10"),
+			Adjusted: &AdjustedPrices{Factor: 0.9901, ClosingPrice: 100},
+		}}}
+		ts := newToolset(fq)
+		res, out, err := ts.priceHistory(t.Context(), nil, PriceHistoryInput{Symbol: "2330", Adjusted: true})
+		if err != nil {
+			t.Fatalf("預期成功,實際錯誤:%v", err)
+		}
+		if !fq.gotAdjusted {
+			t.Error("adjusted 應傳給資料來源")
+		}
+		got := out.(PriceHistoryOutput)
+		if !got.Adjusted || got.Quotes[0].Adjusted == nil || got.Quotes[0].Adjusted.ClosingPrice != 100 {
+			t.Errorf("還原價輸出不正確:%#v", got)
+		}
+		if !strings.Contains(summaryOf(t, res), "還原權值價格") {
+			t.Errorf("摘要應說明附還原價:%q", summaryOf(t, res))
 		}
 	})
 }
