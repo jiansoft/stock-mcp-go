@@ -344,6 +344,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.stockSignalHistory)
 	}
 
+	if rs, ok := q.(RelativeStrengthQuerier); ok {
+		rts := &relativeStrengthToolset{rs: rs, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_relative_strength_ranking",
+			Description: "查詢上市櫃股票的相對強度(RS)排行:加權報酬(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)" +
+				"在上市櫃全體中的百分位分數 1–99(99 最強)與名次,附近 20/60/120/240 日報酬;可依市場、產業篩選或只查單一股票," +
+				"order=asc 列出最弱的。適合回答「目前最強勢的股票有哪些」「半導體哪幾檔最強」「2330 的相對強度幾分」。" +
+				"上市未滿 240 個交易日的股票不計分。過去表現不代表未來結果。",
+			InputSchema: relativeStrengthSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, rts.relativeStrength)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
