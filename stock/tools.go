@@ -381,6 +381,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, ists.industryStrength)
 	}
 
+	if fq, ok := q.(InstitutionalFlowQuerier); ok {
+		fts := &institutionalFlowToolset{fq: fq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_institutional_flow_ranking",
+			Description: "查詢三大法人(外資、投信、自營商或合計)在最近 N 個交易日(預設 1,最多 60)的買超或賣超排行:" +
+				"累計淨買賣張數、估計淨買賣金額(每日淨股數×當日收盤價)、占期間成交量比例、買賣超天數與截至資料日的連續買賣超天數;" +
+				"可依市場、產業篩選。適合回答「外資今天買最多的是哪些股票」「投信這週在買什麼」「哪些股票被法人連續賣超」。" +
+				"籌碼資料每晚 21:50 入庫,在那之前最新資料是前一個交易日。",
+			InputSchema: institutionalFlowSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, fts.institutionalFlow)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
