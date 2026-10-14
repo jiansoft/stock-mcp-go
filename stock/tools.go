@@ -369,6 +369,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.relativeStrengthHistory)
 	}
 
+	if is, ok := q.(IndustryStrengthQuerier); ok {
+		ists := &industryStrengthToolset{is: is, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_industry_strength",
+			Description: "查詢各產業的相對強度(RS):成分股 RS 分數(與 get_relative_strength_ranking 相同,以上市櫃全體計算)的中位數、" +
+				"RS ≥ 80 的強勢占比與 ≤ 20 的弱勢占比、平均加權報酬、RS 前三名的領先股,以及與約 20 個交易日前中位數的變化;依中位數排名。" +
+				"適合回答「現在哪些產業最強勢」「資金輪動到哪裡」「哪些產業轉強或轉弱」。過去表現不代表未來結果。",
+			InputSchema: industryStrengthSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ists.industryStrength)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
