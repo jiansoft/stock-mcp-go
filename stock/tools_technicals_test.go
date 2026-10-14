@@ -134,6 +134,12 @@ func TestTechnicalsSummary(t *testing.T) {
 
 	e := sampleTechnicals(12)
 	e.Signals = []TechnicalSignal{{Indicator: "kd", Kind: "overbought", Description: "K 值 81.3,位於超買區(門檻 80)"}}
+	e.Adjusted = true
+	adjusted := technicalsSummary(e)
+	if !strings.Contains(adjusted, "股票 2330 技術指標(資料日 2026-10-12,價格已還原權值,除權息、減資、分割之前的價格依參考價調整,最新一日為實際價格)。") {
+		t.Errorf("還原權值的口徑說明錯誤:%s", adjusted)
+	}
+	e.Adjusted = false
 	summary := technicalsSummary(e)
 	for _, want := range []string{
 		"股票 2330 技術指標(資料日 2026-10-12,價格未還原除權息",

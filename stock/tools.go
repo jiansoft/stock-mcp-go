@@ -306,7 +306,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Name: "get_technical_indicators",
 			Description: "查詢指定股票截止日之前最近 N 個交易日(預設 20)的技術指標:5/10/20/60/120/240 日均線與乖離率、" +
 				"RSI(6/12/14)、KD(9,3,3)、MACD(12,26,9),以及最新一日的均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
-				"RSI 與 K 值超買超賣訊號。適合回答「技術面目前偏多還是偏空、有沒有交叉訊號」。價格未還原除權息。",
+				"RSI 與 K 值超買超賣訊號。適合回答「技術面目前偏多還是偏空、有沒有交叉訊號」。價格已還原權值,除權息跳空不會造成假訊號。",
 			InputSchema: technicalsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, tts.technicalIndicators)
@@ -318,7 +318,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Name: "get_signal_stocks",
 			Description: "查詢某交易日(預設最新)出現技術訊號的上市櫃股票:均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
 				"RSI(14) 與 K 值超買超賣、52 週新高新低;可依市場、訊號種類、訊號來源與產業篩選,依成交值由大到小排序,並附各訊號家數。" +
-				"適合回答「今天哪些股票創 52 週新高」「哪些半導體股 KD 黃金交叉」「哪些股票跌破季線」。價格未還原除權息。",
+				"適合回答「今天哪些股票創 52 週新高」「哪些半導體股 KD 黃金交叉」「哪些股票跌破季線」。訊號以還原權值的價格計算。",
 			InputSchema: signalsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.signalStocks)

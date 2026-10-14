@@ -2,7 +2,7 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/{symbol}/technicals:截止日之前最近
 // days 個交易日的均線(5/10/20/60/120/240)、乖離率、RSI(6/12/14)、KD(9,3,3)、MACD(12,26,9),
-// 以及最新一日的均線/KD/MACD 交叉、收盤站上或跌破月季年線與超買超賣訊號。價格未還原除權息。
+// 以及最新一日的均線/KD/MACD 交叉、收盤站上或跌破月季年線與超買超賣訊號。價格口徑依回應的 adjusted 說明。
 package stock
 
 import (
@@ -161,7 +161,11 @@ func technicalsSummary(e *TechnicalsEnvelope) string {
 		return b.String()
 	}
 	last := &e.Points[len(e.Points)-1]
-	b.printf("股票 %s 技術指標(資料日 %s,價格未還原除權息,除權息日可能出現跳空)。", e.StockSymbol, *e.DataAsOf)
+	basis := "價格未還原除權息,除權息日可能出現跳空"
+	if e.Adjusted {
+		basis = "價格已還原權值,除權息、減資、分割之前的價格依參考價調整,最新一日為實際價格"
+	}
+	b.printf("股票 %s 技術指標(資料日 %s,%s)。", e.StockSymbol, *e.DataAsOf, basis)
 	b.printf("\n收盤 %s 元;均線 MA5 %s、MA10 %s、MA20 %s、MA60 %s、MA120 %s、MA240 %s。",
 		formatFloat(last.Close), displayFloat(last.MA5), displayFloat(last.MA10), displayFloat(last.MA20),
 		displayFloat(last.MA60), displayFloat(last.MA120), displayFloat(last.MA240))

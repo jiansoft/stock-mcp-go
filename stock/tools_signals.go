@@ -2,7 +2,7 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/market/signals:收盤後預先計算的均線/KD/MACD
 // 黃金或死亡交叉、收盤站上或跌破月季年線、RSI(14)與 K 值超買超賣、52 週新高新低,
-// 可依市場、訊號種類、訊號來源與產業篩選,依成交值由大到小排序。價格未還原除權息。
+// 可依市場、訊號種類、訊號來源與產業篩選,依成交值由大到小排序。價格口徑依回應的 adjusted 說明。
 package stock
 
 import (
@@ -230,6 +230,14 @@ func (ts *signalsToolset) signalStocks(ctx context.Context, _ *mcp.CallToolReque
 	}, nil
 }
 
+// priceBasisText 依 Data API 的 adjusted 旗標說明計算訊號與指標用的價格口徑。
+func priceBasisText(adjusted bool) string {
+	if adjusted {
+		return "價格已還原權值"
+	}
+	return "價格未還原除權息"
+}
+
 // signalKindLabel 回傳訊號種類的中文名稱;未知種類回空字串。
 func signalKindLabel(kind string) string {
 	for _, known := range signalKinds {
@@ -265,7 +273,7 @@ func signalLabel(indicator, kind string) string {
 // signalsSummary 組出給模型閱讀的文字摘要:篩選條件、各訊號家數與依成交值列出的股票。
 func signalsSummary(e *SignalsEnvelope) string {
 	var b summaryBuilder
-	b.printf("%s 市場 %s 技術訊號(收盤後計算,價格未還原除權息)", e.Market, e.DataAsOf)
+	b.printf("%s 市場 %s 技術訊號(收盤後計算,%s)", e.Market, e.DataAsOf, priceBasisText(e.Adjusted))
 	var filters []string
 	if e.Industry != nil {
 		filters = append(filters, "產業「"+*e.Industry+"」")
