@@ -408,6 +408,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, its.industryFlow)
 	}
 
+	if mq, ok := q.(MarginRankingQuerier); ok {
+		mts := &marginRankingToolset{mq: mq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_margin_ranking",
+			Description: "查詢融資融券排行:最近 N 個交易日(預設 1,最多 60)融資增加或減少、融券增加或減少最多,或券資比最高" +
+				"(融資至少 100 張)的上市櫃股票,附融資與融券餘額(張)、增減、融資增減百分比、券資比與收盤價;可依市場、產業篩選。" +
+				"適合回答「哪些股票融資大增」「散戶在追哪些股票」「哪些股票券資比高、可能有軋空」。融資融券資料每晚 21:50 入庫。",
+			InputSchema: marginRankingSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, mts.marginRanking)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
