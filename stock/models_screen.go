@@ -41,14 +41,19 @@ type ScreenedStock struct {
 	DebtRatioPercent   *float64 `json:"debt_ratio_percent"`
 	FreeCashFlowTTM    *int64   `json:"free_cash_flow_ttm"`
 	HealthPeriod       *string  `json:"health_period"`
+	// RSScore 是相對強度分數 1–99(上市櫃全體百分位,資料日見 Screening.RSAsOf);
+	// 上市未滿 240 個交易日、暫停交易或尚無報酬資料時為 nil。
+	RSScore *int `json:"rs_score"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
 // 混合指標沒有單一正確資料日，所以 DataAsOf 依契約固定為 nil；資料日期
 // 放在每筆 ScreenedStock 內。Stocks 空結果仍必須序列化為 []。
 type Screening struct {
-	DataAsOf *string         `json:"data_as_of"`
-	Stocks   []ScreenedStock `json:"stocks"`
+	DataAsOf *string `json:"data_as_of"`
+	// RSAsOf 是 rs_score 的資料日;查無相對強度資料時為 nil。
+	RSAsOf *string         `json:"rs_as_of"`
+	Stocks []ScreenedStock `json:"stocks"`
 }
 
 // ScreenOptions 是條件選股固定白名單參數。
@@ -71,6 +76,7 @@ type ScreenOptions struct {
 	MinGrossMarginPercent   *float64
 	MaxDebtRatioPercent     *float64
 	PositiveFreeCashFlow    bool
+	MinRSScore              *int
 	SortBy                  string
 	SortOrder               string
 	Limit                   int

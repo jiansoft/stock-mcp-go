@@ -296,6 +296,9 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.PositiveFreeCashFlow {
 		values.Set("positive_free_cash_flow", "true")
 	}
+	if opt.MinRSScore != nil {
+		values.Set("min_rs_score", fmt.Sprint(*opt.MinRSScore))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {

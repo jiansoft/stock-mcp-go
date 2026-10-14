@@ -1196,6 +1196,7 @@ func TestScreenStocksTool(t *testing.T) {
 			{Market: "twse"}, {Market: "tpex"}, {IndustryID: 24}, {ValuationBand: "undervalued"},
 			{MinRevenueYOYPercent: &zero}, {MinRevenueYOYStreak: ptr(1)}, {MinRevenueYOY3MPercent: &zero}, {MinMonthlyRevenue: &zero}, {MinEPS: &zero}, {MinROEPercent: &zero}, {MinDividendYieldPercent: &zero},
 			{MinFScore: ptr(0)}, {MinGrossMarginPercent: &zero}, {MaxDebtRatioPercent: &zero}, {PositiveFreeCashFlow: true},
+			{MinRSScore: ptr(1)},
 		}
 		for _, in := range cases {
 			f := &fakeStockScreener{result: empty}
@@ -1210,8 +1211,8 @@ func TestScreenStocksTool(t *testing.T) {
 		}
 	})
 
-	t.Run("十二個 sort 欄位與兩方向固定白名單", func(t *testing.T) {
-		for _, sortBy := range []string{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio"} {
+	t.Run("十三個 sort 欄位與兩方向固定白名單", func(t *testing.T) {
+		for _, sortBy := range []string{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "rs_score"} {
 			for _, order := range []string{"asc", "desc"} {
 				f := &fakeStockScreener{result: empty}
 				_, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", SortBy: sortBy, SortOrder: order})
@@ -1242,6 +1243,8 @@ func TestScreenStocksTool(t *testing.T) {
 			{"monthly revenue negative", ScreenStocksInput{MinMonthlyRevenue: ptr(-1.0)}},
 			{"f score low", ScreenStocksInput{MinFScore: ptr(-1)}},
 			{"f score high", ScreenStocksInput{MinFScore: ptr(10)}},
+			{"rs score low", ScreenStocksInput{MinRSScore: ptr(0)}},
+			{"rs score high", ScreenStocksInput{MinRSScore: ptr(100)}},
 			{"gross margin", ScreenStocksInput{MinGrossMarginPercent: ptr(100.1)}},
 			{"debt ratio", ScreenStocksInput{MaxDebtRatioPercent: ptr(-0.1)}},
 			{"revenue NaN", ScreenStocksInput{MinRevenueYOYPercent: ptr(math.NaN())}},
@@ -1284,13 +1287,14 @@ func TestScreenStocksTool(t *testing.T) {
 			RevenueMonth: ptr("2026-06"), FinancialPeriod: ptr("2026-Q1"), ValuationDate: ptr("2026-07-16"), YieldDate: nil,
 			FScore: ptr(8), FScoreEvaluated: ptr(9), FScoreYear: ptr(2025), GrossMarginPercent: ptr(59.5),
 			DebtRatioPercent: ptr(30.9), FreeCashFlowTTM: ptr(int64(1_130_582_218)), HealthPeriod: ptr("2026-Q2"),
-		}}}
+			RSScore: ptr(91),
+		}}, RSAsOf: ptr("2026-10-13")}
 		f := &fakeStockScreener{result: fixture}
-		res, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", IndustryID: 24, MinRevenueYOYStreak: ptr(3), MinRevenueYOY3MPercent: ptr(12.5), MinMonthlyRevenue: ptr(10000.0), MinEPS: ptr(5.0), MinFScore: ptr(7), PositiveFreeCashFlow: true, SortBy: "dividend_yield", SortOrder: "desc"})
+		res, out, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{Market: "twse", IndustryID: 24, MinRevenueYOYStreak: ptr(3), MinRevenueYOY3MPercent: ptr(12.5), MinMonthlyRevenue: ptr(10000.0), MinEPS: ptr(5.0), MinFScore: ptr(7), PositiveFreeCashFlow: true, MinRSScore: ptr(80), SortBy: "dividend_yield", SortOrder: "desc"})
 		if err != nil {
 			t.Fatalf("不應失敗:%v", err)
 		}
-		for _, want := range []string{"2330", "26.9", "連續年增 7 個月", "近 3 月累計年增 31.25%", "最新月營收 4151.86 億元", "13.94", "2026-06", "2026-Q1", "2026-07-16", "殖利率日 無", "F 分數 8/9 項（2025 年）", "毛利率 59.5%", "負債比 30.9%", "近四季自由現金流 11305.82 億元", "季報指標期 2026-Q2", "不構成買賣建議", "不構成投資建議"} {
+		for _, want := range []string{"2330", "26.9", "連續年增 7 個月", "近 3 月累計年增 31.25%", "最新月營收 4151.86 億元", "13.94", "2026-06", "2026-Q1", "2026-07-16", "殖利率日 無", "F 分數 8/9 項（2025 年）", "毛利率 59.5%", "負債比 30.9%", "近四季自由現金流 11305.82 億元", "相對強度 91（2026-10-13）", "季報指標期 2026-Q2", "不構成買賣建議", "不構成投資建議"} {
 			if !strings.Contains(summaryOf(t, res), want) {
 				t.Errorf("摘要缺少 %q:%q", want, summaryOf(t, res))
 			}
@@ -1307,6 +1311,12 @@ func TestScreenStocksTool(t *testing.T) {
 			f.gotOpt.MinRevenueYOY3MPercent == nil || *f.gotOpt.MinRevenueYOY3MPercent != 12.5 ||
 			f.gotOpt.MinMonthlyRevenue == nil || *f.gotOpt.MinMonthlyRevenue != 10000 {
 			t.Errorf("營收動能條件未傳給 client:%+v", f.gotOpt)
+		}
+		if got["rs_as_of"] != "2026-10-13" || stock["rs_score"] != 91.0 {
+			t.Errorf("相對強度未原樣保留:%v", got)
+		}
+		if f.gotOpt.MinRSScore == nil || *f.gotOpt.MinRSScore != 80 {
+			t.Errorf("相對強度門檻未傳給 client:%+v", f.gotOpt)
 		}
 		if f.gotOpt.MinFScore == nil || *f.gotOpt.MinFScore != 7 || !f.gotOpt.PositiveFreeCashFlow {
 			t.Errorf("財務體質條件未傳給 client:%+v", f.gotOpt)
