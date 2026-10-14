@@ -329,7 +329,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		hts := &signalHistoryToolset{history: history, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_signal_performance",
-			Description: "統計一段期間(預設近一年,最長 1,096 天)內各技術訊號出現後 5/20/60 個交易日的表現:還原報酬(含息)的平均、" +
+			Description: "統計一段期間(預設近一年,最長 1,096 天)內各技術訊號出現後 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、" +
 				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選。" +
 				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」。過去表現不代表未來結果。",
 			InputSchema: signalPerformanceSchema(),
@@ -338,7 +338,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_stock_signal_history",
 			Description: "查詢指定股票一段期間(預設 180 天,最長 730 天)出現過的技術訊號,由新到舊,每筆附當日收盤、漲跌幅," +
-				"以及訊號之後 5/20/60 個交易日的還原報酬(未滿天期為未滿)。適合回答「這檔股票最近出現過哪些訊號」「上次跌破季線後走勢如何」。",
+				"以及訊號之後 5/20/60/120/240 個交易日的還原報酬(未滿天期為未滿)。適合回答「這檔股票最近出現過哪些訊號」「上次跌破季線後走勢如何」。",
 			InputSchema: stockSignalHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.stockSignalHistory)
