@@ -44,6 +44,10 @@ type ScreenedStock struct {
 	// RSScore 是相對強度分數 1–99(上市櫃全體百分位,資料日見 Screening.RSAsOf);
 	// 上市未滿 240 個交易日、暫停交易或尚無報酬資料時為 nil。
 	RSScore *int `json:"rs_score"`
+	// ForeignStreak、TrustStreak 是截至 Screening.ChipAsOf 的外資、投信連續買賣超天數:
+	// 正數連續買超、負數連續賣超、0 為當天沒有買賣;當天沒有籌碼資料時為 nil。
+	ForeignStreak *int `json:"foreign_streak"`
+	TrustStreak   *int `json:"trust_streak"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -52,8 +56,10 @@ type ScreenedStock struct {
 type Screening struct {
 	DataAsOf *string `json:"data_as_of"`
 	// RSAsOf 是 rs_score 的資料日;查無相對強度資料時為 nil。
-	RSAsOf *string         `json:"rs_as_of"`
-	Stocks []ScreenedStock `json:"stocks"`
+	RSAsOf *string `json:"rs_as_of"`
+	// ChipAsOf 是 foreign_streak、trust_streak 的資料日;查無籌碼資料時為 nil。
+	ChipAsOf *string         `json:"chip_as_of"`
+	Stocks   []ScreenedStock `json:"stocks"`
 }
 
 // ScreenOptions 是條件選股固定白名單參數。
@@ -77,6 +83,8 @@ type ScreenOptions struct {
 	MaxDebtRatioPercent     *float64
 	PositiveFreeCashFlow    bool
 	MinRSScore              *int
+	MinForeignStreak        *int
+	MinTrustStreak          *int
 	SortBy                  string
 	SortOrder               string
 	Limit                   int

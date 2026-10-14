@@ -46,6 +46,8 @@ type ScreenStocksInput struct {
 	MaxDebtRatioPercent     *float64 `json:"max_debt_ratio_percent,omitempty"`
 	PositiveFreeCashFlow    bool     `json:"positive_free_cash_flow,omitempty"`
 	MinRSScore              *int     `json:"min_rs_score,omitempty"`
+	MinForeignStreak        *int     `json:"min_foreign_streak,omitempty"`
+	MinTrustStreak          *int     `json:"min_trust_streak,omitempty"`
 	SortBy                  string   `json:"sort_by,omitempty"`
 	SortOrder               string   `json:"sort_order,omitempty"`
 	Limit                   int      `json:"limit,omitempty"`
@@ -93,6 +95,14 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(99.0),
 				Description: "最低相對強度分數(1–99;近 60/120/240 日還原報酬加權後在上市櫃全體的百分位,99 最強)",
 			},
+			"min_foreign_streak": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0),
+				Description: "外資至少連續買超幾個交易日(1–60,截至最新籌碼資料日)",
+			},
+			"min_trust_streak": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0),
+				Description: "投信至少連續買超幾個交易日(1–60,截至最新籌碼資料日)",
+			},
 			"sort_by": {
 				Type:        "string",
 				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "rs_score"},
@@ -123,6 +133,7 @@ type ScreeningOutput struct {
 	Disclaimer string          `json:"disclaimer"`
 	DataAsOf   *string         `json:"data_as_of"`
 	RSAsOf     *string         `json:"rs_as_of"`
+	ChipAsOf   *string         `json:"chip_as_of"`
 	Stocks     []ScreenedStock `json:"stocks"`
 }
 
@@ -183,13 +194,19 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MinRSScore != nil && (*in.MinRSScore < 1 || *in.MinRSScore > 99) {
 		return nil, nil, fmt.Errorf("參數 min_rs_score 必須介於 1 到 99 之間")
 	}
+	if in.MinForeignStreak != nil && (*in.MinForeignStreak < 1 || *in.MinForeignStreak > 60) {
+		return nil, nil, fmt.Errorf("參數 min_foreign_streak 必須介於 1 到 60 之間")
+	}
+	if in.MinTrustStreak != nil && (*in.MinTrustStreak < 1 || *in.MinTrustStreak > 60) {
+		return nil, nil, fmt.Errorf("參數 min_trust_streak 必須介於 1 到 60 之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
 	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
 		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
-		in.MinRSScore != nil
+		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -224,7 +241,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinROEPercent: in.MinROEPercent, MinDividendYieldPercent: in.MinDividendYieldPercent,
 		MinFScore: in.MinFScore, MinGrossMarginPercent: in.MinGrossMarginPercent,
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
-		MinRSScore: in.MinRSScore, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
+		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)
@@ -234,19 +252,28 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
 			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
 			displayPercent(first.GrossMarginPercent), displayPercent(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
 			displayInt(first.RSScore), displayString(envelope.RSAsOf),
+			streakDisplay(first.ForeignStreak), streakDisplay(first.TrustStreak), displayString(envelope.ChipAsOf),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
 	}
 	return textResult(summary), ScreeningOutput{
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
-		DataAsOf: envelope.DataAsOf, RSAsOf: envelope.RSAsOf, Stocks: envelope.Stocks,
+		DataAsOf: envelope.DataAsOf, RSAsOf: envelope.RSAsOf, ChipAsOf: envelope.ChipAsOf, Stocks: envelope.Stocks,
 	}, nil
+}
+
+// streakDisplay 把連續買賣超天數轉成文字;nil 回「連續天數無資料」。
+func streakDisplay(days *int) string {
+	if days == nil {
+		return "連續天數無資料"
+	}
+	return streakText(int64(*days))
 }
 
 // thousandsToHundredMillion 把千元金額換算成「X 億元」;nil 回「無」。

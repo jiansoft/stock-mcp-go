@@ -188,8 +188,9 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Name: "screen_stocks",
 			Description: "依固定白名單條件篩選股票:市場、產業、估值區間、營收年增率、" +
 				"營收動能(連續年增月數下限、近 3 個月累計年增率下限)、最新月營收下限(排除低基期)、EPS、ROE、殖利率," +
-				"以及財務體質(Piotroski F 分數下限、最新一季毛利率下限與負債比上限、近四季自由現金流為正)。" +
-				"可依上述指標排序(含連續年增月數、近 3 月累計年增率、F 分數、毛利率、負債比)。只描述符合條件的歷史資料,不替使用者做投資決策。",
+				"財務體質(Piotroski F 分數下限、最新一季毛利率下限與負債比上限、近四季自由現金流為正)、" +
+				"相對強度分數下限,以及外資、投信連續買超天數下限(每檔附連續買賣超天數)。" +
+				"可依上述指標排序(含連續年增月數、近 3 月累計年增率、F 分數、毛利率、負債比、相對強度)。只描述符合條件的歷史資料,不替使用者做投資決策。",
 			InputSchema: screenStocksSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.screenStocks)
