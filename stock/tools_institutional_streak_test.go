@@ -138,7 +138,7 @@ func TestInstitutionalStreakTool(t *testing.T) {
 	}
 	for _, bad := range []InstitutionalStreakInput{
 		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-06-30", To: "2026-01-01"}, {From: "2016-01-01", To: "2026-01-02"},
-		{Investor: "retail"}, {Side: "hold"}, {Streak: 21}, {Streak: -1}, {Market: "otc"}, {Industry: strings.Repeat("產", 21)},
+		{Investor: "retail"}, {Side: "hold"}, {Streak: 61}, {Streak: -1}, {Market: "otc"}, {Industry: strings.Repeat("產", 21)},
 		{GroupBy: "week"},
 	} {
 		if _, _, err := newToolset(f).institutionalStreakPerformance(t.Context(), nil, bad); err == nil {
@@ -220,7 +220,7 @@ func TestInstitutionalStreakToolIsRegisteredReadOnly(t *testing.T) {
 		t.Error("tools/list 缺少 get_institutional_streak_performance")
 	}
 	schema := institutionalStreakSchema()
-	if len(schema.Properties["investor"].Enum) != 4 || len(schema.Properties["side"].Enum) != 2 || *schema.Properties["streak"].Maximum != 20 {
-		t.Error("investor 應有 4 個列舉、side 應有 2 個列舉、streak 上限 20")
+	if len(schema.Properties["investor"].Enum) != 4 || len(schema.Properties["side"].Enum) != 2 || *schema.Properties["streak"].Maximum != 60 {
+		t.Error("investor 應有 4 個列舉、side 應有 2 個列舉、streak 上限 60")
 	}
 }

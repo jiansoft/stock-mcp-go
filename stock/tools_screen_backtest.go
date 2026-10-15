@@ -268,8 +268,8 @@ func backtestStreakSchema(investor string) *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:        "integer",
 		Minimum:     ptr(1.0),
-		Maximum:     ptr(20.0),
-		Description: "只選換股當天" + investor + "已連續買超至少這麼多天的股票(選填,1 至 20),算法同 get_institutional_flow_ranking",
+		Maximum:     ptr(float64(maxStreakDays)),
+		Description: "只選換股當天" + investor + "已連續買超至少這麼多天的股票(選填,1 至 60),算法同 get_institutional_flow_ranking",
 	}
 }
 

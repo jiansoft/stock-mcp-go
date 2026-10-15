@@ -223,7 +223,7 @@ func TestSignalPerformanceTool(t *testing.T) {
 		{Market: "otc"}, {From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"},
 		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakout"}, {Indicator: "ma1"},
 		{Industry: strings.Repeat("業", 21)}, {MinRSScore: 100}, {MaxRSScore: -1}, {MinRSScore: 81, MaxRSScore: 80},
-		{MinForeignStreak: 21}, {MinTrustStreak: -1}, {GroupBy: "month"}, {From: "2019-01-02"},
+		{MinForeignStreak: 61}, {MinTrustStreak: -1}, {GroupBy: "month"}, {From: "2019-01-02"},
 		{From: "2016-10-12", To: "2026-10-13", Indicator: "kd"},
 	} {
 		if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, bad); err == nil {
