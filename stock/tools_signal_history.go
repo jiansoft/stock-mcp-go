@@ -39,6 +39,21 @@ type SignalPerformanceItem struct {
 	Kind        string        `json:"kind"`
 	Occurrences int           `json:"occurrences"`
 	Horizons    []HorizonStat `json:"horizons"`
+	// Years 是 group_by=year 時各年度的表現,由舊到新;未拆分為 nil。
+	Years []PerformanceYear `json:"years"`
+}
+
+// PerformanceYear 是某一年度(訊號或事件日所在年度)的表現統計。
+type PerformanceYear struct {
+	Year        int           `json:"year"`
+	Occurrences int           `json:"occurrences"`
+	Horizons    []HorizonStat `json:"horizons"`
+}
+
+// BenchmarkYear 是某一年度的大盤基準。
+type BenchmarkYear struct {
+	Year      int             `json:"year"`
+	Benchmark []BenchmarkStat `json:"benchmark"`
 }
 
 // BenchmarkStat 是大盤基準:期間內同市場全部股票的平均報酬。
@@ -60,11 +75,15 @@ type SignalPerformanceEnvelope struct {
 	MinRSScore *int    `json:"min_rs_score"`
 	MaxRSScore *int    `json:"max_rs_score"`
 	// MinForeignStreak、MinTrustStreak 是外資、投信連續買超天數下限;未篩選為 nil。
-	MinForeignStreak *int                    `json:"min_foreign_streak"`
-	MinTrustStreak   *int                    `json:"min_trust_streak"`
-	Adjusted         bool                    `json:"adjusted"`
-	Benchmark        []BenchmarkStat         `json:"benchmark"`
-	Items            []SignalPerformanceItem `json:"items"`
+	MinForeignStreak *int `json:"min_foreign_streak"`
+	MinTrustStreak   *int `json:"min_trust_streak"`
+	// GroupBy 是拆分方式("year");未拆分為 nil。
+	GroupBy   *string         `json:"group_by"`
+	Adjusted  bool            `json:"adjusted"`
+	Benchmark []BenchmarkStat `json:"benchmark"`
+	// BenchmarkByYear 是 group_by=year 時各年度的大盤基準;未拆分為 nil。
+	BenchmarkByYear []BenchmarkYear         `json:"benchmark_by_year"`
+	Items           []SignalPerformanceItem `json:"items"`
 }
 
 // SignalPerformanceOptions 是訊號績效的查詢條件;空字串與 0 代表不篩選或使用預設。
@@ -80,6 +99,8 @@ type SignalPerformanceOptions struct {
 	// MinForeignStreak、MinTrustStreak 為 0 代表不篩選。
 	MinForeignStreak int
 	MinTrustStreak   int
+	// GroupBy 為 "year" 時依年度拆分;空字串代表不拆分。
+	GroupBy string
 }
 
 // StockSignalItem 是個股某日出現的訊號與之後的表現;缺值或未滿天期時為 nil。
@@ -126,7 +147,9 @@ type SignalHistoryQuerier interface {
 // (日期、期間與列舉值在工具層已驗證)。
 func (c *APIClient) SignalPerformance(ctx context.Context, opt SignalPerformanceOptions) (*SignalPerformanceEnvelope, error) {
 	values := url.Values{"market": []string{opt.Market}}
-	for key, value := range map[string]string{"from": opt.From, "to": opt.To, "kind": opt.Kind, "indicator": opt.Indicator, "industry": opt.Industry} {
+	for key, value := range map[string]string{
+		"from": opt.From, "to": opt.To, "kind": opt.Kind, "indicator": opt.Indicator, "industry": opt.Industry, "group_by": opt.GroupBy,
+	} {
 		if value != "" {
 			values.Set(key, value)
 		}
@@ -186,6 +209,8 @@ type SignalPerformanceInput struct {
 	// MinForeignStreak、MinTrustStreak 是訊號當天外資、投信連續買超天數下限(1 至 20)。
 	MinForeignStreak int `json:"min_foreign_streak,omitempty"`
 	MinTrustStreak   int `json:"min_trust_streak,omitempty"`
+	// GroupBy 為 "year" 時依年度拆分。
+	GroupBy string `json:"group_by,omitempty"`
 }
 
 // SignalPerformanceOutput 是訊號績效 envelope 加上 MCP 分析中繼資料。
@@ -268,8 +293,55 @@ func signalPerformanceSchema() *jsonschema.Schema {
 			"max_rs_score":       rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不高於此值的訊號(選填,1 至 99)"),
 			"min_foreign_streak": streakBoundSchema("外資(不含外資自營商)"),
 			"min_trust_streak":   streakBoundSchema("投信"),
+			"group_by":           groupBySchema("訊號"),
 		},
 	}
+}
+
+// groupBySchema 描述依年度拆分的參數。
+func groupBySchema(target string) *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "string",
+		Enum: []any{"year"},
+		Description: "選填;設為 year 時除了整段期間,再依" + target + "日所在年度拆分統計(各年度的次數、報酬與大盤基準)," +
+			"用來看在多頭、空頭年份是否都有效;未提供為不拆分",
+	}
+}
+
+// normalizeGroupBy 整理 group_by:空字串為不拆分,只接受 year。
+func normalizeGroupBy(raw string) (string, error) {
+	groupBy := strings.ToLower(strings.TrimSpace(raw))
+	if groupBy != "" && groupBy != "year" {
+		return "", fmt.Errorf("參數 group_by 只支援 year,收到了 %q", raw)
+	}
+	return groupBy, nil
+}
+
+// yearlyLines 組出各年度的表現,一年一行;沒有樣本的天期略過。
+func yearlyLines(years []PerformanceYear) []string {
+	lines := make([]string, 0, len(years))
+	for _, year := range years {
+		parts := make([]string, 0, len(year.Horizons))
+		for _, h := range year.Horizons {
+			if h.Samples > 0 {
+				parts = append(parts, horizonText(h))
+			}
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "各天期尚無樣本")
+		}
+		lines = append(lines, fmt.Sprintf("%d 年(出現 %d 次):%s", year.Year, year.Occurrences, strings.Join(parts, ";")))
+	}
+	return lines
+}
+
+// benchmarkByYearText 組出各年度的大盤基準,一年一段。
+func benchmarkByYearText(years []BenchmarkYear) string {
+	parts := make([]string, 0, len(years))
+	for _, year := range years {
+		parts = append(parts, fmt.Sprintf("%d 年 %s", year.Year, benchmarkText(year.Benchmark)))
+	}
+	return strings.Join(parts, "。")
 }
 
 // rsScoreBoundSchema 描述相對強度分數上下限參數:1 至 99 的整數。
@@ -429,10 +501,14 @@ func (ts *signalHistoryToolset) signalPerformance(ctx context.Context, _ *mcp.Ca
 	if err := validateStreakBounds(in.MinForeignStreak, in.MinTrustStreak); err != nil {
 		return nil, nil, err
 	}
+	groupBy, err := normalizeGroupBy(in.GroupBy)
+	if err != nil {
+		return nil, nil, err
+	}
 	envelope, err := ts.history.SignalPerformance(ctx, SignalPerformanceOptions{
 		From: from, To: to, Market: market, Kind: kind, Indicator: indicator, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
-		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
+		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak, GroupBy: groupBy,
 	})
 	if err != nil {
 		switch {
@@ -548,6 +624,9 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	if len(e.Benchmark) > 0 {
 		b.printf("\n大盤基準:%s。", benchmarkText(e.Benchmark))
 	}
+	if len(e.BenchmarkByYear) > 0 {
+		b.printf("\n各年度大盤基準:%s。", benchmarkByYearText(e.BenchmarkByYear))
+	}
 	if len(e.Items) == 0 {
 		b.printf("\n期間內沒有符合條件的訊號。")
 	}
@@ -557,6 +636,9 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 			parts = append(parts, horizonText(h))
 		}
 		b.printf("\n- %s(出現 %d 次):%s", signalLabel(item.Indicator, item.Kind), item.Occurrences, strings.Join(parts, ";"))
+		for _, line := range yearlyLines(item.Years) {
+			b.printf("\n  - %s", line)
+		}
 	}
 	b.printf("\n過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()

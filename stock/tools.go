@@ -334,8 +334,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Description: "統計一段期間(預設近一年,最長 1,096 天)內各技術訊號出現後 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、" +
 				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選," +
 				"也可只看訊號當天相對強度(RS)分數在指定區間(例如 RS ≥ 80 的強勢股創新高),或外資/投信已連續買超 N 天的訊號" +
-				"(例如投信連買 3 天以上時的 52 週新高)。" +
-				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」。過去表現不代表未來結果。",
+				"(例如投信連買 3 天以上時的 52 週新高)。group_by=year 時另附各年度的統計與大盤基準,用來看訊號在多頭、空頭年份是否都有效。" +
+				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」「這個訊號是不是只在某幾年有用」。過去表現不代表未來結果。",
 			InputSchema: signalPerformanceSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.signalPerformance)
@@ -406,7 +406,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 				" 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例," +
 				"並附大盤基準;可依市場、產業篩選。每檔股票連續滿 N 天的那一天算一次事件,延續的天數不重複計算。" +
 				"適合回答「投信連買 3 天之後通常會漲嗎」「外資連賣 5 天後是不是該避開」「跟著法人買在半導體有沒有超額報酬」。" +
-				"籌碼資料從 2022-10 起,之前的事件不列入。過去表現不代表未來結果。",
+				"group_by=year 時另附各年度的統計與大盤基準。籌碼資料從 2022-10 起,之前的事件不列入。過去表現不代表未來結果。",
 			InputSchema: institutionalStreakSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.institutionalStreakPerformance)

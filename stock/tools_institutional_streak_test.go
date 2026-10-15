@@ -80,11 +80,11 @@ func TestAPIClientInstitutionalStreakPerformance(t *testing.T) {
 	if gotPath != "/api/v1/market/institutional-streak/performance" || gotQuery.Encode() != "investor=foreign&market=all&side=buy&streak=3" {
 		t.Fatalf("未指定起訖與產業不應帶參數:%s?%s", gotPath, gotQuery.Encode())
 	}
-	opt = InstitutionalStreakOptions{From: "2026-01-01", To: "2026-06-30", Investor: "trust", Side: "sell", Streak: 5, Market: "twse", Industry: "半導體業"}
+	opt = InstitutionalStreakOptions{From: "2026-01-01", To: "2026-06-30", Investor: "trust", Side: "sell", Streak: 5, Market: "twse", Industry: "半導體業", GroupBy: "year"}
 	if _, err := client.InstitutionalStreakPerformance(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
 	}
-	if gotQuery.Get("from") != "2026-01-01" || gotQuery.Get("to") != "2026-06-30" || gotQuery.Get("industry") != "半導體業" || gotQuery.Get("streak") != "5" {
+	if gotQuery.Get("from") != "2026-01-01" || gotQuery.Get("to") != "2026-06-30" || gotQuery.Get("industry") != "半導體業" || gotQuery.Get("streak") != "5" || gotQuery.Get("group_by") != "year" {
 		t.Fatalf("query string 錯誤:%s", gotQuery.Encode())
 	}
 	opt.Market = "tpex"
@@ -128,17 +128,18 @@ func TestInstitutionalStreakTool(t *testing.T) {
 		}
 	}
 
-	in := InstitutionalStreakInput{From: "2026-01-01", To: "2026-06-30", Investor: " TOTAL ", Side: " Sell ", Streak: 20, Market: " TPEX ", Industry: " 半導體業 "}
+	in := InstitutionalStreakInput{From: "2026-01-01", To: "2026-06-30", Investor: " TOTAL ", Side: " Sell ", Streak: 20, Market: " TPEX ", Industry: " 半導體業 ", GroupBy: "year"}
 	if _, _, err := newToolset(f).institutionalStreakPerformance(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
-	want := InstitutionalStreakOptions{From: "2026-01-01", To: "2026-06-30", Investor: "total", Side: "sell", Streak: 20, Market: "tpex", Industry: "半導體業"}
+	want := InstitutionalStreakOptions{From: "2026-01-01", To: "2026-06-30", Investor: "total", Side: "sell", Streak: 20, Market: "tpex", Industry: "半導體業", GroupBy: "year"}
 	if f.got != want {
 		t.Fatalf("參數應整理後傳給 API:%#v", f.got)
 	}
 	for _, bad := range []InstitutionalStreakInput{
 		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-06-30", To: "2026-01-01"}, {From: "2020-01-01", To: "2026-01-01"},
 		{Investor: "retail"}, {Side: "hold"}, {Streak: 21}, {Streak: -1}, {Market: "otc"}, {Industry: strings.Repeat("產", 21)},
+		{GroupBy: "week"},
 	} {
 		if _, _, err := newToolset(f).institutionalStreakPerformance(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -170,6 +171,22 @@ func TestInstitutionalStreakSummary(t *testing.T) {
 	}
 	if strings.Contains(sell, "大盤基準") || strings.Contains(sell, "事件之後") {
 		t.Errorf("沒有基準與事件時不應列出:%s", sell)
+	}
+
+	yearly := sampleInstitutionalStreak()
+	yearly.GroupBy = ptr("year")
+	yearly.BenchmarkByYear = []BenchmarkYear{{Year: 2025, Benchmark: []BenchmarkStat{{Days: 5, Samples: 10, AvgReturn: ptr(0.3), WinRate: ptr(0.5)}}}}
+	yearly.Years = []PerformanceYear{{Year: 2025, Occurrences: 300, Horizons: []HorizonStat{
+		{Days: 5, Samples: 300, AvgReturn: ptr(0.9), MedianReturn: ptr(0.2), WinRate: ptr(0.52), AvgExcessReturn: ptr(0.6), BeatMarketRate: ptr(0.5)},
+	}}}
+	text := institutionalStreakSummary(yearly)
+	for _, want := range []string{
+		"各年度大盤基準:2025 年 5 日 平均 0.3%、上漲比例 50%。",
+		"\n- 2025 年(出現 300 次):5 日 平均 0.9%、中位數 0.2%、勝率 52%、超額 0.6%、勝過大盤 50%(樣本 300)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("年度摘要缺少 %q:%s", want, text)
+		}
 	}
 }
 
