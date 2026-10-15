@@ -30,6 +30,10 @@ type InstitutionalStreakEnvelope struct {
 	Occurrences int             `json:"occurrences"`
 	Horizons    []HorizonStat   `json:"horizons"`
 	Benchmark   []BenchmarkStat `json:"benchmark"`
+	// GroupBy、Years、BenchmarkByYear 是 group_by=year 時的拆分方式、各年度表現與大盤基準;未拆分為 nil。
+	GroupBy         *string           `json:"group_by"`
+	Years           []PerformanceYear `json:"years"`
+	BenchmarkByYear []BenchmarkYear   `json:"benchmark_by_year"`
 }
 
 // InstitutionalStreakOptions 是法人連續買賣超報酬統計的查詢條件;From、To、Industry 空字串代表不指定。
@@ -41,6 +45,8 @@ type InstitutionalStreakOptions struct {
 	Streak   int
 	Market   string
 	Industry string
+	// GroupBy 為 "year" 時依年度拆分;空字串代表不拆分。
+	GroupBy string
 }
 
 // InstitutionalStreakQuerier 是 get_institutional_streak_performance 對資料來源的需求介面;只有 *APIClient 實作。
@@ -57,7 +63,7 @@ func (c *APIClient) InstitutionalStreakPerformance(ctx context.Context, opt Inst
 		"streak":   []string{fmt.Sprint(opt.Streak)},
 		"market":   []string{opt.Market},
 	}
-	for key, value := range map[string]string{"from": opt.From, "to": opt.To, "industry": opt.Industry} {
+	for key, value := range map[string]string{"from": opt.From, "to": opt.To, "industry": opt.Industry, "group_by": opt.GroupBy} {
 		if value != "" {
 			values.Set(key, value)
 		}
@@ -86,6 +92,7 @@ type InstitutionalStreakInput struct {
 	Streak   int    `json:"streak,omitempty"`
 	Market   string `json:"market,omitempty"`
 	Industry string `json:"industry,omitempty"`
+	GroupBy  string `json:"group_by,omitempty"`
 }
 
 // InstitutionalStreakOutput 是法人連續買賣超報酬統計 envelope 加上 MCP 分析中繼資料。
@@ -131,6 +138,7 @@ func institutionalStreakSchema() *jsonschema.Schema {
 				MaxLength:   ptr(20),
 				Description: "只統計這個產業的事件(選填),需為完整產業名稱,例如「半導體業」;大盤基準不受影響",
 			},
+			"group_by": groupBySchema("事件"),
 		},
 	}
 }
@@ -177,8 +185,12 @@ func (ts *institutionalStreakToolset) institutionalStreakPerformance(ctx context
 	if err := validateLength(industry, "industry", 0, 20); err != nil {
 		return nil, nil, err
 	}
+	groupBy, err := normalizeGroupBy(in.GroupBy)
+	if err != nil {
+		return nil, nil, err
+	}
 	envelope, err := ts.sq.InstitutionalStreakPerformance(ctx, InstitutionalStreakOptions{
-		From: from, To: to, Investor: investor, Side: side, Streak: streak, Market: market, Industry: industry,
+		From: from, To: to, Investor: investor, Side: side, Streak: streak, Market: market, Industry: industry, GroupBy: groupBy,
 	})
 	if err != nil {
 		switch {
@@ -211,6 +223,9 @@ func institutionalStreakSummary(e *InstitutionalStreakEnvelope) string {
 	if len(e.Benchmark) > 0 {
 		b.printf("\n大盤基準:%s。", benchmarkText(e.Benchmark))
 	}
+	if len(e.BenchmarkByYear) > 0 {
+		b.printf("\n各年度大盤基準:%s。", benchmarkByYearText(e.BenchmarkByYear))
+	}
 	if e.Occurrences == 0 {
 		b.printf("\n期間內沒有符合條件的事件。")
 	} else {
@@ -219,6 +234,9 @@ func institutionalStreakSummary(e *InstitutionalStreakEnvelope) string {
 			parts = append(parts, horizonText(h))
 		}
 		b.printf("\n事件之後:%s。", strings.Join(parts, ";"))
+		for _, line := range yearlyLines(e.Years) {
+			b.printf("\n- %s", line)
+		}
 	}
 	b.printf("\n籌碼資料從 2022-10 起,之前的事件不列入。過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()

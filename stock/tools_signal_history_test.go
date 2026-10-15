@@ -126,8 +126,14 @@ func TestAPIClientSignalPerformance(t *testing.T) {
 	if _, err := client.SignalPerformance(t.Context(), SignalPerformanceOptions{Market: "all", MinForeignStreak: 3, MinTrustStreak: 2}); err != nil {
 		t.Fatalf("籌碼條件不應失敗:%v", err)
 	}
-	if gotQuery.Get("min_foreign_streak") != "3" || gotQuery.Get("min_trust_streak") != "2" || gotQuery.Has("min_rs_score") {
+	if gotQuery.Get("min_foreign_streak") != "3" || gotQuery.Get("min_trust_streak") != "2" || gotQuery.Has("min_rs_score") || gotQuery.Has("group_by") {
 		t.Fatalf("籌碼條件應帶入 query、未設的不帶:%s", gotQuery.Encode())
+	}
+	if _, err := client.SignalPerformance(t.Context(), SignalPerformanceOptions{Market: "all", GroupBy: "year"}); err != nil {
+		t.Fatalf("依年度拆分不應失敗:%v", err)
+	}
+	if gotQuery.Get("group_by") != "year" {
+		t.Fatalf("group_by 應帶入 query:%s", gotQuery.Encode())
 	}
 	if _, err := client.SignalPerformance(t.Context(), SignalPerformanceOptions{Market: "all", Industry: "沒資料"}); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -205,11 +211,11 @@ func TestSignalPerformanceTool(t *testing.T) {
 		t.Fatalf("摘要內容錯誤:%s", text)
 	}
 
-	in := SignalPerformanceInput{From: "2023-10-14", To: "2026-10-13", Market: " TPEX ", Kind: " new_high ", Indicator: "52_week", Industry: " 半導體業 ", MinRSScore: 80, MaxRSScore: 80, MinForeignStreak: 1, MinTrustStreak: 20}
+	in := SignalPerformanceInput{From: "2023-10-14", To: "2026-10-13", Market: " TPEX ", Kind: " new_high ", Indicator: "52_week", Industry: " 半導體業 ", MinRSScore: 80, MaxRSScore: 80, MinForeignStreak: 1, MinTrustStreak: 20, GroupBy: " Year "}
 	if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
-	want := SignalPerformanceOptions{From: "2023-10-14", To: "2026-10-13", Market: "tpex", Kind: "new_high", Indicator: "52_week", Industry: "半導體業", MinRSScore: 80, MaxRSScore: 80, MinForeignStreak: 1, MinTrustStreak: 20}
+	want := SignalPerformanceOptions{From: "2023-10-14", To: "2026-10-13", Market: "tpex", Kind: "new_high", Indicator: "52_week", Industry: "半導體業", MinRSScore: 80, MaxRSScore: 80, MinForeignStreak: 1, MinTrustStreak: 20, GroupBy: "year"}
 	if f.gotPerf != want {
 		t.Fatalf("參數應整理後傳給 API:%#v", f.gotPerf)
 	}
@@ -217,7 +223,7 @@ func TestSignalPerformanceTool(t *testing.T) {
 		{Market: "otc"}, {From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"},
 		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakout"}, {Indicator: "ma1"},
 		{Industry: strings.Repeat("業", 21)}, {MinRSScore: 100}, {MaxRSScore: -1}, {MinRSScore: 81, MaxRSScore: 80},
-		{MinForeignStreak: 21}, {MinTrustStreak: -1},
+		{MinForeignStreak: 21}, {MinTrustStreak: -1}, {GroupBy: "month"},
 	} {
 		if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -415,5 +421,50 @@ func TestSignalHistoryToolsAreRegisteredReadOnly(t *testing.T) {
 				t.Errorf("schema %s 錯誤", name)
 			}
 		}
+	}
+}
+
+// TestSignalPerformanceSummaryByYear 驗證依年度拆分時列出各年度大盤基準與每個訊號的年度表現。
+func TestSignalPerformanceSummaryByYear(t *testing.T) {
+	e := samplePerformance()
+	e.GroupBy = ptr("year")
+	e.BenchmarkByYear = []BenchmarkYear{
+		{Year: 2022, Benchmark: []BenchmarkStat{{Days: 20, Samples: 100, AvgReturn: ptr(-2.5), WinRate: ptr(0.41)}}},
+		{Year: 2023, Benchmark: []BenchmarkStat{{Days: 20, Samples: 100, AvgReturn: ptr(3.1), WinRate: ptr(0.6)}}},
+	}
+	e.Items[0].Years = []PerformanceYear{
+		{Year: 2022, Occurrences: 40, Horizons: []HorizonStat{
+			{Days: 20, Samples: 40, AvgReturn: ptr(-1.0), MedianReturn: ptr(-2.0), WinRate: ptr(0.4), AvgExcessReturn: ptr(1.5), BeatMarketRate: ptr(0.55)},
+			{Days: 240, Samples: 0},
+		}},
+		{Year: 2026, Occurrences: 3, Horizons: []HorizonStat{{Days: 240, Samples: 0}}},
+	}
+	summary := signalPerformanceSummary(e)
+	for _, want := range []string{
+		"各年度大盤基準:2022 年 20 日 平均 -2.5%、上漲比例 41%。2023 年 20 日 平均 3.1%、上漲比例 60%。",
+		"\n  - 2022 年(出現 40 次):20 日 平均 -1%、中位數 -2%、勝率 40%、超額 1.5%、勝過大盤 55%(樣本 40)",
+		"\n  - 2026 年(出現 3 次):各天期尚無樣本",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("年度摘要缺少 %q:%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "2022 年(出現 40 次):20 日 平均 -1%、中位數 -2%、勝率 40%、超額 1.5%、勝過大盤 55%(樣本 40);240 日") {
+		t.Errorf("年度內沒有樣本的天期應略過:%s", summary)
+	}
+	if strings.Contains(signalPerformanceSummary(samplePerformance()), "各年度") {
+		t.Error("未拆分時不應出現年度內容")
+	}
+}
+
+// TestNormalizeGroupBy 驗證 group_by 只接受 year(不分大小寫、去空白)。
+func TestNormalizeGroupBy(t *testing.T) {
+	for raw, want := range map[string]string{"": "", " YEAR ": "year", "year": "year"} {
+		if got, err := normalizeGroupBy(raw); err != nil || got != want {
+			t.Errorf("normalizeGroupBy(%q) = %q, %v", raw, got, err)
+		}
+	}
+	if _, err := normalizeGroupBy("quarter"); err == nil || !strings.Contains(err.Error(), "只支援 year") {
+		t.Errorf("不支援的值應回錯誤:%v", err)
 	}
 }
