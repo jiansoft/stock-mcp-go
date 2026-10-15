@@ -19,8 +19,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// maxPerformancePeriodDays 是訊號績效統計期間的上限(日曆天,含起訖),與 Data API 一致。
-const maxPerformancePeriodDays = 1096
+// maxPerformancePeriodDays 是訊號績效與法人連買報酬統計期間的上限(日曆天,含起訖),與 Data API 一致;
+// 技術訊號、報酬、相對強度與籌碼都從 2019 年起。
+const maxPerformancePeriodDays = 3653
+
+// maxAllSignalsPeriodDays 是訊號績效不指定 indicator 時的期間上限:全部來源一次統計多年太慢。
+const maxAllSignalsPeriodDays = 1096
 
 // HorizonStat 是某天期(N 個交易日後)的表現統計;樣本為 0 時數值為 nil。
 type HorizonStat struct {
@@ -279,7 +283,7 @@ func signalPerformanceSchema() *jsonschema.Schema {
 			"to": {
 				Type:        "string",
 				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
-				Description: "統計迄日(格式 YYYY-MM-DD,選填);未提供為最新交易日。起訖最長 1,096 天",
+				Description: "統計迄日(格式 YYYY-MM-DD,選填);未提供為最新交易日。起訖最長 3,653 天,超過 1,096 天時必須指定 indicator",
 			},
 			"market":    listedOTCMarketSchema(),
 			"kind":      kind,
@@ -362,7 +366,7 @@ func streakBoundSchema(investor string) *jsonschema.Schema {
 		Minimum: ptr(1.0),
 		Maximum: ptr(20.0),
 		Description: "只統計訊號當天" + investor + "已連續買超至少這麼多天的訊號(選填,1 至 20);" +
-			"連續天數與 get_institutional_flow_ranking 同一算法,籌碼資料從 2022-10 起,之前的訊號不列入;" +
+			"連續天數與 get_institutional_flow_ranking 同一算法,籌碼資料從 2019 年起,之前的訊號不列入;" +
 			"外資與投信都設時需同時符合,大盤基準不受影響",
 	}
 }
@@ -448,7 +452,7 @@ func normalizeSignalFilters(rawKind, rawIndicator string) (string, string, error
 	return kind, indicator, nil
 }
 
-// validatePerformancePeriod 在起訖都有指定時檢查先後與長度(含起訖不超過 1,096 天)。
+// validatePerformancePeriod 在起訖都有指定時檢查先後與長度(含起訖不超過 3,653 天)。
 func validatePerformancePeriod(from, to string) error {
 	if from == "" || to == "" {
 		return nil
@@ -466,6 +470,29 @@ func validatePerformancePeriod(from, to string) error {
 	}
 	if int(end.Sub(start).Hours()/24) >= maxPerformancePeriodDays {
 		return fmt.Errorf("統計期間最長 %d 天", maxPerformancePeriodDays)
+	}
+	return nil
+}
+
+// requireIndicatorForLongPeriod 在沒有指定 indicator 時,檢查起日到迄日(未指定迄日用 now 的台北日期)
+// 不超過 1,096 天;Data API 也會拒絕,但它的 422 會被當成產業不存在,所以先在工具層擋下。
+func requireIndicatorForLongPeriod(from, to, indicator string, now time.Time) error {
+	if indicator != "" || from == "" {
+		return nil
+	}
+	if to == "" {
+		to = now.In(taipeiLocation).Format("2006-01-02")
+	}
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return fmt.Errorf("參數 from 格式錯誤")
+	}
+	end, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return fmt.Errorf("參數 to 格式錯誤")
+	}
+	if int(end.Sub(start).Hours()/24) >= maxAllSignalsPeriodDays {
+		return fmt.Errorf("統計期間超過 1,096 天時必須指定 indicator(訊號來源),例如 52_week")
 	}
 	return nil
 }
@@ -489,6 +516,9 @@ func (ts *signalHistoryToolset) signalPerformance(ctx context.Context, _ *mcp.Ca
 	}
 	kind, indicator, err := normalizeSignalFilters(in.Kind, in.Indicator)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := requireIndicatorForLongPeriod(from, to, indicator, time.Now()); err != nil {
 		return nil, nil, err
 	}
 	industry := strings.TrimSpace(in.Industry)

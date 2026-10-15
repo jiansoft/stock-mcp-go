@@ -137,7 +137,7 @@ func TestInstitutionalStreakTool(t *testing.T) {
 		t.Fatalf("參數應整理後傳給 API:%#v", f.got)
 	}
 	for _, bad := range []InstitutionalStreakInput{
-		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-06-30", To: "2026-01-01"}, {From: "2020-01-01", To: "2026-01-01"},
+		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-06-30", To: "2026-01-01"}, {From: "2016-01-01", To: "2026-01-02"},
 		{Investor: "retail"}, {Side: "hold"}, {Streak: 21}, {Streak: -1}, {Market: "otc"}, {Industry: strings.Repeat("產", 21)},
 		{GroupBy: "week"},
 	} {
