@@ -64,6 +64,12 @@ type BacktestSummary struct {
 	EtfAnnualizedReturn       *float64 `json:"etf_annualized_return"`
 	EtfMaxDrawdown            *float64 `json:"etf_max_drawdown"`
 	BeatEtfRate               *float64 `json:"beat_etf_rate"`
+	Volatility                *float64 `json:"volatility"`
+	SharpeRatio               *float64 `json:"sharpe_ratio"`
+	BenchmarkVolatility       *float64 `json:"benchmark_volatility"`
+	BenchmarkSharpeRatio      *float64 `json:"benchmark_sharpe_ratio"`
+	EtfVolatility             *float64 `json:"etf_volatility"`
+	EtfSharpeRatio            *float64 `json:"etf_sharpe_ratio"`
 }
 
 // BacktestYear 是依換股日所屬年度的彙總;各年各自從淨值 1 起算,EtfTotalReturn 在整年缺 0050 資料時為 nil。
@@ -85,6 +91,7 @@ type ScreenBacktestEnvelope struct {
 	Market           string           `json:"market"`
 	HoldDays         int              `json:"hold_days"`
 	Limit            int              `json:"limit"`
+	KeepRank         *int             `json:"keep_rank"`
 	Industry         *string          `json:"industry"`
 	MinRSScore       *int             `json:"min_rs_score"`
 	MaxRSScore       *int             `json:"max_rs_score"`
@@ -106,6 +113,7 @@ type ScreenBacktestOptions struct {
 	To               string
 	HoldDays         int
 	Limit            int
+	KeepRank         int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -145,6 +153,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 			values.Set(key, fmt.Sprint(value))
 		}
 	}
+	if opt.KeepRank > 0 {
+		values.Set("keep_rank", fmt.Sprint(opt.KeepRank))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -169,6 +180,7 @@ type ScreenBacktestInput struct {
 	To               string `json:"to,omitempty"`
 	HoldDays         int    `json:"hold_days,omitempty"`
 	Limit            int    `json:"limit,omitempty"`
+	KeepRank         int    `json:"keep_rank,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -221,6 +233,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Maximum:     ptr(100.0),
 				Default:     []byte("20"),
 				Description: "每期最多持有幾檔(預設 20,1 至 100):符合條件者依相對強度分數由高到低取前 N 檔,等權持有",
+			},
+			"keep_rank": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(200.0),
+				Description: "換股緩衝(選填,需介於 limit 至 200;預設等於 limit 即不緩衝):上一期持有的股票只要這期仍符合條件、且排在前 keep_rank 名就續抱,空出的名額才依 RS 補滿,用來降低換手與交易成本。例如 limit=20、keep_rank=40",
 			},
 			"market": listedOTCMarketSchema(),
 			"industry": {
@@ -307,6 +325,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if err != nil {
 		return nil, nil, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
 	}
+	if in.KeepRank != 0 && (in.KeepRank < limit || in.KeepRank > 200) {
+		return nil, nil, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", limit)
+	}
 	market, err := normalizeMarket(in.Market)
 	if err != nil {
 		return nil, nil, err
@@ -329,7 +350,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -389,6 +410,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if len(filters) > 0 {
 		b.printf(",條件 %s", strings.Join(filters, "、"))
 	}
+	if e.KeepRank != nil && *e.KeepRank > e.Limit {
+		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
+	}
 	b.printf("。")
 	s := e.Summary
 	if s.Periods == 0 {
@@ -407,10 +431,18 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				displayFloat(e.FeeDiscount), displayPercent(s.TotalReturnAfterCosts), displayPercent(s.AnnualizedAfterCosts),
 				displayPercent(s.MaxDrawdownAfterCosts), displayRate(s.AvgTurnover))
 		}
+		if s.Volatility != nil {
+			b.printf("\n風險:年化波動率 %s(基準 %s)、夏普值 %s(扣成本後,無風險利率以 0 計;基準 %s)。",
+				displayPercent(s.Volatility), displayPercent(s.BenchmarkVolatility),
+				displayFloat(s.SharpeRatio), displayFloat(s.BenchmarkSharpeRatio))
+		}
 		if s.EtfTotalReturn != nil {
 			b.printf("\n對照實際買得到的 0050(同樣每 %d 個交易日進出、未扣成本):累積報酬 %s、年化 %s、最大回撤 %s;勝過 0050 的期數 %s。",
 				e.HoldDays, displayPercent(s.EtfTotalReturn), displayPercent(s.EtfAnnualizedReturn),
 				displayPercent(s.EtfMaxDrawdown), displayRate(s.BeatEtfRate))
+			if s.EtfVolatility != nil {
+				b.printf("0050 年化波動率 %s、夏普值 %s。", displayPercent(s.EtfVolatility), displayFloat(s.EtfSharpeRatio))
+			}
 		}
 		writeBacktestYears(&b, e.Years)
 		recent := e.Periods[max(0, len(e.Periods)-backtestRecentPeriods):]
