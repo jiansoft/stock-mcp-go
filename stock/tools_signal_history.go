@@ -295,7 +295,7 @@ func signalPerformanceSchema() *jsonschema.Schema {
 			},
 			"min_rs_score":       rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不低於此值的訊號(選填,1 至 99)"),
 			"max_rs_score":       rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不高於此值的訊號(選填,1 至 99)"),
-			"min_foreign_streak": streakBoundSchema("外資(不含外資自營商)"),
+			"min_foreign_streak": streakBoundSchema("外資(含外資自營商)"),
 			"min_trust_streak":   streakBoundSchema("投信"),
 			"group_by":           groupBySchema("訊號"),
 		},

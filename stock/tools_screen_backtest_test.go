@@ -71,13 +71,16 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"from":"2023-10-15","to":"2026-10-14","market":"all","hold_days":20,"limit":20,` +
 				`"industry":null,"min_rs_score":null,"max_rs_score":null,"min_foreign_streak":null,"min_trust_streak":null,` +
-				`"indicator":null,"kind":null,"fee_discount":0.28,"adjusted":true,` +
+				`"indicator":null,"kind":null,"fee_discount":0.28,"adjusted":true,"etf_benchmark":"0050",` +
 				`"summary":{"periods":1,"invested_periods":0,"avg_holdings":null,"avg_turnover":null,"total_return":0.0,` +
 				`"total_return_after_costs":-0.44,"benchmark_total_return":2.5,` +
 				`"annualized_return":0.0,"benchmark_annualized_return":35.1,"max_drawdown":0.0,"benchmark_max_drawdown":0.0,` +
-				`"win_rate":0.0,"beat_market_rate":0.0,"avg_period_return":0.0,"avg_benchmark_return":2.5},` +
+				`"win_rate":0.0,"beat_market_rate":0.0,"avg_period_return":0.0,"avg_benchmark_return":2.5,` +
+				`"etf_total_return":1.8,"etf_annualized_return":25.3,"etf_max_drawdown":0.0,"beat_etf_rate":0.0},` +
+				`"years":[{"year":2026,"periods":1,"total_return":0.0,"total_return_after_costs":-0.44,` +
+				`"benchmark_total_return":2.5,"etf_total_return":1.8,"win_rate":0.0,"beat_market_rate":0.0}],` +
 				`"periods":[{"date":"2026-09-02","holdings":0,"avg_return":null,"return_after_costs":-0.44,"turnover":0.0,` +
-				`"benchmark_return":2.5,"symbols":[]}]}`))
+				`"benchmark_return":2.5,"etf_return":1.8,"symbols":[]}]}`))
 		}
 	}))
 	defer server.Close()
@@ -90,6 +93,10 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	}
 	if *envelope.FeeDiscount != 0.28 || *envelope.Summary.TotalReturnAfterCosts != -0.44 || *envelope.Periods[0].ReturnAfterCosts != -0.44 || *envelope.Periods[0].Turnover != 0 {
 		t.Fatalf("成本欄位解析錯誤:%#v", envelope)
+	}
+	if *envelope.EtfBenchmark != "0050" || *envelope.Summary.EtfTotalReturn != 1.8 || *envelope.Periods[0].EtfReturn != 1.8 ||
+		len(envelope.Years) != 1 || envelope.Years[0].Year != 2026 || *envelope.Years[0].EtfTotalReturn != 1.8 {
+		t.Fatalf("0050 與年度欄位解析錯誤:%#v", envelope)
 	}
 	if gotPath != "/api/v1/stocks/screen/backtest" || gotQuery.Encode() != "hold_days=20&limit=20&market=all" {
 		t.Fatalf("未指定條件不應帶參數:%s?%s", gotPath, gotQuery.Encode())
@@ -205,6 +212,13 @@ func TestValidateBacktestPeriod(t *testing.T) {
 func TestScreenBacktestSummary(t *testing.T) {
 	e := sampleScreenBacktest()
 	e.Industry, e.MinRSScore, e.MinTrustStreak, e.Indicator, e.Kind = ptr("半導體業"), ptr(80), ptr(3), ptr("52_week"), ptr("new_high")
+	e.EtfBenchmark = ptr("0050")
+	e.Summary.EtfTotalReturn, e.Summary.EtfAnnualizedReturn, e.Summary.EtfMaxDrawdown, e.Summary.BeatEtfRate = ptr(20.5), ptr(6.4), ptr(-12.0), ptr(0.75)
+	e.Periods[7].EtfReturn = ptr(2.1)
+	e.Years = []BacktestYear{
+		{Year: 2025, Periods: 3, TotalReturn: 12.3, TotalReturnAfterCosts: 10.1, BenchmarkTotalReturn: 4.5, WinRate: 0.6667, BeatMarketRate: 1},
+		{Year: 2026, Periods: 5, TotalReturn: -3.2, TotalReturnAfterCosts: -5, BenchmarkTotalReturn: 1.1, EtfTotalReturn: ptr(8.8), WinRate: 0.4, BeatMarketRate: 0.2},
+	}
 	summary := screenBacktestSummary(e)
 	for _, want := range []string{
 		"all 市場 2023-10-15～2026-10-14 條件選股回測:每 20 個交易日換股,依相對強度分數由高到低取前 20 檔等權持有",
@@ -215,7 +229,11 @@ func TestScreenBacktestSummary(t *testing.T) {
 		"\n- 2026-07-02 空手(基準 1.5%)",
 		"\n- 2026-07-02 空手(基準 1.5%)",
 		"\n- 2026-06-02 持有 20 檔,報酬 3%(基準 1.5%);2330、2454",
-		"\n- 2026-08-02 持有 20 檔,報酬 5%(扣成本 4.78%、換手 50%,基準 1.5%);2330、2454",
+		"\n- 2026-08-02 持有 20 檔,報酬 5%(扣成本 4.78%、換手 50%,基準 1.5%、0050 2.1%);2330、2454",
+		"對照實際買得到的 0050(同樣每 20 個交易日進出、未扣成本):累積報酬 20.5%、年化 6.4%、最大回撤 -12%;勝過 0050 的期數 75%。",
+		"依換股日年度(各年從頭起算,跨年的一期算在換股那年):",
+		"\n- 2025 年 3 期:報酬 12.3%(扣成本 10.1%;基準 4.5%)、勝率 66.67%、勝過基準 100%",
+		"\n- 2026 年 5 期:報酬 -3.2%(扣成本 -5%;基準 1.1%、0050 8.8%)、勝率 40%、勝過基準 20%",
 		"扣交易成本(手續費 0.1425%×0.28 折扣、賣出證交稅 0.3%,依換手計算)後:累積報酬 30.1%、年化 9.2%、最大回撤 -19%;平均換手率 43.21%。",
 		"期間內下市的股票算到最後一筆收盤",
 	} {
@@ -226,9 +244,9 @@ func TestScreenBacktestSummary(t *testing.T) {
 	if strings.Contains(summary, "2026-02-02") || strings.Contains(summary, "存活者偏差") {
 		t.Errorf("只列最近 6 期,且不再提存活者偏差:%s", summary)
 	}
-	e.Summary.TotalReturnAfterCosts = nil
-	if strings.Contains(screenBacktestSummary(e), "扣交易成本") {
-		t.Errorf("舊版 API 沒有成本欄位時不列扣成本後的數字")
+	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years = nil, nil, nil
+	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") {
+		t.Errorf("舊版 API 沒有成本、0050 與年度欄位時不列這些段落:%s", old)
 	}
 
 	empty := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 240, Limit: 5, Adjusted: true})

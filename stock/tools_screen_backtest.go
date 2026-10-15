@@ -2,7 +2,8 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/screen/backtest:每隔 hold_days 個交易日換股,
 // 從上市櫃普通股挑出符合相對強度、法人連續買超、近期技術訊號等條件的股票,依相對強度分數由高到低
-// 取前 limit 檔等權持有,與同市場全部母體股票的平均比較。只用當天就知道的資料,不用財報條件;
+// 取前 limit 檔等權持有,與同市場全部母體股票的平均、以及實際買得到的 0050 比較,另附依年度的彙總。
+// 只用當天就知道的資料,不用財報條件;
 // 期間內下市的股票算到最後一筆收盤,並依換手率扣除手續費(可打折)與證交稅。
 package stock
 
@@ -28,7 +29,7 @@ const maxBacktestPeriodDays = 3653
 var backtestHoldDays = []int{5, 20, 60, 120, 240}
 
 // BacktestPeriod 是一次換股(一期)的結果;空手時 AvgReturn 為 nil。ReturnAfterCosts 與 Turnover
-// 是扣交易成本後的報酬與換手率,舊版 API 沒有這兩欄時為 nil。
+// 是扣交易成本後的報酬與換手率,EtfReturn 是同期 0050 的報酬,舊版 API 沒有這些欄位時為 nil。
 type BacktestPeriod struct {
 	Date             string   `json:"date"`
 	Holdings         int      `json:"holdings"`
@@ -36,6 +37,7 @@ type BacktestPeriod struct {
 	ReturnAfterCosts *float64 `json:"return_after_costs"`
 	Turnover         *float64 `json:"turnover"`
 	BenchmarkReturn  *float64 `json:"benchmark_return"`
+	EtfReturn        *float64 `json:"etf_return"`
 	Symbols          []string `json:"symbols"`
 }
 
@@ -58,6 +60,22 @@ type BacktestSummary struct {
 	BeatMarketRate            *float64 `json:"beat_market_rate"`
 	AvgPeriodReturn           *float64 `json:"avg_period_return"`
 	AvgBenchmarkReturn        *float64 `json:"avg_benchmark_return"`
+	EtfTotalReturn            *float64 `json:"etf_total_return"`
+	EtfAnnualizedReturn       *float64 `json:"etf_annualized_return"`
+	EtfMaxDrawdown            *float64 `json:"etf_max_drawdown"`
+	BeatEtfRate               *float64 `json:"beat_etf_rate"`
+}
+
+// BacktestYear 是依換股日所屬年度的彙總;各年各自從淨值 1 起算,EtfTotalReturn 在整年缺 0050 資料時為 nil。
+type BacktestYear struct {
+	Year                  int      `json:"year"`
+	Periods               int      `json:"periods"`
+	TotalReturn           float64  `json:"total_return"`
+	TotalReturnAfterCosts float64  `json:"total_return_after_costs"`
+	BenchmarkTotalReturn  float64  `json:"benchmark_total_return"`
+	EtfTotalReturn        *float64 `json:"etf_total_return"`
+	WinRate               float64  `json:"win_rate"`
+	BeatMarketRate        float64  `json:"beat_market_rate"`
 }
 
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
@@ -76,7 +94,9 @@ type ScreenBacktestEnvelope struct {
 	Kind             *string          `json:"kind"`
 	FeeDiscount      *float64         `json:"fee_discount"`
 	Adjusted         bool             `json:"adjusted"`
+	EtfBenchmark     *string          `json:"etf_benchmark"`
 	Summary          BacktestSummary  `json:"summary"`
+	Years            []BacktestYear   `json:"years"`
 	Periods          []BacktestPeriod `json:"periods"`
 }
 
@@ -210,7 +230,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 			},
 			"min_rs_score":       rsScoreBoundSchema("換股當天相對強度(RS)分數不低於此值(選填,1 至 99)"),
 			"max_rs_score":       rsScoreBoundSchema("換股當天相對強度(RS)分數不高於此值(選填,1 至 99)"),
-			"min_foreign_streak": backtestStreakSchema("外資(不含外資自營商)"),
+			"min_foreign_streak": backtestStreakSchema("外資(含外資自營商)"),
 			"min_trust_streak":   backtestStreakSchema("投信"),
 			"kind":               kind,
 			"indicator":          indicator,
@@ -387,6 +407,12 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				displayFloat(e.FeeDiscount), displayPercent(s.TotalReturnAfterCosts), displayPercent(s.AnnualizedAfterCosts),
 				displayPercent(s.MaxDrawdownAfterCosts), displayRate(s.AvgTurnover))
 		}
+		if s.EtfTotalReturn != nil {
+			b.printf("\n對照實際買得到的 0050(同樣每 %d 個交易日進出、未扣成本):累積報酬 %s、年化 %s、最大回撤 %s;勝過 0050 的期數 %s。",
+				e.HoldDays, displayPercent(s.EtfTotalReturn), displayPercent(s.EtfAnnualizedReturn),
+				displayPercent(s.EtfMaxDrawdown), displayRate(s.BeatEtfRate))
+		}
+		writeBacktestYears(&b, e.Years)
 		recent := e.Periods[max(0, len(e.Periods)-backtestRecentPeriods):]
 		b.printf("\n最近 %d 期:", len(recent))
 		for _, p := range recent {
@@ -394,15 +420,36 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				b.printf("\n- %s 空手(基準 %s)", p.Date, displayPercent(p.BenchmarkReturn))
 				continue
 			}
+			etf := ""
+			if p.EtfReturn != nil {
+				etf = "、0050 " + displayPercent(p.EtfReturn)
+			}
 			cost := ""
 			if p.ReturnAfterCosts != nil {
 				cost = "扣成本 " + displayPercent(p.ReturnAfterCosts) + "、換手 " + displayRate(p.Turnover) + ","
 			}
-			b.printf("\n- %s 持有 %d 檔,報酬 %s(%s基準 %s);%s", p.Date, p.Holdings,
-				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), strings.Join(p.Symbols, "、"))
+			b.printf("\n- %s 持有 %d 檔,報酬 %s(%s基準 %s%s);%s", p.Date, p.Holdings,
+				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), etf, strings.Join(p.Symbols, "、"))
 		}
 	}
 	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;等權再平衡的小額調整不計成本。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
+}
+
+// writeBacktestYears 逐年列出累積報酬(扣成本後、基準、0050)與勝率;舊版 API 沒有年度彙總時不輸出。
+func writeBacktestYears(b *summaryBuilder, years []BacktestYear) {
+	if len(years) == 0 {
+		return
+	}
+	b.printf("\n依換股日年度(各年從頭起算,跨年的一期算在換股那年):")
+	for _, y := range years {
+		etf := ""
+		if y.EtfTotalReturn != nil {
+			etf = "、0050 " + displayPercent(y.EtfTotalReturn)
+		}
+		b.printf("\n- %d 年 %d 期:報酬 %s(扣成本 %s;基準 %s%s)、勝率 %s、勝過基準 %s",
+			y.Year, y.Periods, displayPercent(&y.TotalReturn), displayPercent(&y.TotalReturnAfterCosts),
+			displayPercent(&y.BenchmarkTotalReturn), etf, displayRate(&y.WinRate), displayRate(&y.BeatMarketRate))
+	}
 }
