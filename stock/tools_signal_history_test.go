@@ -117,6 +117,12 @@ func TestAPIClientSignalPerformance(t *testing.T) {
 	if gotQuery.Get("from") != "2025-01-01" || gotQuery.Get("to") != "2025-12-31" || gotQuery.Get("kind") != "new_high" {
 		t.Fatalf("query string 錯誤:%s", gotQuery.Encode())
 	}
+	if _, err := client.SignalPerformance(t.Context(), SignalPerformanceOptions{Market: "all", MinRSScore: 80, MaxRSScore: 95}); err != nil {
+		t.Fatalf("RS 條件不應失敗:%v", err)
+	}
+	if gotQuery.Get("min_rs_score") != "80" || gotQuery.Get("max_rs_score") != "95" {
+		t.Fatalf("RS 條件應帶入 query:%s", gotQuery.Encode())
+	}
 	if _, err := client.SignalPerformance(t.Context(), SignalPerformanceOptions{Market: "all", Industry: "沒資料"}); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
 	}
@@ -193,18 +199,18 @@ func TestSignalPerformanceTool(t *testing.T) {
 		t.Fatalf("摘要內容錯誤:%s", text)
 	}
 
-	in := SignalPerformanceInput{From: "2023-10-14", To: "2026-10-13", Market: " TPEX ", Kind: " new_high ", Indicator: "52_week", Industry: " 半導體業 "}
+	in := SignalPerformanceInput{From: "2023-10-14", To: "2026-10-13", Market: " TPEX ", Kind: " new_high ", Indicator: "52_week", Industry: " 半導體業 ", MinRSScore: 80, MaxRSScore: 80}
 	if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
-	want := SignalPerformanceOptions{From: "2023-10-14", To: "2026-10-13", Market: "tpex", Kind: "new_high", Indicator: "52_week", Industry: "半導體業"}
+	want := SignalPerformanceOptions{From: "2023-10-14", To: "2026-10-13", Market: "tpex", Kind: "new_high", Indicator: "52_week", Industry: "半導體業", MinRSScore: 80, MaxRSScore: 80}
 	if f.gotPerf != want {
 		t.Fatalf("參數應整理後傳給 API:%#v", f.gotPerf)
 	}
 	for _, bad := range []SignalPerformanceInput{
 		{Market: "otc"}, {From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"},
 		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakout"}, {Indicator: "ma1"},
-		{Industry: strings.Repeat("業", 21)},
+		{Industry: strings.Repeat("業", 21)}, {MinRSScore: 100}, {MaxRSScore: -1}, {MinRSScore: 81, MaxRSScore: 80},
 	} {
 		if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -295,6 +301,20 @@ func TestSignalPerformanceSummary(t *testing.T) {
 	for _, want := range []string{"未還原除權息", "期間內沒有符合條件的訊號。"} {
 		if !strings.Contains(empty, want) {
 			t.Errorf("無結果摘要缺少 %q:%s", want, empty)
+		}
+	}
+	for _, c := range []struct {
+		min, max *int
+		want     string
+	}{
+		{ptr(80), nil, "篩選 訊號當天 RS 分數 ≥ 80。"},
+		{nil, ptr(50), "篩選 訊號當天 RS 分數 ≤ 50。"},
+		{ptr(60), ptr(95), "篩選 訊號當天 RS 分數 60–95。"},
+	} {
+		e := samplePerformance()
+		e.MinRSScore, e.MaxRSScore = c.min, c.max
+		if summary := signalPerformanceSummary(e); !strings.Contains(summary, c.want) {
+			t.Errorf("RS 條件摘要缺少 %q:%s", c.want, summary)
 		}
 	}
 	if strings.Contains(empty, "大盤基準") || strings.Contains(empty, "篩選") {
