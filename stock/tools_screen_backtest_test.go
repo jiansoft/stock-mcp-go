@@ -40,14 +40,17 @@ func sampleScreenBacktest() *ScreenBacktestEnvelope {
 		})
 	}
 	periods[6].Holdings, periods[6].AvgReturn, periods[6].Symbols = 0, nil, []string{}
+	periods[7].ReturnAfterCosts, periods[7].Turnover = ptr(4.78), ptr(0.5)
 	return &ScreenBacktestEnvelope{
 		From: "2023-10-15", To: "2026-10-14", Market: "all", HoldDays: 20, Limit: 20, Adjusted: true,
 		Summary: BacktestSummary{
 			Periods: 8, InvestedPeriods: 7, AvgHoldings: ptr(20.0), TotalReturn: ptr(35.2), BenchmarkTotalReturn: ptr(12.6),
 			AnnualizedReturn: ptr(10.6), BenchmarkAnnualizedReturn: ptr(4.0), MaxDrawdown: ptr(-18.3), BenchmarkMaxDrawdown: ptr(-9.1),
 			WinRate: ptr(0.625), BeatMarketRate: ptr(0.5), AvgPeriodReturn: ptr(1.4), AvgBenchmarkReturn: ptr(1.5),
+			AvgTurnover: ptr(0.4321), TotalReturnAfterCosts: ptr(30.1), AnnualizedAfterCosts: ptr(9.2), MaxDrawdownAfterCosts: ptr(-19.0),
 		},
-		Periods: periods,
+		FeeDiscount: ptr(0.28),
+		Periods:     periods,
 	}
 }
 
@@ -68,11 +71,13 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"from":"2023-10-15","to":"2026-10-14","market":"all","hold_days":20,"limit":20,` +
 				`"industry":null,"min_rs_score":null,"max_rs_score":null,"min_foreign_streak":null,"min_trust_streak":null,` +
-				`"indicator":null,"kind":null,"adjusted":true,` +
-				`"summary":{"periods":1,"invested_periods":0,"avg_holdings":null,"total_return":0.0,"benchmark_total_return":2.5,` +
+				`"indicator":null,"kind":null,"fee_discount":0.28,"adjusted":true,` +
+				`"summary":{"periods":1,"invested_periods":0,"avg_holdings":null,"avg_turnover":null,"total_return":0.0,` +
+				`"total_return_after_costs":-0.44,"benchmark_total_return":2.5,` +
 				`"annualized_return":0.0,"benchmark_annualized_return":35.1,"max_drawdown":0.0,"benchmark_max_drawdown":0.0,` +
 				`"win_rate":0.0,"beat_market_rate":0.0,"avg_period_return":0.0,"avg_benchmark_return":2.5},` +
-				`"periods":[{"date":"2026-09-02","holdings":0,"avg_return":null,"benchmark_return":2.5,"symbols":[]}]}`))
+				`"periods":[{"date":"2026-09-02","holdings":0,"avg_return":null,"return_after_costs":-0.44,"turnover":0.0,` +
+				`"benchmark_return":2.5,"symbols":[]}]}`))
 		}
 	}))
 	defer server.Close()
@@ -83,12 +88,16 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	if err != nil || envelope.Summary.Periods != 1 || envelope.Summary.AvgHoldings != nil || envelope.Periods[0].AvgReturn != nil || *envelope.Periods[0].BenchmarkReturn != 2.5 {
 		t.Fatalf("ScreenBacktest() = %#v, %v", envelope, err)
 	}
+	if *envelope.FeeDiscount != 0.28 || *envelope.Summary.TotalReturnAfterCosts != -0.44 || *envelope.Periods[0].ReturnAfterCosts != -0.44 || *envelope.Periods[0].Turnover != 0 {
+		t.Fatalf("成本欄位解析錯誤:%#v", envelope)
+	}
 	if gotPath != "/api/v1/stocks/screen/backtest" || gotQuery.Encode() != "hold_days=20&limit=20&market=all" {
 		t.Fatalf("未指定條件不應帶參數:%s?%s", gotPath, gotQuery.Encode())
 	}
 	opt = ScreenBacktestOptions{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
+		FeeDiscount: ptr(0.0),
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -96,7 +105,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	for key, want := range map[string]string{
 		"from": "2019-01-02", "to": "2026-10-14", "hold_days": "60", "limit": "5", "industry": "半導體業",
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
-		"indicator": "52_week", "kind": "new_high",
+		"indicator": "52_week", "kind": "new_high", "fee_discount": "0",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -137,6 +146,7 @@ func TestScreenBacktestTool(t *testing.T) {
 	in := ScreenBacktestInput{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: " TPEX ", Industry: " 半導體業 ",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: " new_high ",
+		FeeDiscount: ptr(0.0),
 	}
 	if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
@@ -145,6 +155,10 @@ func TestScreenBacktestTool(t *testing.T) {
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: "tpex", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: "new_high",
 	}
+	if f.got.FeeDiscount == nil || *f.got.FeeDiscount != 0 {
+		t.Fatalf("fee_discount=0 應原樣傳給 API:%#v", f.got.FeeDiscount)
+	}
+	f.got.FeeDiscount = nil
 	if f.got != want {
 		t.Fatalf("參數應整理後傳給 API:%#v", f.got)
 	}
@@ -152,6 +166,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"}, {From: "2016-10-13", To: "2026-10-14"},
 		{HoldDays: 10}, {HoldDays: -5}, {Limit: 101}, {Limit: -1}, {Market: "otc"}, {Industry: strings.Repeat("業", 21)},
 		{MinRSScore: 100}, {MinRSScore: 90, MaxRSScore: 80}, {MinForeignStreak: 21}, {Kind: "breakout"}, {Indicator: "ma1"},
+		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -198,15 +213,22 @@ func TestScreenBacktestSummary(t *testing.T) {
 		"每期平均 1.4%(基準 1.5%)、勝率 62.5%、勝過基準 50%。",
 		"最近 6 期:",
 		"\n- 2026-07-02 空手(基準 1.5%)",
-		"\n- 2026-08-02 持有 20 檔,報酬 5%(基準 1.5%);2330、2454",
-		"存活者偏差",
+		"\n- 2026-07-02 空手(基準 1.5%)",
+		"\n- 2026-06-02 持有 20 檔,報酬 3%(基準 1.5%);2330、2454",
+		"\n- 2026-08-02 持有 20 檔,報酬 5%(扣成本 4.78%、換手 50%,基準 1.5%);2330、2454",
+		"扣交易成本(手續費 0.1425%×0.28 折扣、賣出證交稅 0.3%,依換手計算)後:累積報酬 30.1%、年化 9.2%、最大回撤 -19%;平均換手率 43.21%。",
+		"期間內下市的股票算到最後一筆收盤",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("摘要缺少 %q:%s", want, summary)
 		}
 	}
-	if strings.Contains(summary, "2026-02-02") {
-		t.Errorf("只列最近 6 期:%s", summary)
+	if strings.Contains(summary, "2026-02-02") || strings.Contains(summary, "存活者偏差") {
+		t.Errorf("只列最近 6 期,且不再提存活者偏差:%s", summary)
+	}
+	e.Summary.TotalReturnAfterCosts = nil
+	if strings.Contains(screenBacktestSummary(e), "扣交易成本") {
+		t.Errorf("舊版 API 沒有成本欄位時不列扣成本後的數字")
 	}
 
 	empty := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 240, Limit: 5, Adjusted: true})

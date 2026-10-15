@@ -2,7 +2,8 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/screen/backtest:每隔 hold_days 個交易日換股,
 // 從上市櫃普通股挑出符合相對強度、法人連續買超、近期技術訊號等條件的股票,依相對強度分數由高到低
-// 取前 limit 檔等權持有,與同市場全部母體股票的平均比較。只用當天就知道的資料,不用財報條件。
+// 取前 limit 檔等權持有,與同市場全部母體股票的平均比較。只用當天就知道的資料,不用財報條件;
+// 期間內下市的股票算到最後一筆收盤,並依換手率扣除手續費(可打折)與證交稅。
 package stock
 
 import (
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,13 +27,16 @@ const maxBacktestPeriodDays = 3653
 // backtestHoldDays 是可選的持有天數(交易日)。
 var backtestHoldDays = []int{5, 20, 60, 120, 240}
 
-// BacktestPeriod 是一次換股(一期)的結果;空手時 AvgReturn 為 nil。
+// BacktestPeriod 是一次換股(一期)的結果;空手時 AvgReturn 為 nil。ReturnAfterCosts 與 Turnover
+// 是扣交易成本後的報酬與換手率,舊版 API 沒有這兩欄時為 nil。
 type BacktestPeriod struct {
-	Date            string   `json:"date"`
-	Holdings        int      `json:"holdings"`
-	AvgReturn       *float64 `json:"avg_return"`
-	BenchmarkReturn *float64 `json:"benchmark_return"`
-	Symbols         []string `json:"symbols"`
+	Date             string   `json:"date"`
+	Holdings         int      `json:"holdings"`
+	AvgReturn        *float64 `json:"avg_return"`
+	ReturnAfterCosts *float64 `json:"return_after_costs"`
+	Turnover         *float64 `json:"turnover"`
+	BenchmarkReturn  *float64 `json:"benchmark_return"`
+	Symbols          []string `json:"symbols"`
 }
 
 // BacktestSummary 是整段回測的彙總;沒有任何一期時數值為 nil。
@@ -39,11 +44,15 @@ type BacktestSummary struct {
 	Periods                   int      `json:"periods"`
 	InvestedPeriods           int      `json:"invested_periods"`
 	AvgHoldings               *float64 `json:"avg_holdings"`
+	AvgTurnover               *float64 `json:"avg_turnover"`
 	TotalReturn               *float64 `json:"total_return"`
+	TotalReturnAfterCosts     *float64 `json:"total_return_after_costs"`
 	BenchmarkTotalReturn      *float64 `json:"benchmark_total_return"`
 	AnnualizedReturn          *float64 `json:"annualized_return"`
+	AnnualizedAfterCosts      *float64 `json:"annualized_return_after_costs"`
 	BenchmarkAnnualizedReturn *float64 `json:"benchmark_annualized_return"`
 	MaxDrawdown               *float64 `json:"max_drawdown"`
+	MaxDrawdownAfterCosts     *float64 `json:"max_drawdown_after_costs"`
 	BenchmarkMaxDrawdown      *float64 `json:"benchmark_max_drawdown"`
 	WinRate                   *float64 `json:"win_rate"`
 	BeatMarketRate            *float64 `json:"beat_market_rate"`
@@ -65,12 +74,13 @@ type ScreenBacktestEnvelope struct {
 	MinTrustStreak   *int             `json:"min_trust_streak"`
 	Indicator        *string          `json:"indicator"`
 	Kind             *string          `json:"kind"`
+	FeeDiscount      *float64         `json:"fee_discount"`
 	Adjusted         bool             `json:"adjusted"`
 	Summary          BacktestSummary  `json:"summary"`
 	Periods          []BacktestPeriod `json:"periods"`
 }
 
-// ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選。
+// ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
 type ScreenBacktestOptions struct {
 	From             string
 	To               string
@@ -84,6 +94,7 @@ type ScreenBacktestOptions struct {
 	MinTrustStreak   int
 	Indicator        string
 	Kind             string
+	FeeDiscount      *float64
 }
 
 // ScreenBacktestQuerier 是 get_screen_backtest 對資料來源的需求介面;只有 *APIClient 實作。
@@ -114,6 +125,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 			values.Set(key, fmt.Sprint(value))
 		}
 	}
+	if opt.FeeDiscount != nil {
+		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
+	}
 	var body ScreenBacktestEnvelope
 	found, err := c.getFound(ctx, "/api/v1/stocks/screen/backtest?"+values.Encode(), &body)
 	if err != nil {
@@ -143,6 +157,8 @@ type ScreenBacktestInput struct {
 	MinTrustStreak   int    `json:"min_trust_streak,omitempty"`
 	Indicator        string `json:"indicator,omitempty"`
 	Kind             string `json:"kind,omitempty"`
+	// FeeDiscount 用指標區分「沒給」與 0(免手續費)。
+	FeeDiscount *float64 `json:"fee_discount,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
@@ -198,6 +214,13 @@ func screenBacktestSchema() *jsonschema.Schema {
 			"min_trust_streak":   backtestStreakSchema("投信"),
 			"kind":               kind,
 			"indicator":          indicator,
+			"fee_discount": {
+				Type:        "number",
+				Minimum:     ptr(0.0),
+				Maximum:     ptr(1.0),
+				Default:     []byte("1"),
+				Description: "手續費折扣(選填,0 至 1,預設 1 為不打折;例如 0.28 為 2.8 折)。扣成本後的報酬以手續費 0.1425% 乘上折扣、賣出另加證交稅 0.3% 計算",
+			},
 		},
 	}
 }
@@ -282,11 +305,14 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if err != nil {
 		return nil, nil, err
 	}
+	if in.FeeDiscount != nil && (*in.FeeDiscount < 0 || *in.FeeDiscount > 1) {
+		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
+	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
 		From: from, To: to, HoldDays: holdDays, Limit: limit, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
-		Indicator: indicator, Kind: kind,
+		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
 	})
 	if err != nil {
 		switch {
@@ -356,6 +382,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			displayPercent(s.MaxDrawdown), displayPercent(s.BenchmarkMaxDrawdown),
 			displayPercent(s.AvgPeriodReturn), displayPercent(s.AvgBenchmarkReturn),
 			displayRate(s.WinRate), displayRate(s.BeatMarketRate))
+		if s.TotalReturnAfterCosts != nil {
+			b.printf("\n扣交易成本(手續費 0.1425%%×%s 折扣、賣出證交稅 0.3%%,依換手計算)後:累積報酬 %s、年化 %s、最大回撤 %s;平均換手率 %s。",
+				displayFloat(e.FeeDiscount), displayPercent(s.TotalReturnAfterCosts), displayPercent(s.AnnualizedAfterCosts),
+				displayPercent(s.MaxDrawdownAfterCosts), displayRate(s.AvgTurnover))
+		}
 		recent := e.Periods[max(0, len(e.Periods)-backtestRecentPeriods):]
 		b.printf("\n最近 %d 期:", len(recent))
 		for _, p := range recent {
@@ -363,11 +394,15 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				b.printf("\n- %s 空手(基準 %s)", p.Date, displayPercent(p.BenchmarkReturn))
 				continue
 			}
-			b.printf("\n- %s 持有 %d 檔,報酬 %s(基準 %s);%s", p.Date, p.Holdings,
-				displayPercent(p.AvgReturn), displayPercent(p.BenchmarkReturn), strings.Join(p.Symbols, "、"))
+			cost := ""
+			if p.ReturnAfterCosts != nil {
+				cost = "扣成本 " + displayPercent(p.ReturnAfterCosts) + "、換手 " + displayRate(p.Turnover) + ","
+			}
+			b.printf("\n- %s 持有 %d 檔,報酬 %s(%s基準 %s);%s", p.Date, p.Holdings,
+				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), strings.Join(p.Symbols, "、"))
 		}
 	}
-	b.printf("\n只用當天已知的資料選股,但期間內下市的股票不列入平均(存活者偏差),也未計交易成本與稅。過去表現不代表未來結果。免責聲明:%s",
+	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;等權再平衡的小額調整不計成本。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
 }
