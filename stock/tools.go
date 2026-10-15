@@ -333,7 +333,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			Name: "get_signal_performance",
 			Description: "統計一段期間(預設近一年,最長 1,096 天)內各技術訊號出現後 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、" +
 				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選," +
-				"也可只看訊號當天相對強度(RS)分數在指定區間的訊號(例如 RS ≥ 80 的強勢股創新高)。" +
+				"也可只看訊號當天相對強度(RS)分數在指定區間(例如 RS ≥ 80 的強勢股創新高),或外資/投信已連續買超 N 天的訊號" +
+				"(例如投信連買 3 天以上時的 52 週新高)。" +
 				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」。過去表現不代表未來結果。",
 			InputSchema: signalPerformanceSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},

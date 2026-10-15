@@ -51,17 +51,20 @@ type BenchmarkStat struct {
 
 // SignalPerformanceEnvelope 是 signals/performance endpoint 的完整回應。
 type SignalPerformanceEnvelope struct {
-	From       string                  `json:"from"`
-	To         string                  `json:"to"`
-	Market     string                  `json:"market"`
-	Kind       *string                 `json:"kind"`
-	Indicator  *string                 `json:"indicator"`
-	Industry   *string                 `json:"industry"`
-	MinRSScore *int                    `json:"min_rs_score"`
-	MaxRSScore *int                    `json:"max_rs_score"`
-	Adjusted   bool                    `json:"adjusted"`
-	Benchmark  []BenchmarkStat         `json:"benchmark"`
-	Items      []SignalPerformanceItem `json:"items"`
+	From       string  `json:"from"`
+	To         string  `json:"to"`
+	Market     string  `json:"market"`
+	Kind       *string `json:"kind"`
+	Indicator  *string `json:"indicator"`
+	Industry   *string `json:"industry"`
+	MinRSScore *int    `json:"min_rs_score"`
+	MaxRSScore *int    `json:"max_rs_score"`
+	// MinForeignStreak、MinTrustStreak 是外資、投信連續買超天數下限;未篩選為 nil。
+	MinForeignStreak *int                    `json:"min_foreign_streak"`
+	MinTrustStreak   *int                    `json:"min_trust_streak"`
+	Adjusted         bool                    `json:"adjusted"`
+	Benchmark        []BenchmarkStat         `json:"benchmark"`
+	Items            []SignalPerformanceItem `json:"items"`
 }
 
 // SignalPerformanceOptions 是訊號績效的查詢條件;空字串與 0 代表不篩選或使用預設。
@@ -74,6 +77,9 @@ type SignalPerformanceOptions struct {
 	Industry   string
 	MinRSScore int
 	MaxRSScore int
+	// MinForeignStreak、MinTrustStreak 為 0 代表不篩選。
+	MinForeignStreak int
+	MinTrustStreak   int
 }
 
 // StockSignalItem 是個股某日出現的訊號與之後的表現;缺值或未滿天期時為 nil。
@@ -125,7 +131,10 @@ func (c *APIClient) SignalPerformance(ctx context.Context, opt SignalPerformance
 			values.Set(key, value)
 		}
 	}
-	for key, value := range map[string]int{"min_rs_score": opt.MinRSScore, "max_rs_score": opt.MaxRSScore} {
+	for key, value := range map[string]int{
+		"min_rs_score": opt.MinRSScore, "max_rs_score": opt.MaxRSScore,
+		"min_foreign_streak": opt.MinForeignStreak, "min_trust_streak": opt.MinTrustStreak,
+	} {
 		if value > 0 {
 			values.Set(key, fmt.Sprint(value))
 		}
@@ -174,6 +183,9 @@ type SignalPerformanceInput struct {
 	Industry   string `json:"industry,omitempty"`
 	MinRSScore int    `json:"min_rs_score,omitempty"`
 	MaxRSScore int    `json:"max_rs_score,omitempty"`
+	// MinForeignStreak、MinTrustStreak 是訊號當天外資、投信連續買超天數下限(1 至 20)。
+	MinForeignStreak int `json:"min_foreign_streak,omitempty"`
+	MinTrustStreak   int `json:"min_trust_streak,omitempty"`
 }
 
 // SignalPerformanceOutput 是訊號績效 envelope 加上 MCP 分析中繼資料。
@@ -252,8 +264,10 @@ func signalPerformanceSchema() *jsonschema.Schema {
 				MaxLength:   ptr(20),
 				Description: "只統計這個產業的訊號(選填),需為完整產業名稱,例如「半導體業」;大盤基準不受影響",
 			},
-			"min_rs_score": rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不低於此值的訊號(選填,1 至 99)"),
-			"max_rs_score": rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不高於此值的訊號(選填,1 至 99)"),
+			"min_rs_score":       rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不低於此值的訊號(選填,1 至 99)"),
+			"max_rs_score":       rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不高於此值的訊號(選填,1 至 99)"),
+			"min_foreign_streak": streakBoundSchema("外資(不含外資自營商)"),
+			"min_trust_streak":   streakBoundSchema("投信"),
 		},
 	}
 }
@@ -267,6 +281,31 @@ func rsScoreBoundSchema(description string) *jsonschema.Schema {
 		Description: description + ";分數以上市櫃普通股(不含 ETF、特別股)計算,99 最強。有設定時,訊號當天沒有分數" +
 			"(ETF、特別股、上市未滿 240 個交易日)的訊號不列入;大盤基準不受影響",
 	}
+}
+
+// streakBoundSchema 描述法人連續買超天數下限參數:1 至 20 的整數。
+func streakBoundSchema(investor string) *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:    "integer",
+		Minimum: ptr(1.0),
+		Maximum: ptr(20.0),
+		Description: "只統計訊號當天" + investor + "已連續買超至少這麼多天的訊號(選填,1 至 20);" +
+			"連續天數與 get_institutional_flow_ranking 同一算法,籌碼資料從 2022-10 起,之前的訊號不列入;" +
+			"外資與投信都設時需同時符合,大盤基準不受影響",
+	}
+}
+
+// validateStreakBounds 檢查連續買超天數下限:0 代表不篩選,其餘需在 1 至 20。
+func validateStreakBounds(foreign, trust int) error {
+	for _, bound := range []struct {
+		name  string
+		value int
+	}{{"min_foreign_streak", foreign}, {"min_trust_streak", trust}} {
+		if bound.value != 0 && (bound.value < 1 || bound.value > 20) {
+			return fmt.Errorf("參數 %s 必須介於 1 到 20 之間", bound.name)
+		}
+	}
+	return nil
 }
 
 // validateRSScoreBounds 檢查相對強度分數上下限:0 代表不篩選,其餘需在 1 至 99,且下限不可大於上限。
@@ -387,9 +426,13 @@ func (ts *signalHistoryToolset) signalPerformance(ctx context.Context, _ *mcp.Ca
 	if err := validateRSScoreBounds(in.MinRSScore, in.MaxRSScore); err != nil {
 		return nil, nil, err
 	}
+	if err := validateStreakBounds(in.MinForeignStreak, in.MinTrustStreak); err != nil {
+		return nil, nil, err
+	}
 	envelope, err := ts.history.SignalPerformance(ctx, SignalPerformanceOptions{
 		From: from, To: to, Market: market, Kind: kind, Indicator: indicator, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
+		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 	})
 	if err != nil {
 		switch {
@@ -491,6 +534,12 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	}
 	if rs := rsScoreRangeText(e.MinRSScore, e.MaxRSScore); rs != "" {
 		filters = append(filters, "訊號當天 RS 分數 "+rs)
+	}
+	if e.MinForeignStreak != nil {
+		filters = append(filters, fmt.Sprintf("外資已連買 %d 天以上", *e.MinForeignStreak))
+	}
+	if e.MinTrustStreak != nil {
+		filters = append(filters, fmt.Sprintf("投信已連買 %d 天以上", *e.MinTrustStreak))
 	}
 	if len(filters) > 0 {
 		b.printf(",篩選 %s", strings.Join(filters, "、"))
