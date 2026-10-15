@@ -40,6 +40,8 @@ var signalIndicators = []struct{ name, label string }{
 	{"close_ma240", "年線"},
 	{"rsi14", "RSI14"},
 	{"52_week", "52 週"},
+	{"rs80", "相對強度 80 分"},
+	{"rs50", "相對強度 50 分"},
 }
 
 // SignalCount 是同一來源與種類的訊號家數。
@@ -155,14 +157,15 @@ func signalsSchema() *jsonschema.Schema {
 			"kind": {
 				Type: "string",
 				Enum: kinds,
-				Description: "只列出這種訊號(選填):golden_cross 黃金交叉、death_cross 死亡交叉、cross_above 收盤站上均線、" +
-					"cross_below 收盤跌破均線、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低",
+				Description: "只列出這種訊號(選填):golden_cross 黃金交叉、death_cross 死亡交叉、cross_above 收盤站上均線或 RS 向上穿越、" +
+					"cross_below 收盤跌破均線或 RS 向下穿越、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低",
 			},
 			"indicator": {
 				Type: "string",
 				Enum: indicators,
 				Description: "只列出這個來源的訊號(選填):ma5_ma20、ma20_ma60(均線交叉)、kd、macd、" +
-					"close_ma20/close_ma60/close_ma240(收盤站上或跌破月/季/年線)、rsi14、52_week(52 週新高新低)",
+					"close_ma20/close_ma60/close_ma240(收盤站上或跌破月/季/年線)、rsi14、52_week(52 週新高新低)、" +
+					"rs80/rs50(相對強度分數比前一個交易日站上或跌破 80/50 分)",
 			},
 			"industry": {
 				Type:        "string",
@@ -258,7 +261,7 @@ func signalIndicatorLabel(indicator string) string {
 	return ""
 }
 
-// signalLabel 組出訊號的中文名稱,例如「KD 黃金交叉」「站上季線」「52 週新高」。
+// signalLabel 組出訊號的中文名稱,例如「KD 黃金交叉」「站上季線」「52 週新高」「相對強度站上 80 分」。
 func signalLabel(indicator, kind string) string {
 	indicatorLabel, kindLabel := signalIndicatorLabel(indicator), signalKindLabel(kind)
 	if indicatorLabel == "" || kindLabel == "" {
@@ -266,6 +269,9 @@ func signalLabel(indicator, kind string) string {
 	}
 	if strings.HasPrefix(indicator, "close_") {
 		return kindLabel + indicatorLabel
+	}
+	if indicator == "rs80" || indicator == "rs50" {
+		return "相對強度" + kindLabel + " " + strings.TrimPrefix(indicator, "rs") + " 分"
 	}
 	return indicatorLabel + " " + kindLabel
 }

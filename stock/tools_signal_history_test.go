@@ -395,7 +395,7 @@ func TestSignalHistoryToolsAreRegisteredReadOnly(t *testing.T) {
 		t.Errorf("tools/list 缺少訊號歷史工具:%v", found)
 	}
 	for _, schema := range []map[string]bool{
-		{"kind": len(signalPerformanceSchema().Properties["kind"].Enum) == 8, "indicator": len(signalPerformanceSchema().Properties["indicator"].Enum) == 9},
+		{"kind": len(signalPerformanceSchema().Properties["kind"].Enum) == 8, "indicator": len(signalPerformanceSchema().Properties["indicator"].Enum) == 11},
 		{"kind": len(stockSignalHistorySchema().Properties["kind"].Enum) == 8, "required": len(stockSignalHistorySchema().Required) == 1},
 	} {
 		for name, ok := range schema {
