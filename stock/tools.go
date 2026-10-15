@@ -412,6 +412,22 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, sts.institutionalStreakPerformance)
 	}
 
+	if bq, ok := q.(ScreenBacktestQuerier); ok {
+		bts := &screenBacktestToolset{bq: bq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_screen_backtest",
+			Description: "回測條件選股策略(預設近三年,最長 3,653 天):每隔 hold_days 個交易日(5/20/60/120/240,預設 20)換股一次," +
+				"從上市櫃普通股挑出符合條件的股票,依相對強度(RS)分數由高到低取前 limit 檔(預設 20)等權持有到下一次換股;" +
+				"條件可用換股當天的 RS 分數區間、外資/投信已連續買超天數、換股前持有天數內出現過的技術訊號、市場與產業,都不設就是「RS 最強的 N 檔」。" +
+				"回傳每期報酬與持股、累積與年化報酬、最大回撤、勝率,並與同市場全部母體的平均比較。" +
+				"只用當天就知道的資料(不用財報條件),但期間內下市的股票不列入平均,也未計交易成本與稅。" +
+				"適合回答「每月買 RS 前 20 名能贏大盤嗎」「52 週新高又有投信連買的股票持有一個月表現如何」「這個選股條件在 2022 空頭時撐得住嗎」。" +
+				"相對強度從 2019 年起、籌碼從 2019 年起;過去表現不代表未來結果。",
+			InputSchema: screenBacktestSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, bts.screenBacktest)
+	}
+
 	if fq, ok := q.(IndustryFlowQuerier); ok {
 		its := &industryFlowToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
