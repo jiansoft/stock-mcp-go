@@ -223,7 +223,8 @@ func TestSignalPerformanceTool(t *testing.T) {
 		{Market: "otc"}, {From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"},
 		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakout"}, {Indicator: "ma1"},
 		{Industry: strings.Repeat("業", 21)}, {MinRSScore: 100}, {MaxRSScore: -1}, {MinRSScore: 81, MaxRSScore: 80},
-		{MinForeignStreak: 21}, {MinTrustStreak: -1}, {GroupBy: "month"},
+		{MinForeignStreak: 21}, {MinTrustStreak: -1}, {GroupBy: "month"}, {From: "2019-01-02"},
+		{From: "2016-10-12", To: "2026-10-13", Indicator: "kd"},
 	} {
 		if _, _, err := newToolset(f).signalPerformance(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -350,8 +351,9 @@ func TestValidatePerformancePeriod(t *testing.T) {
 		ok       bool
 	}{
 		{"", "2026-10-13", true},
-		{"2023-10-14", "2026-10-13", true},
-		{"2023-10-13", "2026-10-13", false},
+		{"2023-10-13", "2026-10-13", true},
+		{"2016-10-13", "2026-10-13", true},
+		{"2016-10-12", "2026-10-13", false},
 		{"2026-10-14", "2026-10-13", false},
 		{"bad", "2026-10-13", false},
 		{"2026-10-13", "bad", false},
@@ -359,6 +361,31 @@ func TestValidatePerformancePeriod(t *testing.T) {
 		if err := validatePerformancePeriod(tc.from, tc.to); (err == nil) != tc.ok {
 			t.Errorf("validatePerformancePeriod(%q, %q) = %v", tc.from, tc.to, err)
 		}
+	}
+}
+
+// TestRequireIndicatorForLongPeriod 驗證超過 1,096 天且沒有 indicator 時回錯誤;未指定迄日時以台北今天計算。
+func TestRequireIndicatorForLongPeriod(t *testing.T) {
+	now := time.Date(2026, 10, 13, 20, 0, 0, 0, time.UTC) // 台北 10-14 04:00
+	for _, tc := range []struct {
+		from, to, indicator string
+		ok                  bool
+	}{
+		{"", "", "", true},
+		{"2023-10-14", "2026-10-13", "", true},
+		{"2023-10-13", "2026-10-13", "", false},
+		{"2019-01-02", "2026-10-13", "52_week", true},
+		{"2023-10-15", "", "", true},
+		{"2023-10-14", "", "", false},
+		{"bad", "2026-10-13", "", false},
+		{"2023-10-14", "bad", "", false},
+	} {
+		if err := requireIndicatorForLongPeriod(tc.from, tc.to, tc.indicator, now); (err == nil) != tc.ok {
+			t.Errorf("requireIndicatorForLongPeriod(%q, %q, %q) = %v", tc.from, tc.to, tc.indicator, err)
+		}
+	}
+	if err := requireIndicatorForLongPeriod("2019-01-02", "2026-10-13", "", now); err == nil || !strings.Contains(err.Error(), "必須指定 indicator") {
+		t.Errorf("錯誤訊息應提示指定 indicator:%v", err)
 	}
 }
 

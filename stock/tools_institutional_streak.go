@@ -116,7 +116,7 @@ func institutionalStreakSchema() *jsonschema.Schema {
 			"to": {
 				Type:        "string",
 				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
-				Description: "統計迄日(格式 YYYY-MM-DD,選填);未提供為最新有籌碼資料的交易日。起訖最長 1,096 天",
+				Description: "統計迄日(格式 YYYY-MM-DD,選填);未提供為最新有籌碼資料的交易日。起訖最長 3,653 天(籌碼資料從 2019 年起)",
 			},
 			"investor": investorSchema(),
 			"side": {
@@ -238,6 +238,6 @@ func institutionalStreakSummary(e *InstitutionalStreakEnvelope) string {
 			b.printf("\n- %s", line)
 		}
 	}
-	b.printf("\n籌碼資料從 2022-10 起,之前的事件不列入。過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
+	b.printf("\n籌碼資料從 2019 年起,之前的事件不列入。過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
 }
