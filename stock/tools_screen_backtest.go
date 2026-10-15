@@ -95,6 +95,7 @@ type ScreenBacktestEnvelope struct {
 	Limit            int              `json:"limit"`
 	KeepRank         *int             `json:"keep_rank"`
 	MarketFilterMA   *int             `json:"market_filter_ma"`
+	HoldMinRSScore   *int             `json:"hold_min_rs_score"`
 	Industry         *string          `json:"industry"`
 	MinRSScore       *int             `json:"min_rs_score"`
 	MaxRSScore       *int             `json:"max_rs_score"`
@@ -118,6 +119,7 @@ type ScreenBacktestOptions struct {
 	Limit            int
 	KeepRank         int
 	MarketFilterMA   int
+	HoldMinRSScore   int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -163,6 +165,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	if opt.MarketFilterMA > 0 {
 		values.Set("market_filter_ma", fmt.Sprint(opt.MarketFilterMA))
 	}
+	if opt.HoldMinRSScore > 0 {
+		values.Set("hold_min_rs_score", fmt.Sprint(opt.HoldMinRSScore))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -189,6 +194,7 @@ type ScreenBacktestInput struct {
 	Limit            int    `json:"limit,omitempty"`
 	KeepRank         int    `json:"keep_rank,omitempty"`
 	MarketFilterMA   int    `json:"market_filter_ma,omitempty"`
+	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -247,6 +253,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(200.0),
 				Description: "換股緩衝(選填,需介於 limit 至 200;預設等於 limit 即不緩衝):上一期持有的股票只要這期仍符合條件、且排在前 keep_rank 名就續抱,空出的名額才依 RS 補滿,用來降低換手與交易成本。例如 limit=20、keep_rank=40",
+			},
+			"hold_min_rs_score": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(99.0),
+				Description: "續抱條件(選填,1 至 99):上一期持有的股票即使不再符合選股條件(例如法人連買中斷、訊號過期),只要換股當天 RS 分數不低於此值就續抱;名額不足時先留符合選股條件的股票。用來把進場條件與續抱條件分開、降低換手",
 			},
 			"market_filter_ma": {
 				Type:        "integer",
@@ -338,6 +350,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if err != nil {
 		return nil, nil, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
 	}
+	if in.HoldMinRSScore != 0 && (in.HoldMinRSScore < 1 || in.HoldMinRSScore > 99) {
+		return nil, nil, fmt.Errorf("參數 hold_min_rs_score 必須介於 1 到 99 之間")
+	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
 		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
@@ -366,7 +381,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -428,6 +443,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	if e.MarketFilterMA != nil {
 		b.printf(";大盤濾網:換股日加權指數低於 %d 日均線就空手", *e.MarketFilterMA)
+	}
+	if e.HoldMinRSScore != nil {
+		b.printf(";續抱條件:上一期持股 RS ≥ %d 就續抱", *e.HoldMinRSScore)
 	}
 	if e.KeepRank != nil && *e.KeepRank > e.Limit {
 		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
