@@ -128,9 +128,9 @@ func institutionalStreakSchema() *jsonschema.Schema {
 			"streak": {
 				Type:        "integer",
 				Minimum:     ptr(1.0),
-				Maximum:     ptr(20.0),
+				Maximum:     ptr(float64(maxStreakDays)),
 				Default:     []byte("3"),
-				Description: "連續天數 N(預設 3,範圍 1 至 20):連續買超(或賣超)剛好滿 N 天的那一天算一次事件,之後延續的天數不重複計算",
+				Description: "連續天數 N(預設 3,範圍 1 至 60):連續買超(或賣超)剛好滿 N 天的那一天算一次事件,之後延續的天數不重複計算",
 			},
 			"market": listedOTCMarketSchema(),
 			"industry": {
@@ -173,9 +173,9 @@ func (ts *institutionalStreakToolset) institutionalStreakPerformance(ctx context
 	if side != "buy" && side != "sell" {
 		return nil, nil, fmt.Errorf("參數 side 必須為 buy 或 sell,收到了 %q", in.Side)
 	}
-	streak, err := rangedLimit(in.Streak, 3, 1, 20)
+	streak, err := rangedLimit(in.Streak, 3, 1, maxStreakDays)
 	if err != nil {
-		return nil, nil, fmt.Errorf("參數 streak 必須介於 1 到 20 之間")
+		return nil, nil, fmt.Errorf("參數 streak 必須介於 1 到 %d 之間", maxStreakDays)
 	}
 	market, err := normalizeMarket(in.Market)
 	if err != nil {

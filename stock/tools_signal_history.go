@@ -210,7 +210,7 @@ type SignalPerformanceInput struct {
 	Industry   string `json:"industry,omitempty"`
 	MinRSScore int    `json:"min_rs_score,omitempty"`
 	MaxRSScore int    `json:"max_rs_score,omitempty"`
-	// MinForeignStreak、MinTrustStreak 是訊號當天外資、投信連續買超天數下限(1 至 20)。
+	// MinForeignStreak、MinTrustStreak 是訊號當天外資、投信連續買超天數下限(1 至 60)。
 	MinForeignStreak int `json:"min_foreign_streak,omitempty"`
 	MinTrustStreak   int `json:"min_trust_streak,omitempty"`
 	// GroupBy 為 "year" 時依年度拆分。
@@ -359,26 +359,29 @@ func rsScoreBoundSchema(description string) *jsonschema.Schema {
 	}
 }
 
-// streakBoundSchema 描述法人連續買超天數下限參數:1 至 20 的整數。
+// maxStreakDays 是法人連續買超天數條件的上限,與 Data API 一致(連續天數入庫時預先計算、不限回看長度)。
+const maxStreakDays = 60
+
+// streakBoundSchema 描述法人連續買超天數下限參數:1 至 60 的整數。
 func streakBoundSchema(investor string) *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:    "integer",
 		Minimum: ptr(1.0),
-		Maximum: ptr(20.0),
-		Description: "只統計訊號當天" + investor + "已連續買超至少這麼多天的訊號(選填,1 至 20);" +
+		Maximum: ptr(float64(maxStreakDays)),
+		Description: "只統計訊號當天" + investor + "已連續買超至少這麼多天的訊號(選填,1 至 60);" +
 			"連續天數與 get_institutional_flow_ranking 同一算法,籌碼資料從 2019 年起,之前的訊號不列入;" +
 			"外資與投信都設時需同時符合,大盤基準不受影響",
 	}
 }
 
-// validateStreakBounds 檢查連續買超天數下限:0 代表不篩選,其餘需在 1 至 20。
+// validateStreakBounds 檢查連續買超天數下限:0 代表不篩選,其餘需在 1 至 60。
 func validateStreakBounds(foreign, trust int) error {
 	for _, bound := range []struct {
 		name  string
 		value int
 	}{{"min_foreign_streak", foreign}, {"min_trust_streak", trust}} {
-		if bound.value != 0 && (bound.value < 1 || bound.value > 20) {
-			return fmt.Errorf("參數 %s 必須介於 1 到 20 之間", bound.name)
+		if bound.value != 0 && (bound.value < 1 || bound.value > maxStreakDays) {
+			return fmt.Errorf("參數 %s 必須介於 1 到 %d 之間", bound.name, maxStreakDays)
 		}
 	}
 	return nil
