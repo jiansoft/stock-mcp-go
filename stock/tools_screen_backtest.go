@@ -33,6 +33,7 @@ var backtestHoldDays = []int{5, 20, 60, 120, 240}
 type BacktestPeriod struct {
 	Date             string   `json:"date"`
 	Holdings         int      `json:"holdings"`
+	MarketFiltered   bool     `json:"market_filtered"`
 	AvgReturn        *float64 `json:"avg_return"`
 	ReturnAfterCosts *float64 `json:"return_after_costs"`
 	Turnover         *float64 `json:"turnover"`
@@ -45,6 +46,7 @@ type BacktestPeriod struct {
 type BacktestSummary struct {
 	Periods                   int      `json:"periods"`
 	InvestedPeriods           int      `json:"invested_periods"`
+	MarketFilteredPeriods     int      `json:"market_filtered_periods"`
 	AvgHoldings               *float64 `json:"avg_holdings"`
 	AvgTurnover               *float64 `json:"avg_turnover"`
 	TotalReturn               *float64 `json:"total_return"`
@@ -92,6 +94,7 @@ type ScreenBacktestEnvelope struct {
 	HoldDays         int              `json:"hold_days"`
 	Limit            int              `json:"limit"`
 	KeepRank         *int             `json:"keep_rank"`
+	MarketFilterMA   *int             `json:"market_filter_ma"`
 	Industry         *string          `json:"industry"`
 	MinRSScore       *int             `json:"min_rs_score"`
 	MaxRSScore       *int             `json:"max_rs_score"`
@@ -114,6 +117,7 @@ type ScreenBacktestOptions struct {
 	HoldDays         int
 	Limit            int
 	KeepRank         int
+	MarketFilterMA   int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -156,6 +160,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	if opt.KeepRank > 0 {
 		values.Set("keep_rank", fmt.Sprint(opt.KeepRank))
 	}
+	if opt.MarketFilterMA > 0 {
+		values.Set("market_filter_ma", fmt.Sprint(opt.MarketFilterMA))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -181,6 +188,7 @@ type ScreenBacktestInput struct {
 	HoldDays         int    `json:"hold_days,omitempty"`
 	Limit            int    `json:"limit,omitempty"`
 	KeepRank         int    `json:"keep_rank,omitempty"`
+	MarketFilterMA   int    `json:"market_filter_ma,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -239,6 +247,11 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(200.0),
 				Description: "換股緩衝(選填,需介於 limit 至 200;預設等於 limit 即不緩衝):上一期持有的股票只要這期仍符合條件、且排在前 keep_rank 名就續抱,空出的名額才依 RS 補滿,用來降低換手與交易成本。例如 limit=20、keep_rank=40",
+			},
+			"market_filter_ma": {
+				Type:        "integer",
+				Enum:        []any{20, 60, 120, 240},
+				Description: "大盤濾網(選填):換股日加權指數收盤低於自己的 N 日均線(20/60/120/240 個交易日)時這期空手、賣光持股;不設定為不濾",
 			},
 			"market": listedOTCMarketSchema(),
 			"industry": {
@@ -325,6 +338,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if err != nil {
 		return nil, nil, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
 	}
+	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
+		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
+	}
 	if in.KeepRank != 0 && (in.KeepRank < limit || in.KeepRank > 200) {
 		return nil, nil, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", limit)
 	}
@@ -350,7 +366,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -410,6 +426,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if len(filters) > 0 {
 		b.printf(",條件 %s", strings.Join(filters, "、"))
 	}
+	if e.MarketFilterMA != nil {
+		b.printf(";大盤濾網:換股日加權指數低於 %d 日均線就空手", *e.MarketFilterMA)
+	}
 	if e.KeepRank != nil && *e.KeepRank > e.Limit {
 		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
 	}
@@ -426,6 +445,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			displayPercent(s.MaxDrawdown), displayPercent(s.BenchmarkMaxDrawdown),
 			displayPercent(s.AvgPeriodReturn), displayPercent(s.AvgBenchmarkReturn),
 			displayRate(s.WinRate), displayRate(s.BeatMarketRate))
+		if e.MarketFilterMA != nil {
+			b.printf("因大盤濾網空手 %d 期。", s.MarketFilteredPeriods)
+		}
 		if s.TotalReturnAfterCosts != nil {
 			b.printf("\n扣交易成本(手續費 0.1425%%×%s 折扣、賣出證交稅 0.3%%,依換手計算)後:累積報酬 %s、年化 %s、最大回撤 %s;平均換手率 %s。",
 				displayFloat(e.FeeDiscount), displayPercent(s.TotalReturnAfterCosts), displayPercent(s.AnnualizedAfterCosts),
@@ -449,7 +471,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		b.printf("\n最近 %d 期:", len(recent))
 		for _, p := range recent {
 			if p.Holdings == 0 {
-				b.printf("\n- %s 空手(基準 %s)", p.Date, displayPercent(p.BenchmarkReturn))
+				reason := ""
+				if p.MarketFiltered {
+					reason = "大盤濾網,"
+				}
+				b.printf("\n- %s 空手(%s基準 %s)", p.Date, reason, displayPercent(p.BenchmarkReturn))
 				continue
 			}
 			etf := ""

@@ -104,7 +104,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	opt = ScreenBacktestOptions{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
-		FeeDiscount: ptr(0.0), KeepRank: 10,
+		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120,
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -112,7 +112,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	for key, want := range map[string]string{
 		"from": "2019-01-02", "to": "2026-10-14", "hold_days": "60", "limit": "5", "industry": "半導體業",
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
-		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10",
+		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -153,13 +153,13 @@ func TestScreenBacktestTool(t *testing.T) {
 	in := ScreenBacktestInput{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: " TPEX ", Industry: " 半導體業 ",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: " new_high ",
-		FeeDiscount: ptr(0.0), KeepRank: 200,
+		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240,
 	}
 	if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
 	want := ScreenBacktestOptions{
-		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, Market: "tpex", Industry: "半導體業",
+		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, Market: "tpex", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: "new_high",
 	}
 	if f.got.FeeDiscount == nil || *f.got.FeeDiscount != 0 {
@@ -173,7 +173,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"}, {From: "2016-10-13", To: "2026-10-14"},
 		{HoldDays: 10}, {HoldDays: -5}, {Limit: 101}, {Limit: -1}, {Market: "otc"}, {Industry: strings.Repeat("業", 21)},
 		{MinRSScore: 100}, {MinRSScore: 90, MaxRSScore: 80}, {MinForeignStreak: 21}, {Kind: "breakout"}, {Indicator: "ma1"},
-		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)}, {KeepRank: 19}, {Limit: 5, KeepRank: 4}, {KeepRank: 201},
+		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)}, {KeepRank: 19}, {Limit: 5, KeepRank: 4}, {KeepRank: 201}, {MarketFilterMA: 50},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -212,7 +212,9 @@ func TestValidateBacktestPeriod(t *testing.T) {
 func TestScreenBacktestSummary(t *testing.T) {
 	e := sampleScreenBacktest()
 	e.Industry, e.MinRSScore, e.MinTrustStreak, e.Indicator, e.Kind = ptr("半導體業"), ptr(80), ptr(3), ptr("52_week"), ptr("new_high")
-	e.EtfBenchmark, e.KeepRank = ptr("0050"), ptr(40)
+	e.EtfBenchmark, e.KeepRank, e.MarketFilterMA = ptr("0050"), ptr(40), ptr(60)
+	e.Summary.MarketFilteredPeriods = 1
+	e.Periods[6].MarketFiltered = true
 	e.Summary.Volatility, e.Summary.SharpeRatio, e.Summary.BenchmarkVolatility, e.Summary.BenchmarkSharpeRatio = ptr(24.5), ptr(1.12), ptr(18.0), ptr(0.95)
 	e.Summary.EtfVolatility, e.Summary.EtfSharpeRatio = ptr(17.2), ptr(1.31)
 	e.Summary.EtfTotalReturn, e.Summary.EtfAnnualizedReturn, e.Summary.EtfMaxDrawdown, e.Summary.BeatEtfRate = ptr(20.5), ptr(6.4), ptr(-12.0), ptr(0.75)
@@ -224,12 +226,12 @@ func TestScreenBacktestSummary(t *testing.T) {
 	summary := screenBacktestSummary(e)
 	for _, want := range []string{
 		"all 市場 2023-10-15～2026-10-14 條件選股回測:每 20 個交易日換股,依相對強度分數由高到低取前 20 檔等權持有",
-		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;換股緩衝:上一期持股仍在前 40 名就續抱。",
+		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;換股緩衝:上一期持股仍在前 40 名就續抱。",
+		"勝過基準 50%。因大盤濾網空手 1 期。",
 		"共 8 期(有持股 7 期,平均 20 檔):累積報酬 35.2%(基準 12.6%)、年化 10.6%(基準 4%)、最大回撤 -18.3%(基準 -9.1%)",
 		"每期平均 1.4%(基準 1.5%)、勝率 62.5%、勝過基準 50%。",
 		"最近 6 期:",
-		"\n- 2026-07-02 空手(基準 1.5%)",
-		"\n- 2026-07-02 空手(基準 1.5%)",
+		"\n- 2026-07-02 空手(大盤濾網,基準 1.5%)",
 		"\n- 2026-06-02 持有 20 檔,報酬 3%(基準 1.5%);2330、2454",
 		"\n- 2026-08-02 持有 20 檔,報酬 5%(扣成本 4.78%、換手 50%,基準 1.5%、0050 2.1%);2330、2454",
 		"對照實際買得到的 0050(同樣每 20 個交易日進出、未扣成本):累積報酬 20.5%、年化 6.4%、最大回撤 -12%;勝過 0050 的期數 75%。",
