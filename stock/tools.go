@@ -332,7 +332,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_signal_performance",
 			Description: "統計一段期間(預設近一年,最長 1,096 天)內各技術訊號出現後 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、" +
-				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選。" +
+				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選," +
+				"也可只看訊號當天相對強度(RS)分數在指定區間的訊號(例如 RS ≥ 80 的強勢股創新高)。" +
 				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」。過去表現不代表未來結果。",
 			InputSchema: signalPerformanceSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
@@ -351,7 +352,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_relative_strength_ranking",
 			Description: "查詢上市櫃股票的相對強度(RS)排行:加權報酬(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)" +
-				"在上市櫃全體中的百分位分數 1–99(99 最強)與名次,附近 20/60/120/240 日報酬;可依市場、產業篩選或只查單一股票," +
+				"在上市櫃普通股(不含 ETF、特別股)中的百分位分數 1–99(99 最強)與名次,附近 20/60/120/240 日報酬;可依市場、產業篩選或只查單一股票," +
 				"order=asc 列出最弱的。適合回答「目前最強勢的股票有哪些」「半導體哪幾檔最強」「2330 的相對強度幾分」。" +
 				"上市未滿 240 個交易日的股票不計分。過去表現不代表未來結果。",
 			InputSchema: relativeStrengthSchema(),
@@ -363,7 +364,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		hts := &relativeStrengthHistoryToolset{rs: rs, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_relative_strength_history",
-			Description: "查詢指定股票近 N 個交易日(預設 60,最多 120)的相對強度(RS)走勢:每天以上市櫃全體計分(與 get_relative_strength_ranking 同一算法)的分數、名次," +
+			Description: "查詢指定股票近 N 個交易日(預設 60,最多 120)的相對強度(RS)走勢:每天以上市櫃普通股(不含 ETF、特別股)計分(與 get_relative_strength_ranking 同一算法)的分數、名次," +
 				"以及期間最高/最低分、分數變化與穿越 50、80 分的轉折。適合回答「這檔股票是在變強還是變弱」「什麼時候轉強的」。" +
 				"上市未滿 240 個交易日的股票沒有分數。過去表現不代表未來結果。",
 			InputSchema: relativeStrengthHistorySchema(),
@@ -375,7 +376,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		ists := &industryStrengthToolset{is: is, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_industry_strength",
-			Description: "查詢各產業的相對強度(RS):成分股 RS 分數(與 get_relative_strength_ranking 相同,以上市櫃全體計算)的中位數、" +
+			Description: "查詢各產業的相對強度(RS):成分股 RS 分數(與 get_relative_strength_ranking 相同,以上市櫃普通股(不含 ETF、特別股)計算)的中位數、" +
 				"RS ≥ 80 的強勢占比與 ≤ 20 的弱勢占比、平均加權報酬、RS 前三名的領先股,以及與約 20 個交易日前中位數的變化;依中位數排名。" +
 				"適合回答「現在哪些產業最強勢」「資金輪動到哪裡」「哪些產業轉強或轉弱」。過去表現不代表未來結果。",
 			InputSchema: industryStrengthSchema(),
@@ -394,6 +395,20 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: institutionalFlowSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.institutionalFlow)
+	}
+
+	if sq, ok := q.(InstitutionalStreakQuerier); ok {
+		sts := &institutionalStreakToolset{sq: sq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_institutional_streak_performance",
+			Description: "統計一段期間(預設近一年,最長 1,096 天)內法人(外資、投信、自營商或合計)連續買超或賣超滿 N 天(預設 3,1 至 20)之後" +
+				" 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例," +
+				"並附大盤基準;可依市場、產業篩選。每檔股票連續滿 N 天的那一天算一次事件,延續的天數不重複計算。" +
+				"適合回答「投信連買 3 天之後通常會漲嗎」「外資連賣 5 天後是不是該避開」「跟著法人買在半導體有沒有超額報酬」。" +
+				"籌碼資料從 2025-10 起,長天期樣本較少。過去表現不代表未來結果。",
+			InputSchema: institutionalStreakSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.institutionalStreakPerformance)
 	}
 
 	if fq, ok := q.(IndustryFlowQuerier); ok {

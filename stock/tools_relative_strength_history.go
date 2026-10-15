@@ -1,7 +1,7 @@
 // Package stock 的 get_relative_strength_history 工具:個股近 N 個交易日的相對強度(RS)走勢。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/{symbol}/relative-strength:每個交易日都以
-// 上市櫃全體計分(與 get_relative_strength_ranking 同一算法),附期間高低點、分數變化與穿越
+// 上市櫃普通股(不含 ETF、特別股)計分(與 get_relative_strength_ranking 同一算法),附期間高低點、分數變化與穿越
 // 50/80 門檻的轉折。
 package stock
 
@@ -154,7 +154,7 @@ func relativeStrengthHistorySummary(e *RelativeStrengthHistoryEnvelope) string {
 		return b.String()
 	}
 	latest := e.Items[0]
-	b.printf("%s 近 %d 個交易日的相對強度(分數 1–99 為加權報酬 0.4×近 60 日+0.3×近 120 日+0.3×近 240 日在上市櫃全體的百分位,99 最強):"+
+	b.printf("%s 近 %d 個交易日的相對強度(分數 1–99 為加權報酬 0.4×近 60 日+0.3×近 120 日+0.3×近 240 日在上市櫃普通股(不含 ETF、特別股)的百分位,99 最強):"+
 		"%s 為 RS %d(第 %d 名/%d 檔)。期間最高 %s(%s)、最低 %s(%s),期間變化 %s 分。",
 		e.StockSymbol, e.Days, latest.Date, latest.RSScore, latest.Rank, latest.Universe,
 		displayInt(e.HighScore), displayString(e.HighDate), displayInt(e.LowScore), displayString(e.LowDate), signedInt(e.ScoreChange))

@@ -103,7 +103,7 @@ func TestIndustryStrengthTool(t *testing.T) {
 		t.Fatalf("structured output 錯誤:%#v", output)
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
-	for _, want := range []string{"由強到弱", "上市櫃全體 2225 檔", "與 2026-09-14 比較", "第 1 名 半導體業(160 檔):RS 中位數 72.5、變化 +12.5",
+	for _, want := range []string{"由強到弱", "上市櫃普通股(不含 ETF、特別股)2225 檔", "與 2026-09-14 比較", "第 1 名 半導體業(160 檔):RS 中位數 72.5、變化 +12.5",
 		"強勢(≥80)33.3%", "弱勢(≤20)5%", "平均加權報酬 35.2%", "領先:3441 聯一光 99、2330 台積電 80", "第 2 名 航運業(30 檔):RS 中位數 40、變化 無"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("摘要缺少 %q:%s", want, text)

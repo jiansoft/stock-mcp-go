@@ -113,7 +113,7 @@ func TestRelativeStrengthTool(t *testing.T) {
 		t.Fatalf("structured output 錯誤:%#v", output)
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
-	for _, want := range []string{"全體 1800 檔", "由強到弱", "第 1 名 2330 台積電", "RS 99", "近 20 日 3.2%", "近 20 日 無", "另有 1 檔未列出"} {
+	for _, want := range []string{"(不含 ETF、特別股)1800 檔", "由強到弱", "第 1 名 2330 台積電", "RS 99", "近 20 日 3.2%", "近 20 日 無", "另有 1 檔未列出"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("摘要缺少 %q:%s", want, text)
 		}

@@ -1,7 +1,7 @@
 // Package stock 的 get_relative_strength_ranking 工具:上市櫃股票的相對強度(RS)排行。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/market/relative-strength:加權報酬
-// (0.4 × 近 60 日 + 0.3 × 近 120 日 + 0.3 × 近 240 日,還原權值、含息)在上市櫃全體中的
+// (0.4 × 近 60 日 + 0.3 × 近 120 日 + 0.3 × 近 240 日,還原權值、含息)在上市櫃普通股(不含 ETF、特別股)中的
 // 百分位分數 1–99 與名次。市場、產業、代號只篩選輸出,分數與名次一律以全體計算。
 package stock
 
@@ -118,7 +118,7 @@ func relativeStrengthSchema() *jsonschema.Schema {
 			"industry": {
 				Type:        "string",
 				MaxLength:   ptr(20),
-				Description: "只列出這個產業(選填),需為完整產業名稱,例如「半導體業」;分數與名次仍以上市櫃全體計算",
+				Description: "只列出這個產業(選填),需為完整產業名稱,例如「半導體業」;分數與名次仍以上市櫃普通股(不含 ETF、特別股)計算",
 			},
 			"symbol": {
 				Type:        "string",
@@ -209,7 +209,7 @@ func relativeStrengthSummary(e *RelativeStrengthEnvelope, symbol string) string 
 		direction = "由弱到強"
 	}
 	b.printf("%s 相對強度排行(%s 市場,%s):分數 1–99 為加權報酬(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)"+
-		"在上市櫃全體 %d 檔中的百分位,99 最強;符合條件 %d 檔。",
+		"在上市櫃普通股(不含 ETF、特別股)%d 檔中的百分位,99 最強;符合條件 %d 檔。",
 		e.DataAsOf, e.Market, direction, e.Universe, e.Matched)
 	if len(e.Items) == 0 {
 		if symbol != "" {
