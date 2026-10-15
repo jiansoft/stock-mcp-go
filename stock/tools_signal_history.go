@@ -227,14 +227,15 @@ func signalFilterSchemas(target string) (*jsonschema.Schema, *jsonschema.Schema)
 	kind := &jsonschema.Schema{
 		Type: "string",
 		Enum: kinds,
-		Description: "只" + target + "這種訊號(選填):golden_cross 黃金交叉、death_cross 死亡交叉、cross_above 收盤站上均線、" +
-			"cross_below 收盤跌破均線、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低",
+		Description: "只" + target + "這種訊號(選填):golden_cross 黃金交叉、death_cross 死亡交叉、cross_above 收盤站上均線或 RS 向上穿越、" +
+			"cross_below 收盤跌破均線或 RS 向下穿越、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低",
 	}
 	indicator := &jsonschema.Schema{
 		Type: "string",
 		Enum: indicators,
 		Description: "只" + target + "這個來源的訊號(選填):ma5_ma20、ma20_ma60(均線交叉)、kd、macd、" +
-			"close_ma20/close_ma60/close_ma240(收盤站上或跌破月/季/年線)、rsi14、52_week(52 週新高新低)",
+			"close_ma20/close_ma60/close_ma240(收盤站上或跌破月/季/年線)、rsi14、52_week(52 週新高新低)、" +
+			"rs80/rs50(相對強度分數比前一個交易日站上或跌破 80/50 分)",
 	}
 	return kind, indicator
 }
@@ -503,6 +504,19 @@ func horizonText(h HorizonStat) string {
 		displayPercent(h.AvgExcessReturn), displayRate(h.BeatMarketRate), h.Samples)
 }
 
+// benchmarkText 組出大盤基準各天期的平均與上漲比例,以分號分隔。
+func benchmarkText(benchmark []BenchmarkStat) string {
+	parts := make([]string, 0, len(benchmark))
+	for _, bench := range benchmark {
+		if bench.Samples == 0 {
+			parts = append(parts, fmt.Sprintf("%d 日 尚無樣本", bench.Days))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d 日 平均 %s、上漲比例 %s", bench.Days, displayPercent(bench.AvgReturn), displayRate(bench.WinRate)))
+	}
+	return strings.Join(parts, ";")
+}
+
 // signalPerformanceSummary 組出給模型閱讀的文字摘要:期間與篩選、大盤基準與各訊號的表現。
 func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	var b summaryBuilder
@@ -532,15 +546,7 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	}
 	b.printf("。")
 	if len(e.Benchmark) > 0 {
-		parts := make([]string, 0, len(e.Benchmark))
-		for _, bench := range e.Benchmark {
-			if bench.Samples == 0 {
-				parts = append(parts, fmt.Sprintf("%d 日 尚無樣本", bench.Days))
-				continue
-			}
-			parts = append(parts, fmt.Sprintf("%d 日 平均 %s、上漲比例 %s", bench.Days, displayPercent(bench.AvgReturn), displayRate(bench.WinRate)))
-		}
-		b.printf("\n大盤基準:%s。", strings.Join(parts, ";"))
+		b.printf("\n大盤基準:%s。", benchmarkText(e.Benchmark))
 	}
 	if len(e.Items) == 0 {
 		b.printf("\n期間內沒有符合條件的訊號。")

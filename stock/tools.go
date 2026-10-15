@@ -319,7 +319,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_signal_stocks",
 			Description: "查詢某交易日(預設最新)出現技術訊號的上市櫃股票:均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
-				"RSI(14) 與 K 值超買超賣、52 週新高新低;可依市場、訊號種類、訊號來源與產業篩選,依成交值由大到小排序,並附各訊號家數。" +
+				"RSI(14) 與 K 值超買超賣、52 週新高新低,以及相對強度(RS)分數站上或跌破 80/50 分;可依市場、訊號種類、訊號來源與產業篩選," +
+				"依成交值由大到小排序,並附各訊號家數。" +
 				"適合回答「今天哪些股票創 52 週新高」「哪些半導體股 KD 黃金交叉」「哪些股票跌破季線」。訊號以還原權值的價格計算。",
 			InputSchema: signalsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
@@ -395,6 +396,20 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: institutionalFlowSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.institutionalFlow)
+	}
+
+	if sq, ok := q.(InstitutionalStreakQuerier); ok {
+		sts := &institutionalStreakToolset{sq: sq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_institutional_streak_performance",
+			Description: "統計一段期間(預設近一年,最長 1,096 天)內法人(外資、投信、自營商或合計)連續買超或賣超滿 N 天(預設 3,1 至 20)之後" +
+				" 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例," +
+				"並附大盤基準;可依市場、產業篩選。每檔股票連續滿 N 天的那一天算一次事件,延續的天數不重複計算。" +
+				"適合回答「投信連買 3 天之後通常會漲嗎」「外資連賣 5 天後是不是該避開」「跟著法人買在半導體有沒有超額報酬」。" +
+				"籌碼資料從 2025-10 起,長天期樣本較少。過去表現不代表未來結果。",
+			InputSchema: institutionalStreakSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.institutionalStreakPerformance)
 	}
 
 	if fq, ok := q.(IndustryFlowQuerier); ok {

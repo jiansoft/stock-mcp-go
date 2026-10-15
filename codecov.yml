@@ -1,0 +1,17 @@
+# Codecov 設定。
+#
+# 覆蓋率報告由 CI(.github/workflows/ci.yml)以 go test -coverprofile 產出 coverage.out 後上傳。
+
+coverage:
+  status:
+    project:
+      default:
+        # 允許小幅波動,避免無關的重構因四捨五入就讓 CI 變紅。
+        threshold: 1%
+    patch:
+      default:
+        threshold: 1%
+
+comment:
+  layout: "reach, diff, files"
+  require_changes: true
