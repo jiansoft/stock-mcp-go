@@ -41,7 +41,7 @@ type ScreenedStock struct {
 	DebtRatioPercent   *float64 `json:"debt_ratio_percent"`
 	FreeCashFlowTTM    *int64   `json:"free_cash_flow_ttm"`
 	HealthPeriod       *string  `json:"health_period"`
-	// RSScore 是相對強度分數 1–99(上市櫃全體百分位,資料日見 Screening.RSAsOf);
+	// RSScore 是相對強度分數 1–99(上市櫃普通股(不含 ETF、特別股)百分位,資料日見 Screening.RSAsOf);
 	// 上市未滿 240 個交易日、暫停交易或尚無報酬資料時為 nil。
 	RSScore *int `json:"rs_score"`
 	// ForeignStreak、TrustStreak 是截至 Screening.ChipAsOf 的外資、投信連續買賣超天數:
