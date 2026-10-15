@@ -416,6 +416,19 @@ func horizonText(h HorizonStat) string {
 		displayPercent(h.AvgExcessReturn), displayRate(h.BeatMarketRate), h.Samples)
 }
 
+// benchmarkText 組出大盤基準各天期的平均與上漲比例,以分號分隔。
+func benchmarkText(benchmark []BenchmarkStat) string {
+	parts := make([]string, 0, len(benchmark))
+	for _, bench := range benchmark {
+		if bench.Samples == 0 {
+			parts = append(parts, fmt.Sprintf("%d 日 尚無樣本", bench.Days))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d 日 平均 %s、上漲比例 %s", bench.Days, displayPercent(bench.AvgReturn), displayRate(bench.WinRate)))
+	}
+	return strings.Join(parts, ";")
+}
+
 // signalPerformanceSummary 組出給模型閱讀的文字摘要:期間與篩選、大盤基準與各訊號的表現。
 func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	var b summaryBuilder
@@ -436,15 +449,7 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	}
 	b.printf("。")
 	if len(e.Benchmark) > 0 {
-		parts := make([]string, 0, len(e.Benchmark))
-		for _, bench := range e.Benchmark {
-			if bench.Samples == 0 {
-				parts = append(parts, fmt.Sprintf("%d 日 尚無樣本", bench.Days))
-				continue
-			}
-			parts = append(parts, fmt.Sprintf("%d 日 平均 %s、上漲比例 %s", bench.Days, displayPercent(bench.AvgReturn), displayRate(bench.WinRate)))
-		}
-		b.printf("\n大盤基準:%s。", strings.Join(parts, ";"))
+		b.printf("\n大盤基準:%s。", benchmarkText(e.Benchmark))
 	}
 	if len(e.Items) == 0 {
 		b.printf("\n期間內沒有符合條件的訊號。")

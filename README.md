@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 19 read-only tools backed by the `stock_rust` Data API
+- 39 read-only tools backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -77,6 +77,7 @@ stock-mcp-go
 | `get_relative_strength_history` | API | A stock's relative-strength (RS) trend over the last N trading days (default 60, up to 120): daily score and rank against the whole listed/OTC market (same method as the ranking), period high/low, score change and crossings of the 50/80 thresholds |
 | `get_industry_strength` | API | Relative strength by industry: median RS score of each industry's scored stocks (scores against the whole listed/OTC market), share of strong (RS ≥ 80) and weak (RS ≤ 20) stocks, average weighted return, top-3 leaders and the change in median versus about 20 trading days earlier — shows where money is rotating |
 | `get_institutional_flow_ranking` | API | Net buy/sell ranking of foreign investors, investment trusts, dealers or all three over the last N trading days (1–60): net lots, estimated net amount (daily net shares × that day's close), share of period volume, buy/sell days and the current consecutive buy/sell streak; filter by market and industry |
+| `get_institutional_streak_performance` | API | How stocks performed after foreign investors, investment trusts, dealers or all three bought (or sold) for N consecutive days (1–20, default 3) over a period (default past year, up to 1,096 days): average/median adjusted total return 5, 20, 60, 120 and 240 trading days later, win rate, average excess return over the same-day market average and beat-the-market rate, with a market benchmark; filter by market and industry |
 | `get_industry_flow` | API | Institutional money flow by industry over the last N trading days (1–60): estimated net amount per industry, share of the industry's trade value, number of net-buy and net-sell stocks, and the top-3 buyers and sellers — shows where institutions are adding or cutting |
 | `get_margin_ranking` | API | Margin-trading ranking over the last N trading days (1–60): largest increases or decreases in margin purchases or short sales, or the highest short-to-margin ratio (margin of at least 100 lots), with balances, changes and closing price; filter by market and industry |
 | `get_chip_data` | API | Chip data for one stock: daily institutional flows and margin balances, buy/sell streaks, major holders, insider pledges, and main broker flow |
