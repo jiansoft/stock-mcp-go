@@ -163,7 +163,7 @@ func TestLoad(t *testing.T) {
 		if cfg.TrustProxy {
 			t.Error("TRUST_PROXY 預設應為 false")
 		}
-		if cfg.APITimeout != 5*time.Second {
+		if cfg.APITimeout != 30*time.Second {
 			t.Errorf("API_TIMEOUT_MS 預設值不正確:%+v", cfg)
 		}
 		if cfg.RateLimitWindow != time.Minute || cfg.RateLimitMax != 60 {

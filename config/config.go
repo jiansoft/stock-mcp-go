@@ -201,7 +201,7 @@ func Load() (*Config, error) {
 	if cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
 	}
-	apiTimeoutMS, err := intEnv("API_TIMEOUT_MS", 5000, 1, 600_000)
+	apiTimeoutMS, err := intEnv("API_TIMEOUT_MS", 30000, 1, 600_000)
 	if err != nil {
 		return nil, err
 	}

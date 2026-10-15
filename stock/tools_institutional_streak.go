@@ -220,6 +220,6 @@ func institutionalStreakSummary(e *InstitutionalStreakEnvelope) string {
 		}
 		b.printf("\n事件之後:%s。", strings.Join(parts, ";"))
 	}
-	b.printf("\n籌碼資料從 2025-10 起,長天期樣本較少。過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
+	b.printf("\n籌碼資料從 2022-10 起,之前的事件不列入。過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
 }
