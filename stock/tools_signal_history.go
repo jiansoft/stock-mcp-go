@@ -51,25 +51,29 @@ type BenchmarkStat struct {
 
 // SignalPerformanceEnvelope 是 signals/performance endpoint 的完整回應。
 type SignalPerformanceEnvelope struct {
-	From      string                  `json:"from"`
-	To        string                  `json:"to"`
-	Market    string                  `json:"market"`
-	Kind      *string                 `json:"kind"`
-	Indicator *string                 `json:"indicator"`
-	Industry  *string                 `json:"industry"`
-	Adjusted  bool                    `json:"adjusted"`
-	Benchmark []BenchmarkStat         `json:"benchmark"`
-	Items     []SignalPerformanceItem `json:"items"`
+	From       string                  `json:"from"`
+	To         string                  `json:"to"`
+	Market     string                  `json:"market"`
+	Kind       *string                 `json:"kind"`
+	Indicator  *string                 `json:"indicator"`
+	Industry   *string                 `json:"industry"`
+	MinRSScore *int                    `json:"min_rs_score"`
+	MaxRSScore *int                    `json:"max_rs_score"`
+	Adjusted   bool                    `json:"adjusted"`
+	Benchmark  []BenchmarkStat         `json:"benchmark"`
+	Items      []SignalPerformanceItem `json:"items"`
 }
 
-// SignalPerformanceOptions 是訊號績效的查詢條件;空字串代表不篩選或使用預設。
+// SignalPerformanceOptions 是訊號績效的查詢條件;空字串與 0 代表不篩選或使用預設。
 type SignalPerformanceOptions struct {
-	From      string
-	To        string
-	Market    string
-	Kind      string
-	Indicator string
-	Industry  string
+	From       string
+	To         string
+	Market     string
+	Kind       string
+	Indicator  string
+	Industry   string
+	MinRSScore int
+	MaxRSScore int
 }
 
 // StockSignalItem 是個股某日出現的訊號與之後的表現;缺值或未滿天期時為 nil。
@@ -121,6 +125,11 @@ func (c *APIClient) SignalPerformance(ctx context.Context, opt SignalPerformance
 			values.Set(key, value)
 		}
 	}
+	for key, value := range map[string]int{"min_rs_score": opt.MinRSScore, "max_rs_score": opt.MaxRSScore} {
+		if value > 0 {
+			values.Set(key, fmt.Sprint(value))
+		}
+	}
 	var body SignalPerformanceEnvelope
 	found, err := c.getFound(ctx, "/api/v1/market/signals/performance?"+values.Encode(), &body)
 	if err != nil {
@@ -157,12 +166,14 @@ func (c *APIClient) StockSignals(ctx context.Context, symbol string, opt StockSi
 
 // SignalPerformanceInput 是 get_signal_performance 的輸入。
 type SignalPerformanceInput struct {
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Market    string `json:"market,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Indicator string `json:"indicator,omitempty"`
-	Industry  string `json:"industry,omitempty"`
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
+	Market     string `json:"market,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Indicator  string `json:"indicator,omitempty"`
+	Industry   string `json:"industry,omitempty"`
+	MinRSScore int    `json:"min_rs_score,omitempty"`
+	MaxRSScore int    `json:"max_rs_score,omitempty"`
 }
 
 // SignalPerformanceOutput 是訊號績效 envelope 加上 MCP 分析中繼資料。
@@ -240,8 +251,37 @@ func signalPerformanceSchema() *jsonschema.Schema {
 				MaxLength:   ptr(20),
 				Description: "只統計這個產業的訊號(選填),需為完整產業名稱,例如「半導體業」;大盤基準不受影響",
 			},
+			"min_rs_score": rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不低於此值的訊號(選填,1 至 99)"),
+			"max_rs_score": rsScoreBoundSchema("只統計訊號當天相對強度(RS)分數不高於此值的訊號(選填,1 至 99)"),
 		},
 	}
+}
+
+// rsScoreBoundSchema 描述相對強度分數上下限參數:1 至 99 的整數。
+func rsScoreBoundSchema(description string) *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:    "integer",
+		Minimum: ptr(1.0),
+		Maximum: ptr(99.0),
+		Description: description + ";分數以上市櫃普通股(不含 ETF、特別股)計算,99 最強。有設定時,訊號當天沒有分數" +
+			"(ETF、特別股、上市未滿 240 個交易日)的訊號不列入;大盤基準不受影響",
+	}
+}
+
+// validateRSScoreBounds 檢查相對強度分數上下限:0 代表不篩選,其餘需在 1 至 99,且下限不可大於上限。
+func validateRSScoreBounds(minScore, maxScore int) error {
+	for _, bound := range []struct {
+		name  string
+		value int
+	}{{"min_rs_score", minScore}, {"max_rs_score", maxScore}} {
+		if bound.value != 0 && (bound.value < 1 || bound.value > 99) {
+			return fmt.Errorf("參數 %s 必須介於 1 到 99 之間", bound.name)
+		}
+	}
+	if minScore > 0 && maxScore > 0 && minScore > maxScore {
+		return fmt.Errorf("參數 min_rs_score 不可大於 max_rs_score")
+	}
+	return nil
 }
 
 // stockSignalHistorySchema 描述 get_stock_signal_history 的輸入形狀。
@@ -343,8 +383,12 @@ func (ts *signalHistoryToolset) signalPerformance(ctx context.Context, _ *mcp.Ca
 	if err := validateLength(industry, "industry", 0, 20); err != nil {
 		return nil, nil, err
 	}
+	if err := validateRSScoreBounds(in.MinRSScore, in.MaxRSScore); err != nil {
+		return nil, nil, err
+	}
 	envelope, err := ts.history.SignalPerformance(ctx, SignalPerformanceOptions{
 		From: from, To: to, Market: market, Kind: kind, Indicator: indicator, Industry: industry,
+		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 	})
 	if err != nil {
 		switch {
@@ -444,6 +488,9 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	if e.Kind != nil {
 		filters = append(filters, "種類 "+signalKindLabel(*e.Kind))
 	}
+	if rs := rsScoreRangeText(e.MinRSScore, e.MaxRSScore); rs != "" {
+		filters = append(filters, "訊號當天 RS 分數 "+rs)
+	}
 	if len(filters) > 0 {
 		b.printf(",篩選 %s", strings.Join(filters, "、"))
 	}
@@ -463,6 +510,19 @@ func signalPerformanceSummary(e *SignalPerformanceEnvelope) string {
 	}
 	b.printf("\n過去表現不代表未來結果。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// rsScoreRangeText 說明相對強度分數區間;都沒設定時回空字串。
+func rsScoreRangeText(minScore, maxScore *int) string {
+	switch {
+	case minScore != nil && maxScore != nil:
+		return fmt.Sprintf("%d–%d", *minScore, *maxScore)
+	case minScore != nil:
+		return fmt.Sprintf("≥ %d", *minScore)
+	case maxScore != nil:
+		return fmt.Sprintf("≤ %d", *maxScore)
+	}
+	return ""
 }
 
 // returnBasisText 依 adjusted 說明報酬口徑。

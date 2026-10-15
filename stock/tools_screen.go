@@ -93,7 +93,7 @@ func screenStocksSchema() *jsonschema.Schema {
 			},
 			"min_rs_score": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(99.0),
-				Description: "最低相對強度分數(1–99;近 60/120/240 日還原報酬加權後在上市櫃全體的百分位,99 最強)",
+				Description: "最低相對強度分數(1–99;近 60/120/240 日還原報酬加權後在上市櫃普通股(不含 ETF、特別股)的百分位,99 最強)",
 			},
 			"min_foreign_streak": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0),

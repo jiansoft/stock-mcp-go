@@ -1,6 +1,6 @@
 // Package stock 的 get_industry_strength 工具:各產業成分股相對強度(RS)的分布,看資金輪動到哪些產業。
 //
-// 資料來自 stock_rust Data API 的 GET /api/v1/market/industry-strength:個股分數以上市櫃全體計算
+// 資料來自 stock_rust Data API 的 GET /api/v1/market/industry-strength:個股分數以上市櫃普通股(不含 ETF、特別股)計算
 // (與 get_relative_strength_ranking 相同),產業強度＝成分股 RS 中位數,另附強弱勢占比、領先股,
 // 以及與約 20 個交易日前的中位數比較。
 package stock
@@ -175,7 +175,7 @@ func industryStrengthSummary(e *IndustryStrengthEnvelope) string {
 		direction = "由弱到強"
 	}
 	b.printf("%s 產業相對強度(%s 市場,%s):產業強度＝成分股 RS 中位數,個股 RS 1–99 為加權報酬"+
-		"(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)在上市櫃全體 %d 檔中的百分位;變化與 %s 比較。",
+		"(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)在上市櫃普通股(不含 ETF、特別股)%d 檔中的百分位;變化與 %s 比較。",
 		e.DataAsOf, e.Market, direction, e.Universe, displayString(e.PriorAsOf))
 	if len(e.Items) == 0 {
 		b.printf("\n沒有符合檔數門檻的產業。")
