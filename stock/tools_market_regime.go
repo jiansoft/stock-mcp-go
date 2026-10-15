@@ -1,7 +1,8 @@
 // Package stock 的 get_market_regime 工具:加權指數(TAIEX)的趨勢狀態。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/market/regime:加權指數相對 5/20/60/120/240 日均線的
-// 位置與方向、均線多空排列、站在 60 日均線同一側的天數、52 週高低點距離與近 20/60/240 日漲跌幅。
+// 位置與方向、均線多空排列、站在 60 日均線同一側的天數、52 週高低點距離、近 5/20/60/240 日漲跌幅，
+// 以及近 60 個交易日站上或跌破 20/60/120/240 日均線的日子。
 package stock
 
 import (
@@ -24,6 +25,13 @@ type MovingAverageStatus struct {
 	Rising          *bool    `json:"rising"`
 }
 
+// MovingAverageCross 是收盤穿越均線的一天;Direction 為 up(站上)或 down(跌破)。
+type MovingAverageCross struct {
+	Date      string `json:"date"`
+	Days      int    `json:"days"`
+	Direction string `json:"direction"`
+}
+
 // MarketRegimeEnvelope 是 market/regime endpoint 的完整回應。
 type MarketRegimeEnvelope struct {
 	DataAsOf         string                `json:"data_as_of"`
@@ -37,9 +45,11 @@ type MarketRegimeEnvelope struct {
 	Low52Week        float64               `json:"low_52_week"`
 	FromHighPercent  float64               `json:"from_high_percent"`
 	FromLowPercent   float64               `json:"from_low_percent"`
+	Return5d         *float64              `json:"return_5d"`
 	Return20d        *float64              `json:"return_20d"`
 	Return60d        *float64              `json:"return_60d"`
 	Return240d       *float64              `json:"return_240d"`
+	RecentCrosses    []MovingAverageCross  `json:"recent_crosses"`
 }
 
 // MarketRegimeQuerier 是 get_market_regime 對資料來源的需求介面;只有 *APIClient 實作。
@@ -151,10 +161,27 @@ func marketRegimeSummary(e *MarketRegimeEnvelope) string {
 	}
 	b.printf("\n52 週(250 個交易日)最高 %.2f、最低 %.2f;距高點 %s、距低點 %s。",
 		e.High52Week, e.Low52Week, displayPercent(&e.FromHighPercent), displayPercent(&e.FromLowPercent))
-	b.printf("\n近 20 日 %s、近 60 日 %s、近 240 日 %s。",
-		displayPercent(e.Return20d), displayPercent(e.Return60d), displayPercent(e.Return240d))
+	b.printf("\n近 5 日 %s、近 20 日 %s、近 60 日 %s、近 240 日 %s。",
+		displayPercent(e.Return5d), displayPercent(e.Return20d), displayPercent(e.Return60d), displayPercent(e.Return240d))
+	b.printf("\n%s", crossesText(e.RecentCrosses))
 	b.printf("\n趨勢狀態只描述價格位置,不代表後續走勢。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// crossesText 列出近 60 個交易日站上或跌破均線的日子(API 已由新到舊排序)。
+func crossesText(crosses []MovingAverageCross) string {
+	if len(crosses) == 0 {
+		return "近 60 個交易日沒有站上或跌破 20/60/120/240 日均線。"
+	}
+	items := make([]string, 0, len(crosses))
+	for _, cross := range crosses {
+		action := "跌破"
+		if cross.Direction == "up" {
+			action = "站上"
+		}
+		items = append(items, fmt.Sprintf("%s %s %d 日均線", cross.Date, action, cross.Days))
+	}
+	return "近 60 個交易日的均線穿越(由新到舊):" + strings.Join(items, "、") + "。"
 }
 
 // alignmentText 回傳均線排列的說明;未知值原樣顯示。

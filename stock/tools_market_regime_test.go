@@ -39,7 +39,8 @@ func sampleMarketRegime() *MarketRegimeEnvelope {
 			{Days: 240},
 		},
 		DaysOnSideOfMA60: ptr(3), High52Week: 28000, Low52Week: 18000, FromHighPercent: -3.53, FromLowPercent: 50.07,
-		Return20d: ptr(4.2), Return60d: ptr(-1.5),
+		Return5d: ptr(0.8), Return20d: ptr(4.2), Return60d: ptr(-1.5),
+		RecentCrosses: []MovingAverageCross{{Date: "2026-10-15", Days: 20, Direction: "down"}, {Date: "2026-10-01", Days: 60, Direction: "up"}},
 	}
 }
 
@@ -58,7 +59,8 @@ func TestAPIClientMarketRegime(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data_as_of":"2026-10-15","close":27012.5,"change":-120.3,"change_percent":-0.44,` +
 				`"alignment":"mixed","moving_averages":[{"days":5,"value":null,"distance_percent":null,"above":null,"rising":null}],` +
 				`"days_on_side_of_ma60":null,"high_52_week":28000.0,"low_52_week":18000.0,"from_high_percent":-3.53,` +
-				`"from_low_percent":50.07,"return_20d":4.2,"return_60d":null,"return_240d":null}`))
+				`"from_low_percent":50.07,"return_5d":0.8,"return_20d":4.2,"return_60d":null,"return_240d":null,` +
+				`"recent_crosses":[{"date":"2026-10-14","days":60,"direction":"up"}]}`))
 		}
 	}))
 	defer server.Close()
@@ -66,7 +68,8 @@ func TestAPIClientMarketRegime(t *testing.T) {
 
 	envelope, err := client.MarketRegime(t.Context(), "")
 	if err != nil || envelope.Close != 27012.5 || envelope.Alignment != "mixed" || envelope.MovingAverages[0].Value != nil ||
-		envelope.DaysOnSideOfMA60 != nil || *envelope.Return20d != 4.2 {
+		envelope.DaysOnSideOfMA60 != nil || *envelope.Return20d != 4.2 || *envelope.Return5d != 0.8 ||
+		len(envelope.RecentCrosses) != 1 || envelope.RecentCrosses[0].Direction != "up" {
 		t.Fatalf("MarketRegime() = %#v, %v", envelope, err)
 	}
 	if gotPath != "/api/v1/market/regime" || gotRaw != "" {
@@ -124,7 +127,8 @@ func TestMarketRegimeSummary(t *testing.T) {
 		"240 日均線資料不足",
 		"收盤已連續 3 個交易日站在 60 日均線同一側。",
 		"52 週(250 個交易日)最高 28000.00、最低 18000.00;距高點 -3.53%、距低點 50.07%。",
-		"近 20 日 4.2%、近 60 日 -1.5%、近 240 日 ",
+		"近 5 日 0.8%、近 20 日 4.2%、近 60 日 -1.5%、近 240 日 ",
+		"近 60 個交易日的均線穿越(由新到舊):2026-10-15 跌破 20 日均線、2026-10-01 站上 60 日均線。",
 		"趨勢狀態只描述價格位置",
 	} {
 		if !strings.Contains(summary, want) {
@@ -132,8 +136,9 @@ func TestMarketRegimeSummary(t *testing.T) {
 		}
 	}
 	e := sampleMarketRegime()
-	e.Alignment, e.DaysOnSideOfMA60 = "unknown", nil
-	if other := marketRegimeSummary(e); !strings.Contains(other, ",unknown。") || strings.Contains(other, "站在 60 日均線") {
+	e.Alignment, e.DaysOnSideOfMA60, e.RecentCrosses = "unknown", nil, nil
+	if other := marketRegimeSummary(e); !strings.Contains(other, ",unknown。") || strings.Contains(other, "站在 60 日均線") ||
+		!strings.Contains(other, "近 60 個交易日沒有站上或跌破") {
 		t.Errorf("未知排列原樣顯示、沒有天數不列:%s", other)
 	}
 	if alignmentText("bearish") != alignmentLabels["bearish"] {
