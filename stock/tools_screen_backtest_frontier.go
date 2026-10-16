@@ -25,6 +25,7 @@ type ScreenBacktestFrontierEnvelope struct {
 	Limit            int                     `json:"limit"`
 	RankBy           *string                 `json:"rank_by"`
 	Weighting        *string                 `json:"weighting"`
+	MaxWeight        *int                    `json:"max_weight"`
 	FeeDiscount      *float64                `json:"fee_discount"`
 	EtfBenchmark     *string                 `json:"etf_benchmark"`
 	Offsets          int                     `json:"offsets"`
@@ -123,7 +124,7 @@ func screenBacktestFrontierSummary(e *ScreenBacktestFrontierEnvelope, opt Screen
 			displayPercent(statMedian(etf.EtfAnnualizedReturn)), displayFloat(statMedian(etf.EtfSharpeRatio)), displayPercent(statMedian(etf.EtfMaxDrawdown)))
 	}
 	b.printf("\n夏普值中位數最高的比例:%s;年化報酬中位數最高的比例:%s。", weightText(e.BestSharpeWeight), weightText(e.BestReturnWeight))
-	b.printf("\n0%% 為純策略、100%% 等於只持有 0050;0050 部位不計買賣成本,且每期都回到固定比例(實際再平衡會有少量成本)。各比例用同一批回測,最佳比例仍可能只是這段期間的結果。過去表現不代表未來結果。免責聲明:%s",
+	b.printf("\n0%% 為純策略、100%% 等於只持有 0050;每期調回固定比例的買賣計入成本(0050 證交稅 0.1%%,第一次買進 0050 不計)。各比例用同一批回測,最佳比例仍可能只是這段期間的結果。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
 }

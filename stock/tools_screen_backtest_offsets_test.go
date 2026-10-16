@@ -184,8 +184,8 @@ func TestScreenBacktestOffsetsSummary(t *testing.T) {
 		t.Errorf("沒有條件與偏移時的摘要錯誤:%s", plain)
 	}
 	ranked := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "all", HoldDays: 20, Limit: 10},
-		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "trust_streak", EtfWeight: 50, Weighting: "sqrt_trade_value"})
-	if !strings.Contains(ranked, "每 20 個交易日換股、取投信連續買超天數最高的前 10 檔;依平均成交金額的平方根加權持有、0050 核心部位 50%(其餘 50% 跑策略,報酬皆為混合後的組合);把換股日偏移") {
+		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "trust_streak", EtfWeight: 50, Weighting: "sqrt_trade_value", MaxWeight: 20})
+	if !strings.Contains(ranked, "每 20 個交易日換股、取投信連續買超天數最高的前 10 檔;依平均成交金額的平方根加權持有、單檔權重上限 20%、0050 核心部位 50%(其餘 50% 跑策略,報酬皆為混合後的組合);把換股日偏移") {
 		t.Errorf("排序方式、加權與核心部位的摘要錯誤:%s", ranked)
 	}
 	risky := sampleBacktestOffsets()
