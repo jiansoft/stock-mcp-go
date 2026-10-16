@@ -79,6 +79,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 				`"etf_total_return":1.8,"etf_annualized_return":25.3,"etf_max_drawdown":0.0,"beat_etf_rate":0.0},` +
 				`"years":[{"year":2026,"periods":1,"total_return":0.0,"total_return_after_costs":-0.44,` +
 				`"benchmark_total_return":2.5,"etf_total_return":1.8,"win_rate":0.0,"beat_market_rate":0.0}],` +
+				`"contributors":{"held_symbols":2,"best":[{"symbol":"2330","name":"台積電","periods_held":1,"contribution":1.5,"avg_return":3.0}],"worst":[]},` +
 				`"periods":[{"date":"2026-09-02","holdings":0,"avg_return":null,"return_after_costs":-0.44,"turnover":0.0,` +
 				`"benchmark_return":2.5,"etf_return":1.8,"symbols":[]}]}`))
 		}
@@ -98,13 +99,16 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		len(envelope.Years) != 1 || envelope.Years[0].Year != 2026 || *envelope.Years[0].EtfTotalReturn != 1.8 {
 		t.Fatalf("0050 與年度欄位解析錯誤:%#v", envelope)
 	}
+	if c := envelope.Contributors; c == nil || c.HeldSymbols != 2 || len(c.Best) != 1 || *c.Best[0].Name != "台積電" || c.Best[0].Contribution != 1.5 || len(c.Worst) != 0 {
+		t.Fatalf("個股貢獻解析錯誤:%#v", envelope.Contributors)
+	}
 	if gotPath != "/api/v1/stocks/screen/backtest" || gotQuery.Encode() != "hold_days=20&limit=20&market=all" {
 		t.Fatalf("未指定條件不應帶參數:%s?%s", gotPath, gotQuery.Encode())
 	}
 	opt = ScreenBacktestOptions{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
-		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4,
+		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4, MarketBreadth: 40,
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -113,7 +117,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		"from": "2019-01-02", "to": "2026-10-14", "hold_days": "60", "limit": "5", "industry": "半導體業",
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
 		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120", "hold_min_rs_score": "60",
-		"max_per_industry": "4",
+		"max_per_industry": "4", "market_filter_breadth": "40",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -176,6 +180,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{MinRSScore: 100}, {MinRSScore: 90, MaxRSScore: 80}, {MinForeignStreak: 61}, {Kind: "breakout"}, {Indicator: "ma1"},
 		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)}, {KeepRank: 19}, {Limit: 5, KeepRank: 4}, {KeepRank: 201}, {MarketFilterMA: 50}, {HoldMinRSScore: 100}, {HoldMinRSScore: -1},
 		{MaxPerIndustry: 101}, {MaxPerIndustry: -1},
+		{MarketBreadth: 100}, {MarketBreadth: -1},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -216,6 +221,15 @@ func TestScreenBacktestSummary(t *testing.T) {
 	e.Industry, e.MinRSScore, e.MinTrustStreak, e.Indicator, e.Kind = ptr("半導體業"), ptr(80), ptr(3), ptr("52_week"), ptr("new_high")
 	e.EtfBenchmark, e.KeepRank, e.MarketFilterMA, e.HoldMinRSScore, e.MaxPerIndustry = ptr("0050"), ptr(40), ptr(60), ptr(50), ptr(4)
 	e.Summary.MarketFilteredPeriods = 1
+	e.MarketBreadth = ptr(40)
+	e.Contributors = &BacktestContributors{
+		HeldSymbols: 37,
+		Best: []BacktestContributor{
+			{Symbol: "2330", Name: ptr("台積電"), PeriodsHeld: 12, Contribution: 8.5, AvgReturn: ptr(14.2)},
+			{Symbol: "79979", PeriodsHeld: 1, Contribution: 0.3},
+		},
+		Worst: []BacktestContributor{{Symbol: "2454", Name: ptr("聯發科"), PeriodsHeld: 3, Contribution: -1.25, AvgReturn: ptr(-8.33)}},
+	}
 	e.Periods[6].MarketFiltered = true
 	e.Summary.Volatility, e.Summary.SharpeRatio, e.Summary.BenchmarkVolatility, e.Summary.BenchmarkSharpeRatio = ptr(24.5), ptr(1.12), ptr(18.0), ptr(0.95)
 	e.Summary.EtfVolatility, e.Summary.EtfSharpeRatio = ptr(17.2), ptr(1.31)
@@ -228,7 +242,7 @@ func TestScreenBacktestSummary(t *testing.T) {
 	summary := screenBacktestSummary(e)
 	for _, want := range []string{
 		"all 市場 2023-10-15～2026-10-14 條件選股回測:每 20 個交易日換股,依相對強度分數由高到低取前 20 檔等權持有",
-		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱。",
+		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;市場廣度濾網:換股日站上 60 日均線的股票比例低於 40% 就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱。",
 		"勝過基準 50%。因大盤濾網空手 1 期。",
 		"共 8 期(有持股 7 期,平均 20 檔):累積報酬 35.2%(基準 12.6%)、年化 10.6%(基準 4%)、最大回撤 -18.3%(基準 -9.1%)",
 		"每期平均 1.4%(基準 1.5%)、勝率 62.5%、勝過基準 50%。",
@@ -244,6 +258,9 @@ func TestScreenBacktestSummary(t *testing.T) {
 		"\n- 2026 年 5 期:報酬 -3.2%(扣成本 -5%;基準 1.1%、0050 8.8%)、勝率 40%、勝過基準 20%",
 		"扣交易成本(手續費 0.1425%×0.28 折扣、賣出證交稅 0.3%,依換手計算)後:累積報酬 30.1%、年化 9.2%、最大回撤 -19%;平均換手率 43.21%。",
 		"期間內下市的股票算到最後一筆收盤",
+		"個股貢獻(整段持有過 37 檔;",
+		"\n- 貢獻最多:2330 台積電 +8.50 百分點(持有 12 期、平均 14.2%)、79979 +0.30 百分點(持有 1 期、平均 無)",
+		"\n- 拖累最多:2454 聯發科 -1.25 百分點(持有 3 期、平均 -8.33%)",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("摘要缺少 %q:%s", want, summary)
@@ -252,8 +269,8 @@ func TestScreenBacktestSummary(t *testing.T) {
 	if strings.Contains(summary, "2026-02-02") || strings.Contains(summary, "存活者偏差") {
 		t.Errorf("只列最近 6 期,且不再提存活者偏差:%s", summary)
 	}
-	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years = nil, nil, nil
-	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") {
+	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years, e.Contributors = nil, nil, nil, nil
+	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") || strings.Contains(old, "個股貢獻") {
 		t.Errorf("舊版 API 沒有成本、0050 與年度欄位時不列這些段落:%s", old)
 	}
 
