@@ -102,6 +102,23 @@ type BacktestContributors struct {
 	Worst       []BacktestContributor `json:"worst"`
 }
 
+// BacktestHolding 是目前持股的一檔。
+type BacktestHolding struct {
+	Symbol string  `json:"symbol"`
+	Name   *string `json:"name"`
+}
+
+// BacktestCurrent 是最後一次換股、還沒滿持有天數的持股(策略目前應持有的股票),不計入彙總;
+// 舊版 API 或最後一期已滿時為 nil。
+type BacktestCurrent struct {
+	Date                string            `json:"date"`
+	DaysElapsed         int               `json:"days_elapsed"`
+	DaysToNextRebalance int               `json:"days_to_next_rebalance"`
+	MarketFiltered      bool              `json:"market_filtered"`
+	Turnover            float64           `json:"turnover"`
+	Holdings            []BacktestHolding `json:"holdings"`
+}
+
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
 type ScreenBacktestEnvelope struct {
 	From             string                `json:"from"`
@@ -114,6 +131,7 @@ type ScreenBacktestEnvelope struct {
 	MarketBreadth    *int                  `json:"market_filter_breadth"`
 	HoldMinRSScore   *int                  `json:"hold_min_rs_score"`
 	MaxPerIndustry   *int                  `json:"max_per_industry"`
+	RebalanceOffset  *int                  `json:"rebalance_offset"`
 	Industry         *string               `json:"industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
 	MaxRSScore       *int                  `json:"max_rs_score"`
@@ -127,6 +145,7 @@ type ScreenBacktestEnvelope struct {
 	Summary          BacktestSummary       `json:"summary"`
 	Years            []BacktestYear        `json:"years"`
 	Contributors     *BacktestContributors `json:"contributors"`
+	Current          *BacktestCurrent      `json:"current"`
 	Periods          []BacktestPeriod      `json:"periods"`
 }
 
@@ -141,6 +160,7 @@ type ScreenBacktestOptions struct {
 	MarketBreadth    int
 	HoldMinRSScore   int
 	MaxPerIndustry   int
+	RebalanceOffset  int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -195,6 +215,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	if opt.MarketBreadth > 0 {
 		values.Set("market_filter_breadth", fmt.Sprint(opt.MarketBreadth))
 	}
+	if opt.RebalanceOffset > 0 {
+		values.Set("rebalance_offset", fmt.Sprint(opt.RebalanceOffset))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -224,6 +247,7 @@ type ScreenBacktestInput struct {
 	MarketBreadth    int    `json:"market_filter_breadth,omitempty"`
 	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
 	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
+	RebalanceOffset  int    `json:"rebalance_offset,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -294,6 +318,13 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(100.0),
 				Description: "產業上限(選填,1 至 100):每期持股(含續抱)同一產業最多幾檔,超過的跳過、改由其他產業依 RS 補滿,用來降低單一產業集中。例如 limit=20、max_per_industry=4",
+			},
+			"rebalance_offset": {
+				Type:        "integer",
+				Minimum:     ptr(0.0),
+				Maximum:     ptr(239.0),
+				Default:     []byte("0"),
+				Description: "換股日偏移(選填,0 至 hold_days-1,預設 0):起日之後先跳過幾個交易日才第一次換股。同一組條件換不同偏移重跑,可看績效是否只是碰巧遇上某幾個換股日",
 			},
 			"market_filter_breadth": {
 				Type:        "integer",
@@ -400,6 +431,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if in.MarketBreadth != 0 && (in.MarketBreadth < 1 || in.MarketBreadth > 99) {
 		return nil, nil, fmt.Errorf("參數 market_filter_breadth 必須介於 1 到 99 之間")
 	}
+	if in.RebalanceOffset < 0 || in.RebalanceOffset >= holdDays {
+		return nil, nil, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
+	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
 		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
@@ -428,7 +462,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -503,6 +537,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.KeepRank != nil && *e.KeepRank > e.Limit {
 		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
 	}
+	if e.RebalanceOffset != nil && *e.RebalanceOffset > 0 {
+		b.printf(";換股日偏移:起日之後先跳過 %d 個交易日", *e.RebalanceOffset)
+	}
 	b.printf("。")
 	s := e.Summary
 	if s.Periods == 0 {
@@ -562,9 +599,35 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), etf, strings.Join(p.Symbols, "、"))
 		}
 	}
+	writeBacktestCurrent(&b, e.Current)
 	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;等權再平衡的小額調整不計成本。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
+}
+
+// writeBacktestCurrent 列出最後一次換股、還沒滿持有天數的持股;舊版 API 或最後一期已滿時不輸出。
+func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
+	if c == nil {
+		return
+	}
+	b.printf("\n目前持股(%s 換股、已過 %d 個交易日,再 %d 個交易日換股;還沒滿持有天數,不計入上面的績效):",
+		c.Date, c.DaysElapsed, c.DaysToNextRebalance)
+	switch {
+	case c.MarketFiltered:
+		b.printf("大盤濾網沒過,空手。")
+	case len(c.Holdings) == 0:
+		b.printf("沒有符合條件的股票,空手。")
+	default:
+		names := make([]string, 0, len(c.Holdings))
+		for _, holding := range c.Holdings {
+			name := holding.Symbol
+			if holding.Name != nil && *holding.Name != "" && *holding.Name != holding.Symbol {
+				name += " " + *holding.Name
+			}
+			names = append(names, name)
+		}
+		b.printf("持有 %d 檔(相對上一期換手 %s):%s。", len(c.Holdings), displayRate(&c.Turnover), strings.Join(names, "、"))
+	}
 }
 
 // writeBacktestContributors 列出整段貢獻最多與拖累最多的股票;舊版 API 沒有這個欄位或名單都空時不輸出。
