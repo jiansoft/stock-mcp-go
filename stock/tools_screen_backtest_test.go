@@ -79,6 +79,8 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 				`"etf_total_return":1.8,"etf_annualized_return":25.3,"etf_max_drawdown":0.0,"beat_etf_rate":0.0},` +
 				`"years":[{"year":2026,"periods":1,"total_return":0.0,"total_return_after_costs":-0.44,` +
 				`"benchmark_total_return":2.5,"etf_total_return":1.8,"win_rate":0.0,"beat_market_rate":0.0}],` +
+				`"rebalance_offset":0,"current":{"date":"2026-10-14","days_elapsed":3,"days_to_next_rebalance":17,` +
+				`"market_filtered":false,"turnover":0.25,"holdings":[{"symbol":"2330","name":"台積電"},{"symbol":"79979","name":null}]},` +
 				`"contributors":{"held_symbols":2,"best":[{"symbol":"2330","name":"台積電","periods_held":1,"contribution":1.5,"avg_return":3.0}],"worst":[]},` +
 				`"periods":[{"date":"2026-09-02","holdings":0,"avg_return":null,"return_after_costs":-0.44,"turnover":0.0,` +
 				`"benchmark_return":2.5,"etf_return":1.8,"symbols":[]}]}`))
@@ -102,6 +104,10 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 	if c := envelope.Contributors; c == nil || c.HeldSymbols != 2 || len(c.Best) != 1 || *c.Best[0].Name != "台積電" || c.Best[0].Contribution != 1.5 || len(c.Worst) != 0 {
 		t.Fatalf("個股貢獻解析錯誤:%#v", envelope.Contributors)
 	}
+	if c := envelope.Current; c == nil || c.Date != "2026-10-14" || c.DaysElapsed != 3 || c.DaysToNextRebalance != 17 || c.Turnover != 0.25 ||
+		len(c.Holdings) != 2 || *c.Holdings[0].Name != "台積電" || c.Holdings[1].Name != nil || *envelope.RebalanceOffset != 0 {
+		t.Fatalf("目前持股解析錯誤:%#v", envelope.Current)
+	}
 	if gotPath != "/api/v1/stocks/screen/backtest" || gotQuery.Encode() != "hold_days=20&limit=20&market=all" {
 		t.Fatalf("未指定條件不應帶參數:%s?%s", gotPath, gotQuery.Encode())
 	}
@@ -109,6 +115,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
 		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4, MarketBreadth: 40,
+		RebalanceOffset: 7,
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -117,7 +124,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		"from": "2019-01-02", "to": "2026-10-14", "hold_days": "60", "limit": "5", "industry": "半導體業",
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
 		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120", "hold_min_rs_score": "60",
-		"max_per_industry": "4", "market_filter_breadth": "40",
+		"max_per_industry": "4", "market_filter_breadth": "40", "rebalance_offset": "7",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -158,13 +165,13 @@ func TestScreenBacktestTool(t *testing.T) {
 	in := ScreenBacktestInput{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: " TPEX ", Industry: " 半導體業 ",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: " new_high ",
-		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100,
+		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4,
 	}
 	if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
 	want := ScreenBacktestOptions{
-		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, Market: "tpex", Industry: "半導體業",
+		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, Market: "tpex", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: "new_high",
 	}
 	if f.got.FeeDiscount == nil || *f.got.FeeDiscount != 0 {
@@ -181,6 +188,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)}, {KeepRank: 19}, {Limit: 5, KeepRank: 4}, {KeepRank: 201}, {MarketFilterMA: 50}, {HoldMinRSScore: 100}, {HoldMinRSScore: -1},
 		{MaxPerIndustry: 101}, {MaxPerIndustry: -1},
 		{MarketBreadth: 100}, {MarketBreadth: -1},
+		{RebalanceOffset: 20}, {RebalanceOffset: -1}, {HoldDays: 5, RebalanceOffset: 5},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -222,6 +230,11 @@ func TestScreenBacktestSummary(t *testing.T) {
 	e.EtfBenchmark, e.KeepRank, e.MarketFilterMA, e.HoldMinRSScore, e.MaxPerIndustry = ptr("0050"), ptr(40), ptr(60), ptr(50), ptr(4)
 	e.Summary.MarketFilteredPeriods = 1
 	e.MarketBreadth = ptr(40)
+	e.RebalanceOffset = ptr(3)
+	e.Current = &BacktestCurrent{
+		Date: "2026-10-14", DaysElapsed: 3, DaysToNextRebalance: 17, Turnover: 0.25,
+		Holdings: []BacktestHolding{{Symbol: "2330", Name: ptr("台積電")}, {Symbol: "79979"}},
+	}
 	e.Contributors = &BacktestContributors{
 		HeldSymbols: 37,
 		Best: []BacktestContributor{
@@ -242,7 +255,8 @@ func TestScreenBacktestSummary(t *testing.T) {
 	summary := screenBacktestSummary(e)
 	for _, want := range []string{
 		"all 市場 2023-10-15～2026-10-14 條件選股回測:每 20 個交易日換股,依相對強度分數由高到低取前 20 檔等權持有",
-		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;市場廣度濾網:換股日站上 60 日均線的股票比例低於 40% 就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱。",
+		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;市場廣度濾網:換股日站上 60 日均線的股票比例低於 40% 就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱;換股日偏移:起日之後先跳過 3 個交易日。",
+		"\n目前持股(2026-10-14 換股、已過 3 個交易日,再 17 個交易日換股;還沒滿持有天數,不計入上面的績效):持有 2 檔(相對上一期換手 25%):2330 台積電、79979。",
 		"勝過基準 50%。因大盤濾網空手 1 期。",
 		"共 8 期(有持股 7 期,平均 20 檔):累積報酬 35.2%(基準 12.6%)、年化 10.6%(基準 4%)、最大回撤 -18.3%(基準 -9.1%)",
 		"每期平均 1.4%(基準 1.5%)、勝率 62.5%、勝過基準 50%。",
@@ -269,14 +283,26 @@ func TestScreenBacktestSummary(t *testing.T) {
 	if strings.Contains(summary, "2026-02-02") || strings.Contains(summary, "存活者偏差") {
 		t.Errorf("只列最近 6 期,且不再提存活者偏差:%s", summary)
 	}
-	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years, e.Contributors = nil, nil, nil, nil
-	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") || strings.Contains(old, "個股貢獻") {
+	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years, e.Contributors, e.Current = nil, nil, nil, nil, nil
+	e.RebalanceOffset = ptr(0)
+	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") || strings.Contains(old, "個股貢獻") ||
+		strings.Contains(old, "目前持股") || strings.Contains(old, "換股日偏移") {
 		t.Errorf("舊版 API 沒有成本、0050 與年度欄位時不列這些段落:%s", old)
 	}
 
 	empty := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 240, Limit: 5, Adjusted: true})
 	if !strings.Contains(empty, "期間內沒有已滿持有天數的期數") || strings.Contains(empty, "條件 ") {
 		t.Errorf("沒有期數時的摘要錯誤:%s", empty)
+	}
+	// 沒有已滿的期數也列目前持股;大盤濾網空手與沒有符合條件分開說明。
+	for current, want := range map[*BacktestCurrent]string{
+		{Date: "2026-10-09", DaysElapsed: 3, DaysToNextRebalance: 237, MarketFiltered: true}: "已過 3 個交易日,再 237 個交易日換股;還沒滿持有天數,不計入上面的績效):大盤濾網沒過,空手。",
+		{Date: "2026-10-09", DaysToNextRebalance: 240}:                                       "已過 0 個交易日,再 240 個交易日換股;還沒滿持有天數,不計入上面的績效):沒有符合條件的股票,空手。",
+	} {
+		got := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 240, Limit: 5, Adjusted: true, Current: current})
+		if !strings.Contains(got, "期間內沒有已滿持有天數的期數") || !strings.Contains(got, "\n目前持股(2026-10-09 換股、"+want) {
+			t.Errorf("目前持股摘要缺少 %q:%s", want, got)
+		}
 	}
 }
 
