@@ -131,3 +131,33 @@ func TestBacktestSplitSummaries(t *testing.T) {
 		}
 	}
 }
+
+// TestBacktestCurrentReturnToDate 驗證目前持股列出各檔與策略部位本期至今報酬、0050 同期;舊版 API 沒有時不列。
+func TestBacktestCurrentReturnToDate(t *testing.T) {
+	e := sampleScreenBacktest()
+	e.Current = &BacktestCurrent{
+		Date: "2026-10-01", DaysElapsed: 10, DaysToNextRebalance: 10, Turnover: 0.1,
+		Holdings: []BacktestHolding{
+			{Symbol: "2330", Name: ptr("台積電"), Weight: ptr(50.0), Added: ptr(false), ReturnToDate: ptr(5.234)},
+			{Symbol: "2317", Name: ptr("鴻海"), Weight: ptr(50.0), Added: ptr(true)},
+		},
+		ReturnToDate: ptr(2.6), EtfReturnToDate: ptr(-1.0),
+	}
+	summary := screenBacktestSummary(e)
+	for _, want := range []string{
+		"新買進 2317 鴻海;續抱 2330 台積電 +5.23%。",
+		"本期至今(換股日收盤到迄日,依權重、未扣成本)+2.60%,0050 同期 -1.00%。",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("摘要缺少 %q:%s", want, summary)
+		}
+	}
+	e.Current.EtfReturnToDate = nil
+	if text := screenBacktestSummary(e); !strings.Contains(text, "未扣成本)+2.60%。") {
+		t.Errorf("沒有 0050 時只列策略:%s", text)
+	}
+	e.Current.ReturnToDate = nil
+	if text := screenBacktestSummary(e); strings.Contains(text, "本期至今") {
+		t.Errorf("舊版 API 不列本期至今:%s", text)
+	}
+}
