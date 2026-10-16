@@ -38,16 +38,29 @@ type BacktestOffsetDistribution struct {
 	BeatEtfSharpeRate          *float64      `json:"beat_etf_sharpe_rate"`
 }
 
-// ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應。
+// BacktestOffsetYear 是某一年各偏移的表現分布(各偏移該年各期的累積報酬,年度各自從 1 起算)。
+type BacktestOffsetYear struct {
+	Year             int           `json:"year"`
+	Offsets          int           `json:"offsets"`
+	ReturnAfterCosts *BacktestStat `json:"return_after_costs"`
+	EtfReturn        *BacktestStat `json:"etf_return"`
+	BeatEtfRate      *float64      `json:"beat_etf_rate"`
+}
+
+// ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應;舊版 API 沒有
+// rank_by、etf_weight 與 years。
 type ScreenBacktestOffsetsEnvelope struct {
 	From         string                     `json:"from"`
 	To           string                     `json:"to"`
 	Market       string                     `json:"market"`
 	HoldDays     int                        `json:"hold_days"`
 	Limit        int                        `json:"limit"`
+	RankBy       *string                    `json:"rank_by"`
+	EtfWeight    *int                       `json:"etf_weight"`
 	FeeDiscount  *float64                   `json:"fee_discount"`
 	EtfBenchmark *string                    `json:"etf_benchmark"`
 	Distribution BacktestOffsetDistribution `json:"distribution"`
+	Years        []BacktestOffsetYear       `json:"years"`
 	Offsets      []BacktestOffsetResult     `json:"offsets"`
 }
 
@@ -127,6 +140,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 		filters = append(filters, fmt.Sprintf("近 20 個交易日平均成交金額 ≥ %d 百萬元", opt.MinAvgTradeValue))
 	}
 	text := fmt.Sprintf("每 %d 個交易日換股、取 RS 最高的前 %d 檔", opt.HoldDays, opt.Limit)
+	if opt.RankBy != "" && opt.RankBy != "rs_score" {
+		text = fmt.Sprintf("每 %d 個交易日換股、取%s最高的前 %d 檔", opt.HoldDays, rankByText(opt.RankBy), opt.Limit)
+	}
 	if len(filters) > 0 {
 		text += ",條件 " + strings.Join(filters, "、")
 	}
@@ -145,6 +161,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	}
 	if opt.KeepRank > opt.Limit {
 		rules = append(rules, fmt.Sprintf("換股緩衝前 %d 名", opt.KeepRank))
+	}
+	if weight := etfWeightText(opt.EtfWeight); weight != "" {
+		rules = append(rules, weight)
 	}
 	if len(rules) > 0 {
 		text += ";" + strings.Join(rules, "、")
@@ -177,6 +196,14 @@ func backtestStatText(stat *BacktestStat, format func(*float64) string) string {
 		format(&stat.Median), format(&stat.P25), format(&stat.P75), format(&stat.Min), format(&stat.Max), format(&stat.Mean))
 }
 
+// backtestMedianText 回分布的中位數(%);nil 回「無」。
+func backtestMedianText(stat *BacktestStat) string {
+	if stat == nil {
+		return "無"
+	}
+	return displayPercent(&stat.Median)
+}
+
 // screenBacktestOffsetsSummary 組出給模型閱讀的文字摘要:設定、分布、勝過 0050 的比例與各偏移。
 func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBacktestOptions) string {
 	var b summaryBuilder
@@ -190,6 +217,14 @@ func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBa
 		backtestStatText(d.EtfAnnualizedReturn, displayPercent), backtestStatText(d.EtfSharpeRatio, displayFloat))
 	b.printf("\n年化報酬勝過同偏移 0050 的比例 %s、夏普值勝過 0050 的比例 %s。",
 		displayRate(d.BeatEtfReturnRate), displayRate(d.BeatEtfSharpeRate))
+	if len(e.Years) > 0 {
+		parts := make([]string, 0, len(e.Years))
+		for _, year := range e.Years {
+			parts = append(parts, fmt.Sprintf("%d 年 %s vs %s(勝 %s,%d 個偏移)", year.Year,
+				backtestMedianText(year.ReturnAfterCosts), backtestMedianText(year.EtfReturn), displayRate(year.BeatEtfRate), year.Offsets))
+		}
+		b.printf("\n依年度(扣成本後該年累積報酬的偏移中位數 vs 同期 0050 中位數,括號為勝過 0050 的偏移比例):%s。", strings.Join(parts, ";"))
+	}
 	if len(e.Offsets) > 0 {
 		parts := make([]string, 0, len(e.Offsets))
 		for _, item := range e.Offsets {

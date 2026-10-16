@@ -133,6 +133,8 @@ type ScreenBacktestEnvelope struct {
 	MaxPerIndustry   *int                  `json:"max_per_industry"`
 	RebalanceOffset  *int                  `json:"rebalance_offset"`
 	MinAvgTradeValue *int                  `json:"min_avg_trade_value"`
+	RankBy           *string               `json:"rank_by"`
+	EtfWeight        *int                  `json:"etf_weight"`
 	Industry         *string               `json:"industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
 	MaxRSScore       *int                  `json:"max_rs_score"`
@@ -163,6 +165,8 @@ type ScreenBacktestOptions struct {
 	MaxPerIndustry   int
 	RebalanceOffset  int
 	MinAvgTradeValue int
+	RankBy           string
+	EtfWeight        int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -214,6 +218,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	}
 	for key, value := range map[string]string{
 		"from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
+		"rank_by": opt.RankBy,
 	} {
 		if value != "" {
 			values.Set(key, value)
@@ -225,6 +230,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 		"keep_rank": opt.KeepRank, "market_filter_ma": opt.MarketFilterMA, "hold_min_rs_score": opt.HoldMinRSScore,
 		"max_per_industry": opt.MaxPerIndustry, "market_filter_breadth": opt.MarketBreadth,
 		"rebalance_offset": opt.RebalanceOffset, "min_avg_trade_value": opt.MinAvgTradeValue,
+		"etf_weight": opt.EtfWeight,
 	} {
 		if value > 0 {
 			values.Set(key, fmt.Sprint(value))
@@ -249,6 +255,8 @@ type ScreenBacktestInput struct {
 	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
 	RebalanceOffset  int    `json:"rebalance_offset,omitempty"`
 	MinAvgTradeValue int    `json:"min_avg_trade_value,omitempty"`
+	RankBy           string `json:"rank_by,omitempty"`
+	EtfWeight        int    `json:"etf_weight,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -300,7 +308,20 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(100.0),
 				Default:     []byte("20"),
-				Description: "每期最多持有幾檔(預設 20,1 至 100):符合條件者依相對強度分數由高到低取前 N 檔,等權持有",
+				Description: "每期最多持有幾檔(預設 20,1 至 100):符合條件者依 rank_by(預設相對強度分數)由高到低取前 N 檔,等權持有",
+			},
+			"rank_by": {
+				Type:        "string",
+				Enum:        []any{"rs_score", "trade_value", "foreign_streak", "trust_streak"},
+				Default:     []byte(`"rs_score"`),
+				Description: "符合條件者依什麼排序取前 limit 檔(選填,預設 rs_score):rs_score 相對強度分數;trade_value 近 20 個交易日平均成交金額(偏向大型股);foreign_streak／trust_streak 外資／投信連續買超天數。同值再依 RS 排序,keep_rank 的名次也依此排序",
+			},
+			"etf_weight": {
+				Type:        "integer",
+				Minimum:     ptr(0.0),
+				Maximum:     ptr(100.0),
+				Default:     []byte("0"),
+				Description: "0050 核心部位(選填,0 至 100%,預設 0):組合固定以這個比例持有 0050、其餘才依條件選股(核心／衛星配置),彙總與每期報酬都是混合後的組合報酬;0050 部位不計買賣成本,大盤濾網空手時 0050 照常持有。用來看策略搭配大盤能否勝過純 0050",
 			},
 			"keep_rank": {
 				Type:        "integer",
@@ -441,6 +462,12 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.MinAvgTradeValue != 0 && (in.MinAvgTradeValue < 1 || in.MinAvgTradeValue > maxAvgTradeValueMillion) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
+	if in.RankBy != "" && !slices.Contains(backtestRankBy, in.RankBy) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 rank_by 必須為 rs_score、trade_value、foreign_streak 或 trust_streak")
+	}
+	if in.EtfWeight < 0 || in.EtfWeight > 100 {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 etf_weight 必須介於 0 到 100 之間")
+	}
 	if in.RebalanceOffset < 0 || in.RebalanceOffset >= holdDays {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
 	}
@@ -473,6 +500,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	}
 	return ScreenBacktestOptions{
 		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry,
+		RankBy: in.RankBy, EtfWeight: in.EtfWeight,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -519,6 +547,30 @@ func backtestSignalText(indicator, kind *string) string {
 	return ""
 }
 
+// backtestRankBy 是候選股可用的排序方式,與 Data API 相同。
+var backtestRankBy = []string{"rs_score", "trade_value", "foreign_streak", "trust_streak"}
+
+// rankByText 把排序方式轉成中文;空字串(未指定)與 rs_score 為相對強度分數。
+func rankByText(rankBy string) string {
+	switch rankBy {
+	case "trade_value":
+		return "近 20 個交易日平均成交金額"
+	case "foreign_streak":
+		return "外資連續買超天數"
+	case "trust_streak":
+		return "投信連續買超天數"
+	}
+	return "相對強度分數"
+}
+
+// etfWeightText 說明 0050 核心部位;0 或未設定回空字串。
+func etfWeightText(weight int) string {
+	if weight <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("0050 核心部位 %d%%(其餘 %d%% 跑策略,報酬皆為混合後的組合)", weight, 100-weight)
+}
+
 // maxAvgTradeValueMillion 是流動性門檻上限(百萬元),與 Data API 相同。
 const maxAvgTradeValueMillion = 100_000
 
@@ -528,8 +580,12 @@ const backtestRecentPeriods = 6
 // screenBacktestSummary 組出給模型閱讀的文字摘要:條件、彙總與最近幾期。
 func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	var b summaryBuilder
-	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依相對強度分數由高到低取前 %d 檔等權持有(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
-		e.Market, e.From, e.To, e.HoldDays, e.Limit, returnBasisText(e.Adjusted))
+	rankBy := ""
+	if e.RankBy != nil {
+		rankBy = *e.RankBy
+	}
+	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s由高到低取前 %d 檔等權持有(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
+		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), e.Limit, returnBasisText(e.Adjusted))
 	var filters []string
 	if e.Industry != nil {
 		filters = append(filters, "產業「"+*e.Industry+"」")
@@ -569,6 +625,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	if e.RebalanceOffset != nil && *e.RebalanceOffset > 0 {
 		b.printf(";換股日偏移:起日之後先跳過 %d 個交易日", *e.RebalanceOffset)
+	}
+	if e.EtfWeight != nil {
+		if text := etfWeightText(*e.EtfWeight); text != "" {
+			b.printf(";%s", text)
+		}
 	}
 	b.printf("。")
 	s := e.Summary
