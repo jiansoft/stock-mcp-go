@@ -96,6 +96,7 @@ type ScreenBacktestEnvelope struct {
 	KeepRank         *int             `json:"keep_rank"`
 	MarketFilterMA   *int             `json:"market_filter_ma"`
 	HoldMinRSScore   *int             `json:"hold_min_rs_score"`
+	MaxPerIndustry   *int             `json:"max_per_industry"`
 	Industry         *string          `json:"industry"`
 	MinRSScore       *int             `json:"min_rs_score"`
 	MaxRSScore       *int             `json:"max_rs_score"`
@@ -120,6 +121,7 @@ type ScreenBacktestOptions struct {
 	KeepRank         int
 	MarketFilterMA   int
 	HoldMinRSScore   int
+	MaxPerIndustry   int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -168,6 +170,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	if opt.HoldMinRSScore > 0 {
 		values.Set("hold_min_rs_score", fmt.Sprint(opt.HoldMinRSScore))
 	}
+	if opt.MaxPerIndustry > 0 {
+		values.Set("max_per_industry", fmt.Sprint(opt.MaxPerIndustry))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -195,6 +200,7 @@ type ScreenBacktestInput struct {
 	KeepRank         int    `json:"keep_rank,omitempty"`
 	MarketFilterMA   int    `json:"market_filter_ma,omitempty"`
 	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
+	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -259,6 +265,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(99.0),
 				Description: "續抱條件(選填,1 至 99):上一期持有的股票即使不再符合選股條件(例如法人連買中斷、訊號過期),只要換股當天 RS 分數不低於此值就續抱;名額不足時先留符合選股條件的股票。用來把進場條件與續抱條件分開、降低換手",
+			},
+			"max_per_industry": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(100.0),
+				Description: "產業上限(選填,1 至 100):每期持股(含續抱)同一產業最多幾檔,超過的跳過、改由其他產業依 RS 補滿,用來降低單一產業集中。例如 limit=20、max_per_industry=4",
 			},
 			"market_filter_ma": {
 				Type:        "integer",
@@ -353,6 +365,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if in.HoldMinRSScore != 0 && (in.HoldMinRSScore < 1 || in.HoldMinRSScore > 99) {
 		return nil, nil, fmt.Errorf("參數 hold_min_rs_score 必須介於 1 到 99 之間")
 	}
+	if in.MaxPerIndustry != 0 && (in.MaxPerIndustry < 1 || in.MaxPerIndustry > 100) {
+		return nil, nil, fmt.Errorf("參數 max_per_industry 必須介於 1 到 100 之間")
+	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
 		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
@@ -381,7 +396,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -446,6 +461,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	if e.HoldMinRSScore != nil {
 		b.printf(";續抱條件:上一期持股 RS ≥ %d 就續抱", *e.HoldMinRSScore)
+	}
+	if e.MaxPerIndustry != nil {
+		b.printf(";產業上限:同產業最多 %d 檔", *e.MaxPerIndustry)
 	}
 	if e.KeepRank != nil && *e.KeepRank > e.Limit {
 		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
