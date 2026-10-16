@@ -54,20 +54,23 @@ type BacktestOffsetYear struct {
 // ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應;舊版 API 沒有
 // rank_by、etf_weight、weighting 與 years。
 type ScreenBacktestOffsetsEnvelope struct {
-	From         string                     `json:"from"`
-	To           string                     `json:"to"`
-	Market       string                     `json:"market"`
-	HoldDays     int                        `json:"hold_days"`
-	Limit        int                        `json:"limit"`
-	RankBy       *string                    `json:"rank_by"`
-	EtfWeight    *int                       `json:"etf_weight"`
-	Weighting    *string                    `json:"weighting"`
-	MaxWeight    *int                       `json:"max_weight"`
-	FeeDiscount  *float64                   `json:"fee_discount"`
-	EtfBenchmark *string                    `json:"etf_benchmark"`
-	Distribution BacktestOffsetDistribution `json:"distribution"`
-	Years        []BacktestOffsetYear       `json:"years"`
-	Offsets      []BacktestOffsetResult     `json:"offsets"`
+	From         string                      `json:"from"`
+	To           string                      `json:"to"`
+	Market       string                      `json:"market"`
+	HoldDays     int                         `json:"hold_days"`
+	Limit        int                         `json:"limit"`
+	RankBy       *string                     `json:"rank_by"`
+	EtfWeight    *int                        `json:"etf_weight"`
+	Weighting    *string                     `json:"weighting"`
+	MaxWeight    *int                        `json:"max_weight"`
+	FeeDiscount  *float64                    `json:"fee_discount"`
+	EtfBenchmark *string                     `json:"etf_benchmark"`
+	Distribution BacktestOffsetDistribution  `json:"distribution"`
+	Years        []BacktestOffsetYear        `json:"years"`
+	Split        *string                     `json:"split"`
+	BeforeSplit  *BacktestOffsetDistribution `json:"before_split"`
+	AfterSplit   *BacktestOffsetDistribution `json:"after_split"`
+	Offsets      []BacktestOffsetResult      `json:"offsets"`
 }
 
 // ScreenBacktestOffsetsQuerier 是 get_screen_backtest_offsets 對資料來源的需求介面;只有 *APIClient 實作。
@@ -99,6 +102,11 @@ type ScreenBacktestOffsetsOutput struct {
 func screenBacktestOffsetsSchema() *jsonschema.Schema {
 	schema := screenBacktestSchema()
 	delete(schema.Properties, "rebalance_offset")
+	schema.Properties["split"] = &jsonschema.Schema{
+		Type:        "string",
+		Pattern:     `^\d{4}-\d{2}-\d{2}$`,
+		Description: "樣本內外分割日(格式 YYYY-MM-DD,選填,須晚於 from、不晚於 to):換股日早於這天的期數為樣本內、其餘為樣本外,各自再算一次分布,用來看在前段調出來的條件到後段是否仍然成立(避免過度配適)",
+	}
 	return schema
 }
 
@@ -117,7 +125,7 @@ func (ts *screenBacktestOffsetsToolset) screenBacktestOffsets(ctx context.Contex
 	}
 	envelope, err := ts.oq.ScreenBacktestOffsets(ctx, opt)
 	if err != nil {
-		return nil, nil, backtestToolError(err, "get_screen_backtest_offsets", opt.Industry, ts.logf)
+		return nil, nil, backtestToolError(err, "get_screen_backtest_offsets", opt, ts.logf)
 	}
 	return textResult(screenBacktestOffsetsSummary(envelope, opt)), ScreenBacktestOffsetsOutput{
 		DataKind: "screen_backtest_offsets", IsRealtime: false, Disclaimer: AnalysisDisclaimer, ScreenBacktestOffsetsEnvelope: envelope,
@@ -129,6 +137,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	var filters []string
 	if opt.Industry != "" {
 		filters = append(filters, "產業「"+opt.Industry+"」")
+	}
+	if opt.ExcludeIndustry != "" {
+		filters = append(filters, "排除產業「"+opt.ExcludeIndustry+"」")
 	}
 	if rs := rsScoreRangeText(positiveOrNil(opt.MinRSScore), positiveOrNil(opt.MaxRSScore)); rs != "" {
 		filters = append(filters, "RS 分數 "+rs)
@@ -199,6 +210,16 @@ func stringOrNil(value string) *string {
 	return &value
 }
 
+// splitDistributionText 以中位數描述樣本內或樣本外的分布;nil 回「無資料」。
+func splitDistributionText(d *BacktestOffsetDistribution) string {
+	if d == nil {
+		return "無資料"
+	}
+	return fmt.Sprintf("年化 %s、夏普 %s、最大回撤 %s(中位數),同期 0050 年化 %s;年化報酬勝過 0050 的偏移比例 %s、夏普 %s",
+		backtestMedianText(d.AnnualizedReturnAfterCosts), displayFloat(statMedian(d.SharpeRatio)), backtestMedianText(d.MaxDrawdownAfterCosts),
+		backtestMedianText(d.EtfAnnualizedReturn), displayRate(d.BeatEtfReturnRate), displayRate(d.BeatEtfSharpeRate))
+}
+
 // backtestStatText 以「中位數 X(四分位 a～b,最低 c、最高 d,平均 e)」描述分布;nil 回「無資料」。
 func backtestStatText(stat *BacktestStat, format func(*float64) string) string {
 	if stat == nil {
@@ -240,6 +261,14 @@ func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBa
 		b.printf("、最大回撤比 0050 淺的比例 %s", displayRate(d.BeatEtfDrawdownRate))
 	}
 	b.printf("。")
+	if e.Split != nil {
+		for _, half := range []struct {
+			label string
+			d     *BacktestOffsetDistribution
+		}{{"樣本內(換股日早於 " + *e.Split + ")", e.BeforeSplit}, {"樣本外(換股日從 " + *e.Split + " 起)", e.AfterSplit}} {
+			b.printf("\n%s:%s", half.label, splitDistributionText(half.d))
+		}
+	}
 	if len(e.Years) > 0 {
 		parts := make([]string, 0, len(e.Years))
 		for _, year := range e.Years {

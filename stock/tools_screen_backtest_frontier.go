@@ -12,26 +12,31 @@ import (
 
 // BacktestFrontierPoint 是一個 0050 核心部位比例下,各換股日偏移績效的分布。
 type BacktestFrontierPoint struct {
-	EtfWeight    int                        `json:"etf_weight"`
-	Distribution BacktestOffsetDistribution `json:"distribution"`
+	EtfWeight    int                         `json:"etf_weight"`
+	Distribution BacktestOffsetDistribution  `json:"distribution"`
+	BeforeSplit  *BacktestOffsetDistribution `json:"before_split"`
+	AfterSplit   *BacktestOffsetDistribution `json:"after_split"`
 }
 
 // ScreenBacktestFrontierEnvelope 是 screen/backtest/frontier endpoint 的完整回應。
 type ScreenBacktestFrontierEnvelope struct {
-	From             string                  `json:"from"`
-	To               string                  `json:"to"`
-	Market           string                  `json:"market"`
-	HoldDays         int                     `json:"hold_days"`
-	Limit            int                     `json:"limit"`
-	RankBy           *string                 `json:"rank_by"`
-	Weighting        *string                 `json:"weighting"`
-	MaxWeight        *int                    `json:"max_weight"`
-	FeeDiscount      *float64                `json:"fee_discount"`
-	EtfBenchmark     *string                 `json:"etf_benchmark"`
-	Offsets          int                     `json:"offsets"`
-	BestSharpeWeight *int                    `json:"best_sharpe_weight"`
-	BestReturnWeight *int                    `json:"best_return_weight"`
-	Weights          []BacktestFrontierPoint `json:"weights"`
+	From             string   `json:"from"`
+	To               string   `json:"to"`
+	Market           string   `json:"market"`
+	HoldDays         int      `json:"hold_days"`
+	Limit            int      `json:"limit"`
+	RankBy           *string  `json:"rank_by"`
+	Weighting        *string  `json:"weighting"`
+	MaxWeight        *int     `json:"max_weight"`
+	FeeDiscount      *float64 `json:"fee_discount"`
+	EtfBenchmark     *string  `json:"etf_benchmark"`
+	Offsets          int      `json:"offsets"`
+	BestSharpeWeight *int     `json:"best_sharpe_weight"`
+	BestReturnWeight *int     `json:"best_return_weight"`
+	// Split 與 BestSharpeWeightBeforeSplit 只有指定 split 時才有。
+	Split                       *string                 `json:"split"`
+	BestSharpeWeightBeforeSplit *int                    `json:"best_sharpe_weight_before_split"`
+	Weights                     []BacktestFrontierPoint `json:"weights"`
 }
 
 // ScreenBacktestFrontierQuerier 是 get_screen_backtest_frontier 對資料來源的需求介面;只有 *APIClient 實作。
@@ -83,7 +88,7 @@ func (ts *screenBacktestFrontierToolset) screenBacktestFrontier(ctx context.Cont
 	}
 	envelope, err := ts.fq.ScreenBacktestFrontier(ctx, opt)
 	if err != nil {
-		return nil, nil, backtestToolError(err, "get_screen_backtest_frontier", opt.Industry, ts.logf)
+		return nil, nil, backtestToolError(err, "get_screen_backtest_frontier", opt, ts.logf)
 	}
 	return textResult(screenBacktestFrontierSummary(envelope, opt)), ScreenBacktestFrontierOutput{
 		DataKind: "screen_backtest_frontier", IsRealtime: false, Disclaimer: AnalysisDisclaimer, ScreenBacktestFrontierEnvelope: envelope,
@@ -117,6 +122,10 @@ func screenBacktestFrontierSummary(e *ScreenBacktestFrontierEnvelope, opt Screen
 			point.EtfWeight, displayPercent(statMedian(d.AnnualizedReturnAfterCosts)), displayFloat(statMedian(d.SharpeRatio)),
 			displayPercent(statMedian(d.MaxDrawdownAfterCosts)), displayPercent(statMedian(d.Volatility)),
 			displayRate(d.BeatEtfReturnRate), displayRate(d.BeatEtfSharpeRate))
+		if point.AfterSplit != nil {
+			b.printf(";樣本外 年化 %s、夏普 %s", backtestMedianText(point.AfterSplit.AnnualizedReturnAfterCosts),
+				displayFloat(statMedian(point.AfterSplit.SharpeRatio)))
+		}
 	}
 	if len(e.Weights) > 0 {
 		etf := e.Weights[0].Distribution
@@ -124,6 +133,10 @@ func screenBacktestFrontierSummary(e *ScreenBacktestFrontierEnvelope, opt Screen
 			displayPercent(statMedian(etf.EtfAnnualizedReturn)), displayFloat(statMedian(etf.EtfSharpeRatio)), displayPercent(statMedian(etf.EtfMaxDrawdown)))
 	}
 	b.printf("\n夏普值中位數最高的比例:%s;年化報酬中位數最高的比例:%s。", weightText(e.BestSharpeWeight), weightText(e.BestReturnWeight))
+	if e.Split != nil {
+		b.printf("\n樣本內外以 %s 分割(換股日早於這天為樣本內):只看樣本內時夏普值中位數最高的比例 %s;上面各比例的「樣本外」是分割日之後的表現,可看樣本內挑的比例到樣本外是否仍然好。",
+			*e.Split, weightText(e.BestSharpeWeightBeforeSplit))
+	}
 	b.printf("\n0%% 為純策略、100%% 等於只持有 0050;每期調回固定比例的買賣計入成本(0050 證交稅 0.1%%,第一次買進 0050 不計)。各比例用同一批回測,最佳比例仍可能只是這段期間的結果。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
