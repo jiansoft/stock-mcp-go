@@ -460,8 +460,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_market_regime",
 			Description: "查詢加權指數(TAIEX)的趨勢狀態:收盤相對 5/20/60/120/240 日均線的位置與均線方向、" +
-				"均線多空排列、收盤連續站在 60 日均線同一側的天數、52 週高低點距離與近 20/60/240 日漲跌幅;可指定歷史日期。" +
-				"適合回答「現在大盤是多頭還是空頭」「大盤離高點多遠」「站上季線多久了」,也可搭配 get_screen_backtest 的 market_filter_ma。",
+				"均線多空排列、收盤連續站在 60 日均線同一側的天數、52 週高低點距離、近 5/20/60/240 日漲跌幅與近 60 個交易日站上或跌破 20/60/120/240 日均線的日子;可指定歷史日期。" +
+				"適合回答「現在大盤是多頭還是空頭」「大盤離高點多遠」「站上季線多久了」「最近什麼時候跌破季線」,也可搭配 get_screen_backtest 的 market_filter_ma。",
 			InputSchema: marketRegimeSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, rts.marketRegime)
