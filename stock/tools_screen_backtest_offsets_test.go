@@ -42,6 +42,10 @@ func sampleBacktestOffsets() *ScreenBacktestOffsetsEnvelope {
 			BeatEtfReturnRate:          ptr(0.15),
 			BeatEtfSharpeRate:          ptr(0.0),
 		},
+		Years: []BacktestOffsetYear{
+			{Year: 2019, Offsets: 2, ReturnAfterCosts: &BacktestStat{Median: 12.5}, EtfReturn: &BacktestStat{Median: 30.1}, BeatEtfRate: ptr(0.0)},
+			{Year: 2020, Offsets: 1, ReturnAfterCosts: &BacktestStat{Median: 40}},
+		},
 		Offsets: []BacktestOffsetResult{
 			{RebalanceOffset: 0, Summary: BacktestSummary{Periods: 94, AnnualizedAfterCosts: ptr(34.85), SharpeRatio: ptr(1.3), MaxDrawdownAfterCosts: ptr(-24.71)}},
 			{RebalanceOffset: 1},
@@ -66,6 +70,8 @@ func TestAPIClientScreenBacktestOffsets(t *testing.T) {
 				`"distribution":{"annualized_return_after_costs":{"min":13.11,"p25":17.5,"median":21.73,"mean":23.06,"p75":28.2,"max":36.21},` +
 				`"sharpe_ratio":null,"max_drawdown_after_costs":null,"etf_annualized_return":null,"etf_sharpe_ratio":null,` +
 				`"beat_etf_return_rate":0.15,"beat_etf_sharpe_rate":null},` +
+				`"rank_by":"trade_value","etf_weight":30,` +
+				`"years":[{"year":2019,"offsets":20,"return_after_costs":{"min":1,"p25":2,"median":3,"mean":3,"p75":4,"max":5},"etf_return":null,"beat_etf_rate":null}],` +
 				`"offsets":[{"rebalance_offset":0,"summary":{"periods":94,"invested_periods":66,"annualized_return_after_costs":34.85,"sharpe_ratio":1.3}}]}`))
 		}
 	}))
@@ -86,6 +92,10 @@ func TestAPIClientScreenBacktestOffsets(t *testing.T) {
 	}
 	if len(envelope.Offsets) != 1 || envelope.Offsets[0].Summary.Periods != 94 || *envelope.Offsets[0].Summary.AnnualizedAfterCosts != 34.85 || *envelope.EtfBenchmark != "0050" {
 		t.Fatalf("偏移彙總解析錯誤:%#v", envelope)
+	}
+	if *envelope.RankBy != "trade_value" || *envelope.EtfWeight != 30 || len(envelope.Years) != 1 || envelope.Years[0].Offsets != 20 ||
+		envelope.Years[0].ReturnAfterCosts.Median != 3 || envelope.Years[0].EtfReturn != nil || envelope.Years[0].BeatEtfRate != nil {
+		t.Fatalf("排序、核心部位或年度解析錯誤:%#v", envelope)
 	}
 	opt.Market = "twse"
 	if _, err := client.ScreenBacktestOffsets(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
@@ -155,6 +165,7 @@ func TestScreenBacktestOffsetsSummary(t *testing.T) {
 		";夏普值:無資料",
 		"\n年化報酬勝過同偏移 0050 的比例 15%、夏普值勝過 0050 的比例 0%。",
 		"\n各偏移(扣成本):偏移 0:年化 34.85%、夏普 1.3、回撤 -24.71%;偏移 1:年化 無、夏普 無、回撤 無。",
+		"\n依年度(扣成本後該年累積報酬的偏移中位數 vs 同期 0050 中位數,括號為勝過 0050 的偏移比例):2019 年 12.5% vs 30.1%(勝 0%,2 個偏移);2020 年 40% vs 無(勝 無,1 個偏移)。",
 		"中位數比任何單一偏移更能代表這組條件",
 	} {
 		if !strings.Contains(summary, want) {
@@ -164,8 +175,18 @@ func TestScreenBacktestOffsetsSummary(t *testing.T) {
 	plain := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "twse", HoldDays: 5, Limit: 5},
 		ScreenBacktestOptions{HoldDays: 5, Limit: 5, KeepRank: 5})
 	if !strings.Contains(plain, "每 5 個交易日換股、取 RS 最高的前 5 檔;把換股日偏移") || strings.Contains(plain, "條件 ") || strings.Contains(plain, "各偏移(扣成本)") ||
-		!strings.Contains(plain, "年化報酬:無資料") {
+		!strings.Contains(plain, "年化報酬:無資料") || strings.Contains(plain, "依年度") {
 		t.Errorf("沒有條件與偏移時的摘要錯誤:%s", plain)
+	}
+	ranked := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "all", HoldDays: 20, Limit: 10},
+		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "trust_streak", EtfWeight: 50})
+	if !strings.Contains(ranked, "每 20 個交易日換股、取投信連續買超天數最高的前 10 檔;0050 核心部位 50%(其餘 50% 跑策略,報酬皆為混合後的組合);把換股日偏移") {
+		t.Errorf("排序方式與核心部位的摘要錯誤:%s", ranked)
+	}
+	same := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "all", HoldDays: 20, Limit: 10},
+		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "rs_score"})
+	if !strings.Contains(same, "取 RS 最高的前 10 檔;把換股日偏移") {
+		t.Errorf("rank_by=rs_score 應與預設相同:%s", same)
 	}
 }
 
@@ -207,5 +228,8 @@ func TestScreenBacktestOffsetsToolIsRegisteredReadOnly(t *testing.T) {
 	}
 	if *schema.Properties["min_avg_trade_value"].Maximum != 100000 {
 		t.Error("min_avg_trade_value 上限應為 100000")
+	}
+	if len(schema.Properties["rank_by"].Enum) != len(backtestRankBy) || *schema.Properties["etf_weight"].Maximum != 100 {
+		t.Error("rank_by 與 etf_weight 的 schema 應與 Data API 一致")
 	}
 }
