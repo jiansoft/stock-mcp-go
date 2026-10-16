@@ -110,6 +110,8 @@ type BacktestHolding struct {
 	Weight *float64 `json:"weight"`
 	// Added 表示這次換股新買進(上一期沒有持有);舊版 API 沒有。
 	Added *bool `json:"added"`
+	// ReturnToDate 是換股日收盤到迄日的還原報酬(%);查不到日線或舊版 API 為 nil。
+	ReturnToDate *float64 `json:"return_to_date"`
 }
 
 // BacktestExit 是這次換股賣出的一檔(上一期持有、這一期沒有);Weight 為上一期換股時的權重(%)。
@@ -132,6 +134,9 @@ type BacktestCurrent struct {
 	Cash *float64 `json:"cash"`
 	// Exited 是這次換股賣出的股票;舊版 API 沒有。
 	Exited []BacktestExit `json:"exited"`
+	// ReturnToDate 是策略部位換股日收盤至今的還原報酬(%,依權重、未扣成本);EtfReturnToDate 是 0050 同期。
+	ReturnToDate    *float64 `json:"return_to_date"`
+	EtfReturnToDate *float64 `json:"etf_return_to_date"`
 }
 
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
@@ -830,6 +835,9 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 			if weighted {
 				name += "(" + displayPercent(holding.Weight) + ")"
 			}
+			if holding.ReturnToDate != nil {
+				name += " " + signedPercent(*holding.ReturnToDate)
+			}
 			names = append(names, name)
 			if holding.Added == nil {
 				continue
@@ -850,6 +858,13 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 		if c.Cash != nil && *c.Cash > 0 {
 			b.printf("策略部位另有現金 %s(單檔權重上限,檔數不足)。", displayPercent(c.Cash))
 		}
+		if c.ReturnToDate != nil {
+			b.printf("本期至今(換股日收盤到迄日,依權重、未扣成本)%s", signedPercent(*c.ReturnToDate))
+			if c.EtfReturnToDate != nil {
+				b.printf(",0050 同期 %s", signedPercent(*c.EtfReturnToDate))
+			}
+			b.printf("。")
+		}
 	}
 	if len(c.Exited) > 0 {
 		exits := make([]string, 0, len(c.Exited))
@@ -858,6 +873,11 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 		}
 		b.printf("這次賣出 %d 檔:%s。", len(c.Exited), strings.Join(exits, "、"))
 	}
+}
+
+// signedPercent 是帶正負號的百分比(兩位小數)。
+func signedPercent(value float64) string {
+	return fmt.Sprintf("%+.2f%%", value)
 }
 
 // stockLabel 是「代號 名稱」;沒有名稱或名稱與代號相同時只有代號。
