@@ -41,6 +41,10 @@ func sampleMarketRegime() *MarketRegimeEnvelope {
 		DaysOnSideOfMA60: ptr(3), High52Week: 28000, Low52Week: 18000, FromHighPercent: -3.53, FromLowPercent: 50.07,
 		Return5d: ptr(0.8), Return20d: ptr(4.2), Return60d: ptr(-1.5),
 		RecentCrosses: []MovingAverageCross{{Date: "2026-10-15", Days: 20, Direction: "down"}, {Date: "2026-10-01", Days: 60, Direction: "up"}},
+		Breadth: &MarketRegimeBreadth{
+			Date: "2026-10-15", AboveMA20Percent: ptr(35.2), AboveMA60Percent: ptr(45.67), AboveMA240Percent: ptr(58.1),
+			AboveMA60Percent5dAgo: ptr(52.3), NewHighs5d: 120, NewLows5d: 48,
+		},
 	}
 }
 
@@ -130,15 +134,16 @@ func TestMarketRegimeSummary(t *testing.T) {
 		"近 5 日 0.8%、近 20 日 4.2%、近 60 日 -1.5%、近 240 日 ",
 		"近 60 個交易日的均線穿越(由新到舊):2026-10-15 跌破 20 日均線、2026-10-01 站上 60 日均線。",
 		"趨勢狀態只描述價格位置",
+		"\n市場廣度(上市櫃,2026-10-15):站上 20 日均線 35.2%、60 日均線 45.67%(5 個交易日前 52.3%)、240 日均線 58.1%;近 5 日創 52 週新高 120 家次、新低 48 家次。",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("摘要缺少 %q:%s", want, summary)
 		}
 	}
 	e := sampleMarketRegime()
-	e.Alignment, e.DaysOnSideOfMA60, e.RecentCrosses = "unknown", nil, nil
+	e.Alignment, e.DaysOnSideOfMA60, e.RecentCrosses, e.Breadth = "unknown", nil, nil, nil
 	if other := marketRegimeSummary(e); !strings.Contains(other, ",unknown。") || strings.Contains(other, "站在 60 日均線") ||
-		!strings.Contains(other, "近 60 個交易日沒有站上或跌破") {
+		!strings.Contains(other, "近 60 個交易日沒有站上或跌破") || strings.Contains(other, "市場廣度") {
 		t.Errorf("未知排列原樣顯示、沒有天數不列:%s", other)
 	}
 	if alignmentText("bearish") != alignmentLabels["bearish"] {

@@ -2,7 +2,7 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/market/regime:加權指數相對 5/20/60/120/240 日均線的
 // 位置與方向、均線多空排列、站在 60 日均線同一側的天數、52 週高低點距離、近 5/20/60/240 日漲跌幅，
-// 以及近 60 個交易日站上或跌破 20/60/120/240 日均線的日子。
+// 近 60 個交易日站上或跌破 20/60/120/240 日均線的日子，以及上市櫃站上均線的股票比例與 52 週新高新低家次(市場廣度)。
 package stock
 
 import (
@@ -50,6 +50,18 @@ type MarketRegimeEnvelope struct {
 	Return60d        *float64              `json:"return_60d"`
 	Return240d       *float64              `json:"return_240d"`
 	RecentCrosses    []MovingAverageCross  `json:"recent_crosses"`
+	Breadth          *MarketRegimeBreadth  `json:"breadth"`
+}
+
+// MarketRegimeBreadth 是上市櫃合併的市場廣度;舊版 API 或資料日之前沒有統計時為 nil。
+type MarketRegimeBreadth struct {
+	Date                  string   `json:"date"`
+	AboveMA20Percent      *float64 `json:"above_ma20_percent"`
+	AboveMA60Percent      *float64 `json:"above_ma60_percent"`
+	AboveMA240Percent     *float64 `json:"above_ma240_percent"`
+	AboveMA60Percent5dAgo *float64 `json:"above_ma60_percent_5d_ago"`
+	NewHighs5d            int      `json:"new_highs_5d"`
+	NewLows5d             int      `json:"new_lows_5d"`
 }
 
 // MarketRegimeQuerier 是 get_market_regime 對資料來源的需求介面;只有 *APIClient 實作。
@@ -164,6 +176,11 @@ func marketRegimeSummary(e *MarketRegimeEnvelope) string {
 	b.printf("\n近 5 日 %s、近 20 日 %s、近 60 日 %s、近 240 日 %s。",
 		displayPercent(e.Return5d), displayPercent(e.Return20d), displayPercent(e.Return60d), displayPercent(e.Return240d))
 	b.printf("\n%s", crossesText(e.RecentCrosses))
+	if br := e.Breadth; br != nil {
+		b.printf("\n市場廣度(上市櫃,%s):站上 20 日均線 %s、60 日均線 %s(5 個交易日前 %s)、240 日均線 %s;近 5 日創 52 週新高 %d 家次、新低 %d 家次。",
+			br.Date, displayPercent(br.AboveMA20Percent), displayPercent(br.AboveMA60Percent),
+			displayPercent(br.AboveMA60Percent5dAgo), displayPercent(br.AboveMA240Percent), br.NewHighs5d, br.NewLows5d)
+	}
 	b.printf("\n趨勢狀態只描述價格位置,不代表後續走勢。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
 }
