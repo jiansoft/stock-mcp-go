@@ -86,30 +86,48 @@ type BacktestYear struct {
 	BeatMarketRate        float64  `json:"beat_market_rate"`
 }
 
+// BacktestContributor 是整段回測中一檔股票的貢獻;Contribution 為各期「報酬 ÷ 當期有報酬的持股數」相加(百分點)。
+type BacktestContributor struct {
+	Symbol       string   `json:"symbol"`
+	Name         *string  `json:"name"`
+	PeriodsHeld  int      `json:"periods_held"`
+	Contribution float64  `json:"contribution"`
+	AvgReturn    *float64 `json:"avg_return"`
+}
+
+// BacktestContributors 是貢獻最多與拖累最多的股票;舊版 API 沒有這個欄位時為 nil。
+type BacktestContributors struct {
+	HeldSymbols int                   `json:"held_symbols"`
+	Best        []BacktestContributor `json:"best"`
+	Worst       []BacktestContributor `json:"worst"`
+}
+
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
 type ScreenBacktestEnvelope struct {
-	From             string           `json:"from"`
-	To               string           `json:"to"`
-	Market           string           `json:"market"`
-	HoldDays         int              `json:"hold_days"`
-	Limit            int              `json:"limit"`
-	KeepRank         *int             `json:"keep_rank"`
-	MarketFilterMA   *int             `json:"market_filter_ma"`
-	HoldMinRSScore   *int             `json:"hold_min_rs_score"`
-	MaxPerIndustry   *int             `json:"max_per_industry"`
-	Industry         *string          `json:"industry"`
-	MinRSScore       *int             `json:"min_rs_score"`
-	MaxRSScore       *int             `json:"max_rs_score"`
-	MinForeignStreak *int             `json:"min_foreign_streak"`
-	MinTrustStreak   *int             `json:"min_trust_streak"`
-	Indicator        *string          `json:"indicator"`
-	Kind             *string          `json:"kind"`
-	FeeDiscount      *float64         `json:"fee_discount"`
-	Adjusted         bool             `json:"adjusted"`
-	EtfBenchmark     *string          `json:"etf_benchmark"`
-	Summary          BacktestSummary  `json:"summary"`
-	Years            []BacktestYear   `json:"years"`
-	Periods          []BacktestPeriod `json:"periods"`
+	From             string                `json:"from"`
+	To               string                `json:"to"`
+	Market           string                `json:"market"`
+	HoldDays         int                   `json:"hold_days"`
+	Limit            int                   `json:"limit"`
+	KeepRank         *int                  `json:"keep_rank"`
+	MarketFilterMA   *int                  `json:"market_filter_ma"`
+	MarketBreadth    *int                  `json:"market_filter_breadth"`
+	HoldMinRSScore   *int                  `json:"hold_min_rs_score"`
+	MaxPerIndustry   *int                  `json:"max_per_industry"`
+	Industry         *string               `json:"industry"`
+	MinRSScore       *int                  `json:"min_rs_score"`
+	MaxRSScore       *int                  `json:"max_rs_score"`
+	MinForeignStreak *int                  `json:"min_foreign_streak"`
+	MinTrustStreak   *int                  `json:"min_trust_streak"`
+	Indicator        *string               `json:"indicator"`
+	Kind             *string               `json:"kind"`
+	FeeDiscount      *float64              `json:"fee_discount"`
+	Adjusted         bool                  `json:"adjusted"`
+	EtfBenchmark     *string               `json:"etf_benchmark"`
+	Summary          BacktestSummary       `json:"summary"`
+	Years            []BacktestYear        `json:"years"`
+	Contributors     *BacktestContributors `json:"contributors"`
+	Periods          []BacktestPeriod      `json:"periods"`
 }
 
 // ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
@@ -120,6 +138,7 @@ type ScreenBacktestOptions struct {
 	Limit            int
 	KeepRank         int
 	MarketFilterMA   int
+	MarketBreadth    int
 	HoldMinRSScore   int
 	MaxPerIndustry   int
 	Market           string
@@ -173,6 +192,9 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	if opt.MaxPerIndustry > 0 {
 		values.Set("max_per_industry", fmt.Sprint(opt.MaxPerIndustry))
 	}
+	if opt.MarketBreadth > 0 {
+		values.Set("market_filter_breadth", fmt.Sprint(opt.MarketBreadth))
+	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
@@ -199,6 +221,7 @@ type ScreenBacktestInput struct {
 	Limit            int    `json:"limit,omitempty"`
 	KeepRank         int    `json:"keep_rank,omitempty"`
 	MarketFilterMA   int    `json:"market_filter_ma,omitempty"`
+	MarketBreadth    int    `json:"market_filter_breadth,omitempty"`
 	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
 	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
 	Market           string `json:"market,omitempty"`
@@ -271,6 +294,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(100.0),
 				Description: "產業上限(選填,1 至 100):每期持股(含續抱)同一產業最多幾檔,超過的跳過、改由其他產業依 RS 補滿,用來降低單一產業集中。例如 limit=20、max_per_industry=4",
+			},
+			"market_filter_breadth": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(99.0),
+				Description: "市場廣度濾網(選填,1 至 99):換股日同市場站上 60 日均線的股票比例低於此百分比時這期空手、賣光上一期持股;可與 market_filter_ma 併用(兩者都通過才持股)。統計從 2019 年起",
 			},
 			"market_filter_ma": {
 				Type:        "integer",
@@ -368,6 +397,9 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 	if in.MaxPerIndustry != 0 && (in.MaxPerIndustry < 1 || in.MaxPerIndustry > 100) {
 		return nil, nil, fmt.Errorf("參數 max_per_industry 必須介於 1 到 100 之間")
 	}
+	if in.MarketBreadth != 0 && (in.MarketBreadth < 1 || in.MarketBreadth > 99) {
+		return nil, nil, fmt.Errorf("參數 market_filter_breadth 必須介於 1 到 99 之間")
+	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
 		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
@@ -396,7 +428,7 @@ func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.Call
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -459,6 +491,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.MarketFilterMA != nil {
 		b.printf(";大盤濾網:換股日加權指數低於 %d 日均線就空手", *e.MarketFilterMA)
 	}
+	if e.MarketBreadth != nil {
+		b.printf(";市場廣度濾網:換股日站上 60 日均線的股票比例低於 %d%% 就空手", *e.MarketBreadth)
+	}
 	if e.HoldMinRSScore != nil {
 		b.printf(";續抱條件:上一期持股 RS ≥ %d 就續抱", *e.HoldMinRSScore)
 	}
@@ -481,7 +516,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			displayPercent(s.MaxDrawdown), displayPercent(s.BenchmarkMaxDrawdown),
 			displayPercent(s.AvgPeriodReturn), displayPercent(s.AvgBenchmarkReturn),
 			displayRate(s.WinRate), displayRate(s.BeatMarketRate))
-		if e.MarketFilterMA != nil {
+		if e.MarketFilterMA != nil || e.MarketBreadth != nil {
 			b.printf("因大盤濾網空手 %d 期。", s.MarketFilteredPeriods)
 		}
 		if s.TotalReturnAfterCosts != nil {
@@ -503,6 +538,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			}
 		}
 		writeBacktestYears(&b, e.Years)
+		writeBacktestContributors(&b, e.Contributors)
 		recent := e.Periods[max(0, len(e.Periods)-backtestRecentPeriods):]
 		b.printf("\n最近 %d 期:", len(recent))
 		for _, p := range recent {
@@ -529,6 +565,32 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;等權再平衡的小額調整不計成本。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
+}
+
+// writeBacktestContributors 列出整段貢獻最多與拖累最多的股票;舊版 API 沒有這個欄位或名單都空時不輸出。
+func writeBacktestContributors(b *summaryBuilder, c *BacktestContributors) {
+	if c == nil || (len(c.Best) == 0 && len(c.Worst) == 0) {
+		return
+	}
+	b.printf("\n個股貢獻(整段持有過 %d 檔;每期貢獻 = 報酬 ÷ 當期持股數,各期相加,不複利、未扣成本):", c.HeldSymbols)
+	for _, group := range []struct {
+		label string
+		items []BacktestContributor
+	}{{"貢獻最多", c.Best}, {"拖累最多", c.Worst}} {
+		if len(group.items) == 0 {
+			continue
+		}
+		parts := make([]string, 0, len(group.items))
+		for _, item := range group.items {
+			name := item.Symbol
+			if item.Name != nil && *item.Name != "" && *item.Name != item.Symbol {
+				name += " " + *item.Name
+			}
+			parts = append(parts, fmt.Sprintf("%s %+.2f 百分點(持有 %d 期、平均 %s)",
+				name, item.Contribution, item.PeriodsHeld, displayPercent(item.AvgReturn)))
+		}
+		b.printf("\n- %s:%s", group.label, strings.Join(parts, "、"))
+	}
 }
 
 // writeBacktestYears 逐年列出累積報酬(扣成本後、基準、0050)與勝率;舊版 API 沒有年度彙總時不輸出。
