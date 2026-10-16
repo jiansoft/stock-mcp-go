@@ -225,7 +225,7 @@ The Compose example publishes `127.0.0.1:9004` to container port `3000` and pers
 .\scripts\deploy-armv7.ps1 -StageOnly    # upload to /tmp and verify sha256 only
 ```
 
-The script checks the ELF architecture and the uploaded sha256, then verifies the process, port, `/healthz`, `/readyz`, and the startup log, printing rollback commands on failure (`control.sh` keeps the previous binary as `<binary>.<timestamp>`). Defaults: `pi@192.168.111.138:/opt/stock_mcp`, port `9005`.
+The script checks the ELF architecture and the uploaded sha256, replaces the remote `control.sh` when it differs from the repository copy (uploaded with LF line endings; `stop` now waits up to 30 seconds for the old process to exit, and `start` fails if the new process exits immediately), then verifies the process, port, `/healthz`, `/readyz`, and the startup log, printing rollback commands on failure (`control.sh` keeps the previous binary as `<binary>.<timestamp>`). Defaults: `pi@192.168.111.138:/opt/stock_mcp`, port `9005`.
 
 ## Reverse proxy
 
