@@ -115,7 +115,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
 		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4, MarketBreadth: 40,
-		RebalanceOffset: 7, MinAvgTradeValue: 50, RankBy: "trade_value", EtfWeight: 30,
+		RebalanceOffset: 7, MinAvgTradeValue: 50, RankBy: "trade_value", EtfWeight: 30, Weighting: "sqrt_trade_value",
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -125,7 +125,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
 		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120", "hold_min_rs_score": "60",
 		"max_per_industry": "4", "market_filter_breadth": "40", "rebalance_offset": "7", "min_avg_trade_value": "50",
-		"rank_by": "trade_value", "etf_weight": "30",
+		"rank_by": "trade_value", "etf_weight": "30", "weighting": "sqrt_trade_value",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -167,7 +167,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: " TPEX ", Industry: " 半導體業 ",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: " new_high ",
 		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, MinAvgTradeValue: 100000,
-		RankBy: "foreign_streak", EtfWeight: 100,
+		RankBy: "foreign_streak", EtfWeight: 100, Weighting: "trade_value",
 	}
 	if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
@@ -175,7 +175,7 @@ func TestScreenBacktestTool(t *testing.T) {
 	want := ScreenBacktestOptions{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, MinAvgTradeValue: 100000, Market: "tpex", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: "new_high",
-		RankBy: "foreign_streak", EtfWeight: 100,
+		RankBy: "foreign_streak", EtfWeight: 100, Weighting: "trade_value",
 	}
 	if f.got.FeeDiscount == nil || *f.got.FeeDiscount != 0 {
 		t.Fatalf("fee_discount=0 應原樣傳給 API:%#v", f.got.FeeDiscount)
@@ -193,7 +193,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{MarketBreadth: 100}, {MarketBreadth: -1},
 		{RebalanceOffset: 20}, {RebalanceOffset: -1}, {HoldDays: 5, RebalanceOffset: 5},
 		{MinAvgTradeValue: 100001}, {MinAvgTradeValue: -1},
-		{RankBy: "volume"}, {RankBy: "RS_SCORE"}, {EtfWeight: 101}, {EtfWeight: -1},
+		{RankBy: "volume"}, {RankBy: "RS_SCORE"}, {EtfWeight: 101}, {EtfWeight: -1}, {Weighting: "market_cap"}, {Weighting: "EQUAL"},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -290,17 +290,24 @@ func TestScreenBacktestSummary(t *testing.T) {
 	if strings.Contains(summary, "2026-02-02") || strings.Contains(summary, "存活者偏差") || strings.Contains(summary, "0050 核心部位") {
 		t.Errorf("只列最近 6 期,不再提存活者偏差,etf_weight=0 不提核心部位:%s", summary)
 	}
-	e.RankBy, e.EtfWeight = ptr("trade_value"), ptr(30)
+	e.RankBy, e.EtfWeight, e.Weighting = ptr("trade_value"), ptr(30), ptr("trade_value")
+	e.Current.Holdings[0].Weight, e.Current.Holdings[1].Weight = ptr(80.0), ptr(20.0)
 	ranked := screenBacktestSummary(e)
 	for _, want := range []string{
-		"依近 20 個交易日平均成交金額由高到低取前 20 檔等權持有",
+		"依近 20 個交易日平均成交金額由高到低取前 20 檔依近 20 個交易日平均成交金額加權持有",
 		";換股日偏移:起日之後先跳過 3 個交易日;0050 核心部位 30%(其餘 70% 跑策略,報酬皆為混合後的組合)。",
+		"勝過基準 50%。因大盤濾網策略部位空手 1 期(0050 核心部位照常持有)。",
+		"持有 2 檔(相對上一期換手 25%):2330 台積電(80%)、79979(20%)。",
 	} {
 		if !strings.Contains(ranked, want) {
 			t.Errorf("摘要缺少 %q:%s", want, ranked)
 		}
 	}
-	e.RankBy, e.EtfWeight = nil, nil
+	e.Current.Holdings[0].Weight, e.Current.Holdings[1].Weight = ptr(50.0), ptr(50.0)
+	if equal := screenBacktestSummary(e); !strings.Contains(equal, "2330 台積電、79979。") {
+		t.Errorf("權重相同時不列權重:%s", equal)
+	}
+	e.RankBy, e.EtfWeight, e.Weighting = nil, nil, nil
 	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years, e.Contributors, e.Current = nil, nil, nil, nil, nil
 	e.RebalanceOffset = ptr(0)
 	if old := screenBacktestSummary(e); strings.Contains(old, "扣交易成本") || strings.Contains(old, "對照實際買得到") || strings.Contains(old, "依換股日年度") || strings.Contains(old, "個股貢獻") ||
@@ -337,6 +344,17 @@ func TestRankByText(t *testing.T) {
 	}
 	if etfWeightText(0) != "" || etfWeightText(-1) != "" || !strings.HasPrefix(etfWeightText(100), "0050 核心部位 100%(其餘 0%") {
 		t.Error("etfWeightText 未設定應為空,100% 應說明其餘 0%")
+	}
+	for weighting, want := range map[string]string{
+		"": "等權持有", "equal": "等權持有", "trade_value": "依近 20 個交易日平均成交金額加權持有", "sqrt_trade_value": "依平均成交金額的平方根加權持有",
+	} {
+		if got := weightingText(weighting); got != want {
+			t.Errorf("weightingText(%q) = %q,應為 %q", weighting, got, want)
+		}
+	}
+	if unequalWeights(nil) || unequalWeights([]BacktestHolding{{Symbol: "A"}, {Symbol: "B", Weight: ptr(10.0)}}) ||
+		!unequalWeights([]BacktestHolding{{Symbol: "A", Weight: ptr(60.0)}, {Symbol: "B", Weight: ptr(40.0)}}) {
+		t.Error("unequalWeights 只在每檔都有權重且不相同時為 true")
 	}
 }
 
