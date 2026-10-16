@@ -83,3 +83,31 @@ func TestToolCallLogging(t *testing.T) {
 		}
 	}
 }
+
+// TestToolNameAndStatusEdgeCases 驗證非 tools/call 請求與沒有參數時工具名稱為空,
+// 以及三種呼叫結果的分類。
+func TestToolNameAndStatusEdgeCases(t *testing.T) {
+	if got := toolName(&mcp.ListToolsRequest{}); got != "" {
+		t.Errorf("非 tools/call 請求的工具名稱應為空:%q", got)
+	}
+	if got := toolName(&mcp.CallToolRequest{}); got != "" {
+		t.Errorf("沒有參數的 tools/call 工具名稱應為空:%q", got)
+	}
+	if got := toolName(&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "get_stock"}}); got != "get_stock" {
+		t.Errorf("工具名稱應取自參數:%q", got)
+	}
+	for _, c := range []struct {
+		result mcp.Result
+		err    error
+		want   string
+	}{
+		{&mcp.CallToolResult{}, nil, "ok"},
+		{&mcp.CallToolResult{IsError: true}, nil, "tool_error"},
+		{nil, errors.New("boom"), "protocol_error"},
+		{&mcp.ListToolsResult{}, nil, "ok"},
+	} {
+		if got := toolCallStatus(c.result, c.err); got != c.want {
+			t.Errorf("toolCallStatus(%T, %v) = %q,應為 %q", c.result, c.err, got, c.want)
+		}
+	}
+}
