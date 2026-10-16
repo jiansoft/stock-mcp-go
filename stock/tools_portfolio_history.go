@@ -24,21 +24,29 @@ type PortfolioMonth struct {
 
 // PortfolioHistory 是 portfolio/history endpoint 的完整回應;市值歷史不足時多數欄位為 nil。
 type PortfolioHistory struct {
-	MemberID                int64            `json:"member_id"`
-	DataAsOf                *string          `json:"data_as_of"`
-	From                    *string          `json:"from"`
-	StartValue              *float64         `json:"start_value"`
-	EndValue                *float64         `json:"end_value"`
-	Buys                    *float64         `json:"buys"`
-	Sells                   *float64         `json:"sells"`
-	ReturnPercent           *float64         `json:"return_percent"`
-	AnnualizedReturnPercent *float64         `json:"annualized_return_percent"`
-	MaxDrawdownPercent      *float64         `json:"max_drawdown_percent"`
-	MaxDrawdownPeak         *string          `json:"max_drawdown_peak"`
-	MaxDrawdownTrough       *string          `json:"max_drawdown_trough"`
-	BenchmarkReturnPercent  *float64         `json:"benchmark_return_percent"`
-	ExcessReturnPercent     *float64         `json:"excess_return_percent"`
-	Months                  []PortfolioMonth `json:"months"`
+	MemberID                int64    `json:"member_id"`
+	DataAsOf                *string  `json:"data_as_of"`
+	From                    *string  `json:"from"`
+	StartValue              *float64 `json:"start_value"`
+	EndValue                *float64 `json:"end_value"`
+	Buys                    *float64 `json:"buys"`
+	Sells                   *float64 `json:"sells"`
+	ReturnPercent           *float64 `json:"return_percent"`
+	AnnualizedReturnPercent *float64 `json:"annualized_return_percent"`
+	MaxDrawdownPercent      *float64 `json:"max_drawdown_percent"`
+	MaxDrawdownPeak         *string  `json:"max_drawdown_peak"`
+	MaxDrawdownTrough       *string  `json:"max_drawdown_trough"`
+	BenchmarkReturnPercent  *float64 `json:"benchmark_return_percent"`
+	ExcessReturnPercent     *float64 `json:"excess_return_percent"`
+	// 以下為相對加權指數的風險指標(每日報酬、無風險利率以 0 計);成對交易日不足 20 天或舊版 API 為 nil。
+	Beta                       *float64         `json:"beta"`
+	AlphaPercent               *float64         `json:"alpha_percent"`
+	Correlation                *float64         `json:"correlation"`
+	TrackingErrorPercent       *float64         `json:"tracking_error_percent"`
+	VolatilityPercent          *float64         `json:"volatility_percent"`
+	BenchmarkVolatilityPercent *float64         `json:"benchmark_volatility_percent"`
+	RiskDays                   *int             `json:"risk_days"`
+	Months                     []PortfolioMonth `json:"months"`
 }
 
 // PortfolioHistoryQuerier 是 get_portfolio_history 對資料來源的需求介面;只有 *APIClient 實作。
@@ -140,6 +148,11 @@ func portfolioHistoryText(h *PortfolioHistory, months int) string {
 		b.printf("最大回撤 %s(%s 高點 → %s 低點)。", displayPercent(h.MaxDrawdownPercent), *h.MaxDrawdownPeak, displayString(h.MaxDrawdownTrough))
 	} else {
 		b.printf("期間沒有回撤。")
+	}
+	if h.RiskDays != nil {
+		b.printf("\n相對加權指數(%d 個交易日的日報酬):beta %s、年化 alpha %s、相關係數 %s、年化追蹤誤差 %s;年化波動率 %s(大盤 %s)。",
+			*h.RiskDays, displayFloat(h.Beta), displayPercent(h.AlphaPercent), displayFloat(h.Correlation),
+			displayPercent(h.TrackingErrorPercent), displayPercent(h.VolatilityPercent), displayPercent(h.BenchmarkVolatilityPercent))
 	}
 
 	recent := h.Months

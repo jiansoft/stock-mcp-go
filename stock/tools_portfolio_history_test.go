@@ -37,6 +37,8 @@ func sampleHistory() *PortfolioHistory {
 		StartValue: ptr(3103570.0), EndValue: ptr(6185430.15), Buys: ptr(1066329.5), Sells: ptr(587300.0),
 		ReturnPercent: ptr(73.47), MaxDrawdownPercent: ptr(-8.01), MaxDrawdownPeak: ptr("2026-07-16"), MaxDrawdownTrough: ptr("2026-07-29"),
 		BenchmarkReturnPercent: ptr(82.21), ExcessReturnPercent: ptr(-8.74),
+		Beta: ptr(1.12), AlphaPercent: ptr(-3.4), Correlation: ptr(0.87), TrackingErrorPercent: ptr(9.5),
+		VolatilityPercent: ptr(24.1), BenchmarkVolatilityPercent: ptr(18.7), RiskDays: ptr(243),
 		Months: []PortfolioMonth{
 			{Month: "2026-09", EndValue: 6000000, ReturnPercent: 3.2, BenchmarkReturnPercent: ptr(4.1)},
 			{Month: "2026-10", EndValue: 6185430.15, ReturnPercent: -1.5},
@@ -89,6 +91,7 @@ func TestPortfolioHistoryTool(t *testing.T) {
 		"全部會員持股 2025-10-08 至 2026-10-08 的時間加權報酬 73.47%;同期加權指數 82.21%,超額報酬 -8.74 個百分點。",
 		"市值 3103570 → 6185430.15 元,期間投入 1066329.5 元、賣出 587300 元。最大回撤 -8.01%(2026-07-16 高點 → 2026-07-29 低點)。",
 		"- 2026-09:3.2%(4.1%)",
+		"\n相對加權指數(243 個交易日的日報酬):beta 1.12、年化 alpha -3.4%、相關係數 0.87、年化追蹤誤差 9.5%;年化波動率 24.1%(大盤 18.7%)。",
 		"- 2026-10:-1.5%(無)",
 		"不含現金股利",
 		"免責聲明",
@@ -135,6 +138,10 @@ func TestPortfolioHistoryTextEdgeCases(t *testing.T) {
 	}
 	if strings.Contains(got, "- m02:") || strings.Count(got, "\n- ") != maxMonthsInSummary {
 		t.Errorf("月份應只列最近 %d 個:%s", maxMonthsInSummary, got)
+	}
+	h.RiskDays = nil
+	if got := portfolioHistoryText(h, 36); strings.Contains(got, "相對加權指數") {
+		t.Errorf("沒有風險指標(資料不足或舊版 API)時不列:%s", got)
 	}
 }
 
