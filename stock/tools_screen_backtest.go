@@ -106,6 +106,8 @@ type BacktestContributors struct {
 type BacktestHolding struct {
 	Symbol string  `json:"symbol"`
 	Name   *string `json:"name"`
+	// Weight 是在策略部位中的權重(%);舊版 API 沒有。
+	Weight *float64 `json:"weight"`
 }
 
 // BacktestCurrent 是最後一次換股、還沒滿持有天數的持股(策略目前應持有的股票),不計入彙總;
@@ -135,6 +137,7 @@ type ScreenBacktestEnvelope struct {
 	MinAvgTradeValue *int                  `json:"min_avg_trade_value"`
 	RankBy           *string               `json:"rank_by"`
 	EtfWeight        *int                  `json:"etf_weight"`
+	Weighting        *string               `json:"weighting"`
 	Industry         *string               `json:"industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
 	MaxRSScore       *int                  `json:"max_rs_score"`
@@ -167,6 +170,7 @@ type ScreenBacktestOptions struct {
 	MinAvgTradeValue int
 	RankBy           string
 	EtfWeight        int
+	Weighting        string
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -218,7 +222,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	}
 	for key, value := range map[string]string{
 		"from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
-		"rank_by": opt.RankBy,
+		"rank_by": opt.RankBy, "weighting": opt.Weighting,
 	} {
 		if value != "" {
 			values.Set(key, value)
@@ -257,6 +261,7 @@ type ScreenBacktestInput struct {
 	MinAvgTradeValue int    `json:"min_avg_trade_value,omitempty"`
 	RankBy           string `json:"rank_by,omitempty"`
 	EtfWeight        int    `json:"etf_weight,omitempty"`
+	Weighting        string `json:"weighting,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -322,6 +327,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Maximum:     ptr(100.0),
 				Default:     []byte("0"),
 				Description: "0050 核心部位(選填,0 至 100%,預設 0):組合固定以這個比例持有 0050、其餘才依條件選股(核心／衛星配置),彙總與每期報酬都是混合後的組合報酬;0050 部位不計買賣成本,大盤濾網空手時 0050 照常持有。用來看策略搭配大盤能否勝過純 0050",
+			},
+			"weighting": {
+				Type:        "string",
+				Enum:        []any{"equal", "trade_value", "sqrt_trade_value"},
+				Default:     []byte(`"equal"`),
+				Description: "策略部位的持股加權方式(選填,預設 equal):equal 等權;trade_value 依換股日前 20 個交易日平均成交金額加權(接近 0050 的市值加權,偏重大型股);sqrt_trade_value 依平均成交金額的平方根加權(介於兩者之間)。換手成本只算進出股票的權重,目前持股會附各檔權重",
 			},
 			"keep_rank": {
 				Type:        "integer",
@@ -468,6 +479,9 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.EtfWeight < 0 || in.EtfWeight > 100 {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 etf_weight 必須介於 0 到 100 之間")
 	}
+	if in.Weighting != "" && !slices.Contains(backtestWeighting, in.Weighting) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 weighting 必須為 equal、trade_value 或 sqrt_trade_value")
+	}
 	if in.RebalanceOffset < 0 || in.RebalanceOffset >= holdDays {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
 	}
@@ -500,7 +514,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	}
 	return ScreenBacktestOptions{
 		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry,
-		RankBy: in.RankBy, EtfWeight: in.EtfWeight,
+		RankBy: in.RankBy, EtfWeight: in.EtfWeight, Weighting: in.Weighting,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
@@ -563,6 +577,20 @@ func rankByText(rankBy string) string {
 	return "相對強度分數"
 }
 
+// backtestWeighting 是策略部位可用的持股加權方式,與 Data API 相同。
+var backtestWeighting = []string{"equal", "trade_value", "sqrt_trade_value"}
+
+// weightingText 把加權方式轉成「…持有」;空字串(未指定)與 equal 為等權。
+func weightingText(weighting string) string {
+	switch weighting {
+	case "trade_value":
+		return "依近 20 個交易日平均成交金額加權持有"
+	case "sqrt_trade_value":
+		return "依平均成交金額的平方根加權持有"
+	}
+	return "等權持有"
+}
+
 // etfWeightText 說明 0050 核心部位;0 或未設定回空字串。
 func etfWeightText(weight int) string {
 	if weight <= 0 {
@@ -584,8 +612,12 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.RankBy != nil {
 		rankBy = *e.RankBy
 	}
-	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s由高到低取前 %d 檔等權持有(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
-		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), e.Limit, returnBasisText(e.Adjusted))
+	weighting := ""
+	if e.Weighting != nil {
+		weighting = *e.Weighting
+	}
+	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s由高到低取前 %d 檔%s(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
+		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), e.Limit, weightingText(weighting), returnBasisText(e.Adjusted))
 	var filters []string
 	if e.Industry != nil {
 		filters = append(filters, "產業「"+*e.Industry+"」")
@@ -645,7 +677,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			displayPercent(s.AvgPeriodReturn), displayPercent(s.AvgBenchmarkReturn),
 			displayRate(s.WinRate), displayRate(s.BeatMarketRate))
 		if e.MarketFilterMA != nil || e.MarketBreadth != nil {
-			b.printf("因大盤濾網空手 %d 期。", s.MarketFilteredPeriods)
+			if e.EtfWeight != nil && *e.EtfWeight > 0 {
+				b.printf("因大盤濾網策略部位空手 %d 期(0050 核心部位照常持有)。", s.MarketFilteredPeriods)
+			} else {
+				b.printf("因大盤濾網空手 %d 期。", s.MarketFilteredPeriods)
+			}
 		}
 		if s.TotalReturnAfterCosts != nil {
 			b.printf("\n扣交易成本(手續費 0.1425%%×%s 折扣、賣出證交稅 0.3%%,依換手計算)後:累積報酬 %s、年化 %s、最大回撤 %s;平均換手率 %s。",
@@ -691,7 +727,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		}
 	}
 	writeBacktestCurrent(&b, e.Current)
-	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;等權再平衡的小額調整不計成本。過去表現不代表未來結果。免責聲明:%s",
+	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤;續抱股票的權重調整(再平衡)不計成本。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
 	return b.String()
 }
@@ -709,16 +745,33 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 	case len(c.Holdings) == 0:
 		b.printf("沒有符合條件的股票,空手。")
 	default:
+		weighted := unequalWeights(c.Holdings)
 		names := make([]string, 0, len(c.Holdings))
 		for _, holding := range c.Holdings {
 			name := holding.Symbol
 			if holding.Name != nil && *holding.Name != "" && *holding.Name != holding.Symbol {
 				name += " " + *holding.Name
 			}
+			if weighted {
+				name += "(" + displayPercent(holding.Weight) + ")"
+			}
 			names = append(names, name)
 		}
 		b.printf("持有 %d 檔(相對上一期換手 %s):%s。", len(c.Holdings), displayRate(&c.Turnover), strings.Join(names, "、"))
 	}
+}
+
+// unequalWeights 回報目前持股是否有不同的權重(依成交金額加權);等權或舊版 API 沒有權重時為 false。
+func unequalWeights(holdings []BacktestHolding) bool {
+	for _, holding := range holdings {
+		if holding.Weight == nil || holdings[0].Weight == nil {
+			return false
+		}
+		if *holding.Weight != *holdings[0].Weight {
+			return true
+		}
+	}
+	return false
 }
 
 // writeBacktestContributors 列出整段貢獻最多與拖累最多的股票;舊版 API 沒有這個欄位或名單都空時不輸出。

@@ -34,8 +34,12 @@ type BacktestOffsetDistribution struct {
 	MaxDrawdownAfterCosts      *BacktestStat `json:"max_drawdown_after_costs"`
 	EtfAnnualizedReturn        *BacktestStat `json:"etf_annualized_return"`
 	EtfSharpeRatio             *BacktestStat `json:"etf_sharpe_ratio"`
+	Volatility                 *BacktestStat `json:"volatility"`
+	EtfVolatility              *BacktestStat `json:"etf_volatility"`
+	EtfMaxDrawdown             *BacktestStat `json:"etf_max_drawdown"`
 	BeatEtfReturnRate          *float64      `json:"beat_etf_return_rate"`
 	BeatEtfSharpeRate          *float64      `json:"beat_etf_sharpe_rate"`
+	BeatEtfDrawdownRate        *float64      `json:"beat_etf_drawdown_rate"`
 }
 
 // BacktestOffsetYear 是某一年各偏移的表現分布(各偏移該年各期的累積報酬,年度各自從 1 起算)。
@@ -48,7 +52,7 @@ type BacktestOffsetYear struct {
 }
 
 // ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應;舊版 API 沒有
-// rank_by、etf_weight 與 years。
+// rank_by、etf_weight、weighting 與 years。
 type ScreenBacktestOffsetsEnvelope struct {
 	From         string                     `json:"from"`
 	To           string                     `json:"to"`
@@ -57,6 +61,7 @@ type ScreenBacktestOffsetsEnvelope struct {
 	Limit        int                        `json:"limit"`
 	RankBy       *string                    `json:"rank_by"`
 	EtfWeight    *int                       `json:"etf_weight"`
+	Weighting    *string                    `json:"weighting"`
 	FeeDiscount  *float64                   `json:"fee_discount"`
 	EtfBenchmark *string                    `json:"etf_benchmark"`
 	Distribution BacktestOffsetDistribution `json:"distribution"`
@@ -162,6 +167,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	if opt.KeepRank > opt.Limit {
 		rules = append(rules, fmt.Sprintf("換股緩衝前 %d 名", opt.KeepRank))
 	}
+	if opt.Weighting != "" && opt.Weighting != "equal" {
+		rules = append(rules, weightingText(opt.Weighting))
+	}
 	if weight := etfWeightText(opt.EtfWeight); weight != "" {
 		rules = append(rules, weight)
 	}
@@ -213,10 +221,21 @@ func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBa
 	b.printf("\n- 年化報酬:%s", backtestStatText(d.AnnualizedReturnAfterCosts, displayPercent))
 	b.printf("\n- 夏普值:%s", backtestStatText(d.SharpeRatio, displayFloat))
 	b.printf("\n- 最大回撤:%s", backtestStatText(d.MaxDrawdownAfterCosts, displayPercent))
+	if d.Volatility != nil {
+		b.printf("\n- 年化波動率(未扣成本):%s", backtestStatText(d.Volatility, displayPercent))
+	}
 	b.printf("\n- 同期 0050(同樣的換股日進出、未扣成本)年化報酬:%s;夏普值:%s",
 		backtestStatText(d.EtfAnnualizedReturn, displayPercent), backtestStatText(d.EtfSharpeRatio, displayFloat))
-	b.printf("\n年化報酬勝過同偏移 0050 的比例 %s、夏普值勝過 0050 的比例 %s。",
+	if d.EtfMaxDrawdown != nil {
+		b.printf(";最大回撤:%s;年化波動率:%s",
+			backtestStatText(d.EtfMaxDrawdown, displayPercent), backtestStatText(d.EtfVolatility, displayPercent))
+	}
+	b.printf("\n年化報酬勝過同偏移 0050 的比例 %s、夏普值勝過 0050 的比例 %s",
 		displayRate(d.BeatEtfReturnRate), displayRate(d.BeatEtfSharpeRate))
+	if d.BeatEtfDrawdownRate != nil {
+		b.printf("、最大回撤比 0050 淺的比例 %s", displayRate(d.BeatEtfDrawdownRate))
+	}
+	b.printf("。")
 	if len(e.Years) > 0 {
 		parts := make([]string, 0, len(e.Years))
 		for _, year := range e.Years {

@@ -69,7 +69,9 @@ func TestAPIClientScreenBacktestOffsets(t *testing.T) {
 			_, _ = w.Write([]byte(`{"from":"2019-01-02","to":"2026-10-15","market":"all","hold_days":20,"limit":20,"fee_discount":0.28,"etf_benchmark":"0050",` +
 				`"distribution":{"annualized_return_after_costs":{"min":13.11,"p25":17.5,"median":21.73,"mean":23.06,"p75":28.2,"max":36.21},` +
 				`"sharpe_ratio":null,"max_drawdown_after_costs":null,"etf_annualized_return":null,"etf_sharpe_ratio":null,` +
-				`"beat_etf_return_rate":0.15,"beat_etf_sharpe_rate":null},` +
+				`"beat_etf_return_rate":0.15,"beat_etf_sharpe_rate":null,` +
+				`"volatility":{"min":15,"p25":16,"median":17,"mean":17,"p75":18,"max":19},"etf_volatility":null,"etf_max_drawdown":null,"beat_etf_drawdown_rate":0.4},` +
+				`"weighting":"trade_value",` +
 				`"rank_by":"trade_value","etf_weight":30,` +
 				`"years":[{"year":2019,"offsets":20,"return_after_costs":{"min":1,"p25":2,"median":3,"mean":3,"p75":4,"max":5},"etf_return":null,"beat_etf_rate":null}],` +
 				`"offsets":[{"rebalance_offset":0,"summary":{"periods":94,"invested_periods":66,"annualized_return_after_costs":34.85,"sharpe_ratio":1.3}}]}`))
@@ -92,6 +94,9 @@ func TestAPIClientScreenBacktestOffsets(t *testing.T) {
 	}
 	if len(envelope.Offsets) != 1 || envelope.Offsets[0].Summary.Periods != 94 || *envelope.Offsets[0].Summary.AnnualizedAfterCosts != 34.85 || *envelope.EtfBenchmark != "0050" {
 		t.Fatalf("偏移彙總解析錯誤:%#v", envelope)
+	}
+	if d.Volatility.Median != 17 || d.EtfVolatility != nil || *d.BeatEtfDrawdownRate != 0.4 || *envelope.Weighting != "trade_value" {
+		t.Fatalf("波動率、回撤比例或加權方式解析錯誤:%#v", envelope)
 	}
 	if *envelope.RankBy != "trade_value" || *envelope.EtfWeight != 30 || len(envelope.Years) != 1 || envelope.Years[0].Offsets != 20 ||
 		envelope.Years[0].ReturnAfterCosts.Median != 3 || envelope.Years[0].EtfReturn != nil || envelope.Years[0].BeatEtfRate != nil {
@@ -179,9 +184,28 @@ func TestScreenBacktestOffsetsSummary(t *testing.T) {
 		t.Errorf("沒有條件與偏移時的摘要錯誤:%s", plain)
 	}
 	ranked := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "all", HoldDays: 20, Limit: 10},
-		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "trust_streak", EtfWeight: 50})
-	if !strings.Contains(ranked, "每 20 個交易日換股、取投信連續買超天數最高的前 10 檔;0050 核心部位 50%(其餘 50% 跑策略,報酬皆為混合後的組合);把換股日偏移") {
-		t.Errorf("排序方式與核心部位的摘要錯誤:%s", ranked)
+		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "trust_streak", EtfWeight: 50, Weighting: "sqrt_trade_value"})
+	if !strings.Contains(ranked, "每 20 個交易日換股、取投信連續買超天數最高的前 10 檔;依平均成交金額的平方根加權持有、0050 核心部位 50%(其餘 50% 跑策略,報酬皆為混合後的組合);把換股日偏移") {
+		t.Errorf("排序方式、加權與核心部位的摘要錯誤:%s", ranked)
+	}
+	risky := sampleBacktestOffsets()
+	risky.Distribution.Volatility = &BacktestStat{Min: 15, P25: 16, Median: 17, Mean: 17, P75: 18, Max: 19}
+	risky.Distribution.EtfMaxDrawdown = &BacktestStat{Min: -30, P25: -29, Median: -28.5, Mean: -28, P75: -27, Max: -26}
+	risky.Distribution.EtfVolatility = &BacktestStat{Median: 18.2}
+	risky.Distribution.BeatEtfDrawdownRate = ptr(0.6)
+	riskText := screenBacktestOffsetsSummary(risky, ScreenBacktestOptions{HoldDays: 20, Limit: 20, Weighting: "equal"})
+	for _, want := range []string{
+		"\n- 年化波動率(未扣成本):中位數 17%",
+		";最大回撤:中位數 -28.5%",
+		";年化波動率:中位數 18.2%",
+		"夏普值勝過 0050 的比例 0%、最大回撤比 0050 淺的比例 60%。",
+	} {
+		if !strings.Contains(riskText, want) {
+			t.Errorf("風險摘要缺少 %q:%s", want, riskText)
+		}
+	}
+	if strings.Contains(riskText, "加權持有") {
+		t.Errorf("weighting=equal 不應列加權方式:%s", riskText)
 	}
 	same := screenBacktestOffsetsSummary(&ScreenBacktestOffsetsEnvelope{From: "2026-10-01", To: "2026-10-15", Market: "all", HoldDays: 20, Limit: 10},
 		ScreenBacktestOptions{HoldDays: 20, Limit: 10, RankBy: "rs_score"})
@@ -229,7 +253,8 @@ func TestScreenBacktestOffsetsToolIsRegisteredReadOnly(t *testing.T) {
 	if *schema.Properties["min_avg_trade_value"].Maximum != 100000 {
 		t.Error("min_avg_trade_value 上限應為 100000")
 	}
-	if len(schema.Properties["rank_by"].Enum) != len(backtestRankBy) || *schema.Properties["etf_weight"].Maximum != 100 {
-		t.Error("rank_by 與 etf_weight 的 schema 應與 Data API 一致")
+	if len(schema.Properties["rank_by"].Enum) != len(backtestRankBy) || *schema.Properties["etf_weight"].Maximum != 100 ||
+		len(schema.Properties["weighting"].Enum) != len(backtestWeighting) {
+		t.Error("rank_by、etf_weight 與 weighting 的 schema 應與 Data API 一致")
 	}
 }
