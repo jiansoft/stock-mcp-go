@@ -8,7 +8,8 @@
       2. 本機預檢：確認是 32 位元 ARM ELF，計算 sha256。
       3. 遠端預檢：架構是 armv7l、部署目錄有 control.sh。
       4. scp 到 /tmp，比對遠端 sha256（不直接覆蓋執行中的檔案，避免 Text file busy）。
-      5. ssh 執行 control.sh update（stop → 備份舊檔並搬移 → start）。
+         repo 的 control.sh 與遠端不同時一併更新（repo 為準）。
+      5. ssh 執行 control.sh update（stop 並等程序結束 → 備份舊檔並搬移 → start）。
       6. 驗證：程序存在、埠在監聽、/healthz 與 /readyz 回 200、stdout 有啟動訊息。
 
     驗證段落以 here-string 組成遠端 shell 指令。檔案在 Windows 上可能是 CRLF，
@@ -221,6 +222,30 @@ if ($StageOnly)
 }
 
 # --- 4. 部署 ----------------------------------------------------------------
+# repo 的 control.sh 是準：內容不同時先換掉遠端的版本，update 才會用到新的 stop／start 邏輯。
+# 一律去掉 CR 再上傳（Windows 工作目錄可能被轉成 CRLF，bash 讀到 CR 會出錯）。
+$controlScript = Join-Path ([System.IO.Path]::GetTempPath()) 'stock-mcp-control.sh'
+$controlBytes = [System.IO.File]::ReadAllBytes((Join-Path $RepoRoot 'control.sh'))
+[System.IO.File]::WriteAllBytes($controlScript, [byte[]]($controlBytes | Where-Object { $_ -ne 13 }))
+$controlHash = (Get-FileHash -LiteralPath $controlScript -Algorithm SHA256).Hash.ToLower()
+$remoteControlHash = (Invoke-Remote "sha256sum $RemoteBase/control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
+if ($remoteControlHash -ne $controlHash)
+{
+    Invoke-Checked scp @ScpArgs $controlScript "${Target}:/tmp/stock-mcp-control.sh"
+    $uploadedHash = (Invoke-Remote "sha256sum /tmp/stock-mcp-control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
+    if ($uploadedHash -ne $controlHash)
+    {
+        throw "control.sh 上傳後 sha256 不符（遠端 $uploadedHash），未執行 update"
+    }
+    Invoke-Remote "install -m 755 /tmp/stock-mcp-control.sh $RemoteBase/control.sh && rm -f /tmp/stock-mcp-control.sh"
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw 'control.sh 更新失敗'
+    }
+    Write-Host "  control.sh 與 repo 不同，已更新：${Target}:$RemoteBase/control.sh"
+    Write-Host ''
+}
+
 Write-Host 'control.sh update...' -ForegroundColor Cyan
 Invoke-Remote "cd $RemoteBase && ./control.sh update"
 if ($LASTEXITCODE -ne 0)

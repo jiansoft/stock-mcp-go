@@ -1,0 +1,2 @@
+# shell 腳本在 Pi 上由 bash 執行，一律保持 LF（core.autocrlf=true 時也不轉成 CRLF）。
+*.sh text eol=lf

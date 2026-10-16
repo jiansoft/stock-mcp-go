@@ -31,6 +31,8 @@ export BINARY_NAME
 IMAGE_NAME="stock-mcp-image"
 CONTAINER_NAME="stock-mcp-container"
 LOG_BACKUP_DIR="./log_backup"
+# stop 送出結束訊號後最多等幾秒讓程序真的結束（graceful shutdown 需要時間）。
+STOP_TIMEOUT=30
 DEPLOY_DIR="/opt/stock_mcp"
 
 # Docker 運行參數
@@ -64,16 +66,22 @@ DOCKER_RUN_OPTS=(
 # 核心功能
 # ==============================================================================
 
+# 啟動程序；已在執行時不重複啟動。啟動後確認程序還在，馬上結束（例如設定錯誤）時回傳 1。
 function start() {
   local pid
   pid=$(pidof "$BINARY_NAME")
-  if [ -z "$pid" ]; then
-    # stock-mcp 以 slog 將 JSON log 寫到 stdout,這裡導向 nohup.out 保存。
-    "./$BINARY_NAME" > nohup.out 2>&1 &
-    echo ">>> $BINARY_NAME 已啟動"
-  else
+  if [ -n "$pid" ]; then
     echo ">>> $BINARY_NAME 已經在執行中 (PID: $pid)"
+    return 0
   fi
+  # stock-mcp 以 slog 將 JSON log 寫到 stdout,這裡導向 nohup.out 保存。
+  "./$BINARY_NAME" > nohup.out 2>&1 &
+  sleep 1
+  if ! pidof "$BINARY_NAME" > /dev/null; then
+    echo ">>> 錯誤：$BINARY_NAME 啟動後立即結束，請查看 nohup.out"
+    return 1
+  fi
+  echo ">>> $BINARY_NAME 已啟動"
 }
 
 function stop() {
@@ -82,19 +90,28 @@ function stop() {
     mv ./nohup.out "$LOG_BACKUP_DIR/nohup.out.$(date "+%Y%m%d-%H%M%S")"
   fi
 
-  local pid
+  local pid waited=0
   pid=$(pidof "$BINARY_NAME")
-  if [ -n "$pid" ]; then
-    kill "$pid"
-    echo ">>> $BINARY_NAME 已停止"
-  else
+  if [ -z "$pid" ]; then
     echo ">>> 找不到正在執行的 $BINARY_NAME 程序"
+    return 0
   fi
+  # 送出結束訊號後等程序真的結束，避免 restart／update 接著 start 時還看得到舊程序而沒有啟動新版。
+  # shellcheck disable=SC2086 # pidof 可能回傳多個 PID，要分開傳給 kill。
+  kill $pid
+  while pidof "$BINARY_NAME" > /dev/null; do
+    if [ "$waited" -ge "$STOP_TIMEOUT" ]; then
+      echo ">>> 錯誤：$BINARY_NAME 在 $STOP_TIMEOUT 秒內沒有結束 (PID: $pid)"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo ">>> $BINARY_NAME 已停止（等待 $waited 秒）"
 }
 
 function restart() {
-  stop
-  sleep 1
+  stop || return 1
   start
 }
 
@@ -117,10 +134,8 @@ function move() {
 }
 
 function update() {
-  stop
-  sleep 1
+  stop || return 1
   move
-  sleep 1
   start
 }
 
