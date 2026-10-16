@@ -153,6 +153,7 @@ type ScreenBacktestEnvelope struct {
 	Weighting        *string               `json:"weighting"`
 	MaxWeight        *int                  `json:"max_weight"`
 	Industry         *string               `json:"industry"`
+	ExcludeIndustry  *string               `json:"exclude_industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
 	MaxRSScore       *int                  `json:"max_rs_score"`
 	MinForeignStreak *int                  `json:"min_foreign_streak"`
@@ -188,6 +189,8 @@ type ScreenBacktestOptions struct {
 	MaxWeight        int
 	Market           string
 	Industry         string
+	ExcludeIndustry  string
+	Split            string
 	MinRSScore       int
 	MaxRSScore       int
 	MinForeignStreak int
@@ -237,7 +240,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	}
 	for key, value := range map[string]string{
 		"from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
-		"rank_by": opt.RankBy, "weighting": opt.Weighting,
+		"rank_by": opt.RankBy, "weighting": opt.Weighting, "exclude_industry": opt.ExcludeIndustry, "split": opt.Split,
 	} {
 		if value != "" {
 			values.Set(key, value)
@@ -280,6 +283,8 @@ type ScreenBacktestInput struct {
 	MaxWeight        int    `json:"max_weight,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
+	ExcludeIndustry  string `json:"exclude_industry,omitempty"`
+	Split            string `json:"split,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
 	MaxRSScore       int    `json:"max_rs_score,omitempty"`
 	MinForeignStreak int    `json:"min_foreign_streak,omitempty"`
@@ -404,6 +409,11 @@ func screenBacktestSchema() *jsonschema.Schema {
 				MaxLength:   ptr(20),
 				Description: "只選這個產業的股票(選填),需為完整產業名稱,例如「半導體業」;大盤基準不受影響",
 			},
+			"exclude_industry": {
+				Type:        "string",
+				MaxLength:   ptr(200),
+				Description: "排除的產業(選填):完整產業名稱,多個以逗號分隔、最多 10 個,例如「金融保險業,航運業」;這些產業的股票不買進,大盤基準不受影響,不可與 industry 相同",
+			},
 			"min_rs_score":       rsScoreBoundSchema("換股當天相對強度(RS)分數不低於此值(選填,1 至 99)"),
 			"max_rs_score":       rsScoreBoundSchema("換股當天相對強度(RS)分數不高於此值(選填,1 至 99)"),
 			"min_foreign_streak": backtestStreakSchema("外資(含外資自營商)"),
@@ -524,6 +534,14 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if err := validateLength(industry, "industry", 0, 20); err != nil {
 		return ScreenBacktestOptions{}, err
 	}
+	exclude := strings.TrimSpace(in.ExcludeIndustry)
+	if err := validateLength(exclude, "exclude_industry", 0, 200); err != nil {
+		return ScreenBacktestOptions{}, err
+	}
+	split, err := validateBacktestSplit(strings.TrimSpace(in.Split), from, to)
+	if err != nil {
+		return ScreenBacktestOptions{}, err
+	}
 	if err := validateRSScoreBounds(in.MinRSScore, in.MaxRSScore); err != nil {
 		return ScreenBacktestOptions{}, err
 	}
@@ -538,7 +556,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	return ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry, ExcludeIndustry: exclude, Split: split,
 		RankBy: in.RankBy, EtfWeight: in.EtfWeight, Weighting: in.Weighting, MaxWeight: in.MaxWeight,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
@@ -546,13 +564,40 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	}, nil
 }
 
+// validateBacktestSplit 檢查樣本內外分割日的格式,並在起訖有指定時確認晚於起日、不晚於迄日;空字串為不分割。
+func validateBacktestSplit(split, from, to string) (string, error) {
+	if split == "" {
+		return "", nil
+	}
+	date, err := time.Parse("2006-01-02", split)
+	if err != nil {
+		return "", fmt.Errorf("參數 split 格式錯誤,需為 YYYY-MM-DD")
+	}
+	if start, err := time.Parse("2006-01-02", from); err == nil && !date.After(start) {
+		return "", fmt.Errorf("參數 split 必須晚於 from")
+	}
+	if end, err := time.Parse("2006-01-02", to); err == nil && date.After(end) {
+		return "", fmt.Errorf("參數 split 不可晚於 to")
+	}
+	return split, nil
+}
+
 // backtestToolError 把回測 API 的錯誤轉成給模型看的訊息;非預期錯誤記錄後只回通用訊息。
-func backtestToolError(err error, tool, industry string, logf func(string, ...any)) error {
+func backtestToolError(err error, tool string, opt ScreenBacktestOptions, logf func(string, ...any)) error {
 	switch {
 	case errors.Is(err, ErrMarketDataNotFound):
 		return fmt.Errorf("指定迄日之前查無相對強度資料")
 	case errors.Is(err, ErrIndustryNotFound):
-		return fmt.Errorf("找不到產業「%s」,請使用完整產業名稱,例如「半導體業」", industry)
+		var names []string
+		for _, name := range append([]string{opt.Industry}, strings.Split(opt.ExcludeIndustry, ",")...) {
+			if name = strings.TrimSpace(name); name != "" {
+				names = append(names, name)
+			}
+		}
+		if len(names) == 0 {
+			return fmt.Errorf("Data API 拒絕了這組條件(例如分割日超出實際回測期間),請檢查參數")
+		}
+		return fmt.Errorf("找不到產業「%s」(或 exclude_industry 與 industry 相同、超過 10 個),請使用完整產業名稱,例如「半導體業」", strings.Join(names, "、"))
 	}
 	logf("工具 %s 執行失敗:%v", tool, err)
 	return fmt.Errorf("%s", errInternal)
@@ -560,13 +605,14 @@ func backtestToolError(err error, tool, industry string, logf func(string, ...an
 
 // screenBacktest 執行 get_screen_backtest。
 func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.CallToolRequest, in ScreenBacktestInput) (*mcp.CallToolResult, any, error) {
+	in.Split = ""
 	opt, err := screenBacktestOptions(in)
 	if err != nil {
 		return nil, nil, err
 	}
 	envelope, err := ts.bq.ScreenBacktest(ctx, opt)
 	if err != nil {
-		return nil, nil, backtestToolError(err, "get_screen_backtest", opt.Industry, ts.logf)
+		return nil, nil, backtestToolError(err, "get_screen_backtest", opt, ts.logf)
 	}
 	return textResult(screenBacktestSummary(envelope)), ScreenBacktestOutput{
 		DataKind: "screen_backtest", IsRealtime: false, Disclaimer: AnalysisDisclaimer, ScreenBacktestEnvelope: envelope,
@@ -646,6 +692,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	var filters []string
 	if e.Industry != nil {
 		filters = append(filters, "產業「"+*e.Industry+"」")
+	}
+	if e.ExcludeIndustry != nil {
+		filters = append(filters, "排除產業「"+*e.ExcludeIndustry+"」")
 	}
 	if rs := rsScoreRangeText(e.MinRSScore, e.MaxRSScore); rs != "" {
 		filters = append(filters, "換股當天 RS 分數 "+rs)
