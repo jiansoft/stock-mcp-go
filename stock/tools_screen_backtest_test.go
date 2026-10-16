@@ -116,6 +116,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
 		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4, MarketBreadth: 40,
 		RebalanceOffset: 7, MinAvgTradeValue: 50, RankBy: "trade_value", EtfWeight: 30, Weighting: "sqrt_trade_value",
+		MaxWeight: 15,
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -125,7 +126,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
 		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120", "hold_min_rs_score": "60",
 		"max_per_industry": "4", "market_filter_breadth": "40", "rebalance_offset": "7", "min_avg_trade_value": "50",
-		"rank_by": "trade_value", "etf_weight": "30", "weighting": "sqrt_trade_value",
+		"rank_by": "trade_value", "etf_weight": "30", "weighting": "sqrt_trade_value", "max_weight": "15",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -193,7 +194,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{MarketBreadth: 100}, {MarketBreadth: -1},
 		{RebalanceOffset: 20}, {RebalanceOffset: -1}, {HoldDays: 5, RebalanceOffset: 5},
 		{MinAvgTradeValue: 100001}, {MinAvgTradeValue: -1},
-		{RankBy: "volume"}, {RankBy: "RS_SCORE"}, {EtfWeight: 101}, {EtfWeight: -1}, {Weighting: "market_cap"}, {Weighting: "EQUAL"},
+		{RankBy: "volume"}, {RankBy: "RS_SCORE"}, {EtfWeight: 101}, {EtfWeight: -1}, {Weighting: "market_cap"}, {Weighting: "EQUAL"}, {MaxWeight: 101}, {MaxWeight: -1},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -277,7 +278,7 @@ func TestScreenBacktestSummary(t *testing.T) {
 		"0050 年化波動率 17.2%、夏普值 1.31。",
 		"\n- 2025 年 3 期:報酬 12.3%(扣成本 10.1%;基準 4.5%)、勝率 66.67%、勝過基準 100%",
 		"\n- 2026 年 5 期:報酬 -3.2%(扣成本 -5%;基準 1.1%、0050 8.8%)、勝率 40%、勝過基準 20%",
-		"扣交易成本(手續費 0.1425%×0.28 折扣、賣出證交稅 0.3%,依換手計算)後:累積報酬 30.1%、年化 9.2%、最大回撤 -19%;平均換手率 43.21%。",
+		"扣交易成本(手續費 0.1425%×0.28 折扣、賣出證交稅 0.3%,依換手計算,含續抱股票調回目標權重)後:累積報酬 30.1%、年化 9.2%、最大回撤 -19%;平均換手率 43.21%。",
 		"期間內下市的股票算到最後一筆收盤",
 		"個股貢獻(整段持有過 37 檔;",
 		"\n- 貢獻最多:2330 台積電 +8.50 百分點(持有 12 期、平均 14.2%)、79979 +0.30 百分點(持有 1 期、平均 無)",
@@ -307,6 +308,30 @@ func TestScreenBacktestSummary(t *testing.T) {
 	if equal := screenBacktestSummary(e); !strings.Contains(equal, "2330 台積電、79979。") {
 		t.Errorf("權重相同時不列權重:%s", equal)
 	}
+	if !strings.Contains(ranked, "依換手計算,含續抱股票調回目標權重、0050 核心部位調回固定比例(0050 證交稅 0.1%))後") {
+		t.Errorf("有 0050 核心部位時成本說明應含比例調整:%s", ranked)
+	}
+	// 新版 API:標出新買進與續抱、這次賣出與單檔上限造成的現金。
+	e.MaxWeight = ptr(30)
+	e.Current.Holdings[0].Weight, e.Current.Holdings[1].Weight = ptr(30.0), ptr(30.0)
+	e.Current.Holdings[0].Added, e.Current.Holdings[1].Added = ptr(true), ptr(false)
+	e.Current.Cash = ptr(40.0)
+	e.Current.Exited = []BacktestExit{{Symbol: "2454", Name: ptr("聯發科"), Weight: 50}, {Symbol: "79980", Weight: 50}}
+	marked := screenBacktestSummary(e)
+	for _, want := range []string{
+		";單檔權重上限 30%(超出的分給其他持股,檔數不足時放現金)",
+		"持有 2 檔(相對上一期換手 25%):新買進 2330 台積電;續抱 79979。策略部位另有現金 40%(單檔權重上限,檔數不足)。這次賣出 2 檔:2454 聯發科、79980。",
+	} {
+		if !strings.Contains(marked, want) {
+			t.Errorf("摘要缺少 %q:%s", want, marked)
+		}
+	}
+	e.Current.Holdings[1].Added = ptr(true)
+	if allNew := screenBacktestSummary(e); !strings.Contains(allNew, "新買進 2330 台積電、79979;續抱 無。") {
+		t.Errorf("全部新買進時續抱為無:%s", allNew)
+	}
+	e.MaxWeight, e.Current.Cash, e.Current.Exited = nil, nil, nil
+	e.Current.Holdings[0].Added, e.Current.Holdings[1].Added = nil, nil
 	e.RankBy, e.EtfWeight, e.Weighting = nil, nil, nil
 	e.Summary.TotalReturnAfterCosts, e.Summary.EtfTotalReturn, e.Years, e.Contributors, e.Current = nil, nil, nil, nil, nil
 	e.RebalanceOffset = ptr(0)
@@ -318,6 +343,12 @@ func TestScreenBacktestSummary(t *testing.T) {
 	empty := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 240, Limit: 5, Adjusted: true})
 	if !strings.Contains(empty, "期間內沒有已滿持有天數的期數") || strings.Contains(empty, "條件 ") {
 		t.Errorf("沒有期數時的摘要錯誤:%s", empty)
+	}
+	// 大盤濾網空手時上一期持股全部賣出。
+	sold := screenBacktestSummary(&ScreenBacktestEnvelope{From: "2026-10-01", To: "2026-10-14", Market: "twse", HoldDays: 20, Limit: 5, Adjusted: true,
+		Current: &BacktestCurrent{Date: "2026-10-09", MarketFiltered: true, Exited: []BacktestExit{{Symbol: "2330", Name: ptr("台積電"), Weight: 100}}}})
+	if !strings.Contains(sold, "大盤濾網沒過,空手。這次賣出 1 檔:2330 台積電。") {
+		t.Errorf("空手時應列賣出:%s", sold)
 	}
 	// 沒有已滿的期數也列目前持股;大盤濾網空手與沒有符合條件分開說明。
 	for current, want := range map[*BacktestCurrent]string{

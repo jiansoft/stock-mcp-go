@@ -62,6 +62,7 @@ type ScreenBacktestOffsetsEnvelope struct {
 	RankBy       *string                    `json:"rank_by"`
 	EtfWeight    *int                       `json:"etf_weight"`
 	Weighting    *string                    `json:"weighting"`
+	MaxWeight    *int                       `json:"max_weight"`
 	FeeDiscount  *float64                   `json:"fee_discount"`
 	EtfBenchmark *string                    `json:"etf_benchmark"`
 	Distribution BacktestOffsetDistribution `json:"distribution"`
@@ -169,6 +170,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	}
 	if opt.Weighting != "" && opt.Weighting != "equal" {
 		rules = append(rules, weightingText(opt.Weighting))
+	}
+	if opt.MaxWeight > 0 {
+		rules = append(rules, fmt.Sprintf("單檔權重上限 %d%%", opt.MaxWeight))
 	}
 	if weight := etfWeightText(opt.EtfWeight); weight != "" {
 		rules = append(rules, weight)
