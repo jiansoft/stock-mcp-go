@@ -132,6 +132,7 @@ type ScreenBacktestEnvelope struct {
 	HoldMinRSScore   *int                  `json:"hold_min_rs_score"`
 	MaxPerIndustry   *int                  `json:"max_per_industry"`
 	RebalanceOffset  *int                  `json:"rebalance_offset"`
+	MinAvgTradeValue *int                  `json:"min_avg_trade_value"`
 	Industry         *string               `json:"industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
 	MaxRSScore       *int                  `json:"max_rs_score"`
@@ -161,6 +162,7 @@ type ScreenBacktestOptions struct {
 	HoldMinRSScore   int
 	MaxPerIndustry   int
 	RebalanceOffset  int
+	MinAvgTradeValue int
 	Market           string
 	Industry         string
 	MinRSScore       int
@@ -180,6 +182,31 @@ type ScreenBacktestQuerier interface {
 // ScreenBacktest 查詢條件選股回測;404 代表迄日之前沒有相對強度資料,422 代表產業名稱不存在
 // (其餘參數在工具層已驗證)。
 func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOptions) (*ScreenBacktestEnvelope, error) {
+	var body ScreenBacktestEnvelope
+	if err := c.getBacktest(ctx, "/api/v1/stocks/screen/backtest?"+opt.query().Encode(), &body); err != nil {
+		return nil, err
+	}
+	return &body, nil
+}
+
+// getBacktest 呼叫回測類 endpoint:404 轉成 ErrMarketDataNotFound、422 轉成 ErrIndustryNotFound。
+func (c *APIClient) getBacktest(ctx context.Context, path string, body any) error {
+	found, err := c.getFound(ctx, path, body)
+	if err != nil {
+		var status *apiStatusError
+		if errors.As(err, &status) && status.status == http.StatusUnprocessableEntity {
+			return ErrIndustryNotFound
+		}
+		return err
+	}
+	if !found {
+		return ErrMarketDataNotFound
+	}
+	return nil
+}
+
+// query 把回測條件轉成 Data API 的 query string;0 與空字串的條件不帶。
+func (opt ScreenBacktestOptions) query() url.Values {
 	values := url.Values{
 		"hold_days": []string{fmt.Sprint(opt.HoldDays)},
 		"limit":     []string{fmt.Sprint(opt.Limit)},
@@ -195,45 +222,18 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 	for key, value := range map[string]int{
 		"min_rs_score": opt.MinRSScore, "max_rs_score": opt.MaxRSScore,
 		"min_foreign_streak": opt.MinForeignStreak, "min_trust_streak": opt.MinTrustStreak,
+		"keep_rank": opt.KeepRank, "market_filter_ma": opt.MarketFilterMA, "hold_min_rs_score": opt.HoldMinRSScore,
+		"max_per_industry": opt.MaxPerIndustry, "market_filter_breadth": opt.MarketBreadth,
+		"rebalance_offset": opt.RebalanceOffset, "min_avg_trade_value": opt.MinAvgTradeValue,
 	} {
 		if value > 0 {
 			values.Set(key, fmt.Sprint(value))
 		}
 	}
-	if opt.KeepRank > 0 {
-		values.Set("keep_rank", fmt.Sprint(opt.KeepRank))
-	}
-	if opt.MarketFilterMA > 0 {
-		values.Set("market_filter_ma", fmt.Sprint(opt.MarketFilterMA))
-	}
-	if opt.HoldMinRSScore > 0 {
-		values.Set("hold_min_rs_score", fmt.Sprint(opt.HoldMinRSScore))
-	}
-	if opt.MaxPerIndustry > 0 {
-		values.Set("max_per_industry", fmt.Sprint(opt.MaxPerIndustry))
-	}
-	if opt.MarketBreadth > 0 {
-		values.Set("market_filter_breadth", fmt.Sprint(opt.MarketBreadth))
-	}
-	if opt.RebalanceOffset > 0 {
-		values.Set("rebalance_offset", fmt.Sprint(opt.RebalanceOffset))
-	}
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
-	var body ScreenBacktestEnvelope
-	found, err := c.getFound(ctx, "/api/v1/stocks/screen/backtest?"+values.Encode(), &body)
-	if err != nil {
-		var status *apiStatusError
-		if errors.As(err, &status) && status.status == http.StatusUnprocessableEntity {
-			return nil, ErrIndustryNotFound
-		}
-		return nil, err
-	}
-	if !found {
-		return nil, ErrMarketDataNotFound
-	}
-	return &body, nil
+	return values
 }
 
 // ScreenBacktestInput 是 get_screen_backtest 的輸入。
@@ -248,6 +248,7 @@ type ScreenBacktestInput struct {
 	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
 	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
 	RebalanceOffset  int    `json:"rebalance_offset,omitempty"`
+	MinAvgTradeValue int    `json:"min_avg_trade_value,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	MinRSScore       int    `json:"min_rs_score,omitempty"`
@@ -326,6 +327,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Default:     []byte("0"),
 				Description: "換股日偏移(選填,0 至 hold_days-1,預設 0):起日之後先跳過幾個交易日才第一次換股。同一組條件換不同偏移重跑,可看績效是否只是碰巧遇上某幾個換股日",
 			},
+			"min_avg_trade_value": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(100000.0),
+				Description: "流動性門檻(選填,百萬元,1 至 100000):換股日含當天往前 20 個交易日平均成交金額低於此值的股票不新買進(上一期持股的續抱不受限),用來排除實際買不到量的小型股。例如 50 代表日均成交 5,000 萬元",
+			},
 			"market_filter_breadth": {
 				Type:        "integer",
 				Minimum:     ptr(1.0),
@@ -398,84 +405,101 @@ func validateBacktestPeriod(from, to string) error {
 	return nil
 }
 
-// screenBacktest 執行 get_screen_backtest。
-func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.CallToolRequest, in ScreenBacktestInput) (*mcp.CallToolResult, any, error) {
+// screenBacktestOptions 驗證 get_screen_backtest／get_screen_backtest_offsets 的輸入並整理成查詢條件。
+func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error) {
 	from, err := parseOptionalDate(in.From, "from")
 	if err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	to, err := parseOptionalDate(in.To, "to")
 	if err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	if err := validateBacktestPeriod(from, to); err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	holdDays := in.HoldDays
 	if holdDays == 0 {
 		holdDays = 20
 	}
 	if !slices.Contains(backtestHoldDays, holdDays) {
-		return nil, nil, fmt.Errorf("參數 hold_days 必須為 5、20、60、120 或 240")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 hold_days 必須為 5、20、60、120 或 240")
 	}
 	limit, err := rangedLimit(in.Limit, 20, 1, 100)
 	if err != nil {
-		return nil, nil, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
 	}
 	if in.HoldMinRSScore != 0 && (in.HoldMinRSScore < 1 || in.HoldMinRSScore > 99) {
-		return nil, nil, fmt.Errorf("參數 hold_min_rs_score 必須介於 1 到 99 之間")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 hold_min_rs_score 必須介於 1 到 99 之間")
 	}
 	if in.MaxPerIndustry != 0 && (in.MaxPerIndustry < 1 || in.MaxPerIndustry > 100) {
-		return nil, nil, fmt.Errorf("參數 max_per_industry 必須介於 1 到 100 之間")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 max_per_industry 必須介於 1 到 100 之間")
 	}
 	if in.MarketBreadth != 0 && (in.MarketBreadth < 1 || in.MarketBreadth > 99) {
-		return nil, nil, fmt.Errorf("參數 market_filter_breadth 必須介於 1 到 99 之間")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 market_filter_breadth 必須介於 1 到 99 之間")
+	}
+	if in.MinAvgTradeValue != 0 && (in.MinAvgTradeValue < 1 || in.MinAvgTradeValue > maxAvgTradeValueMillion) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
 	if in.RebalanceOffset < 0 || in.RebalanceOffset >= holdDays {
-		return nil, nil, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
 	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
-		return nil, nil, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
 	if in.KeepRank != 0 && (in.KeepRank < limit || in.KeepRank > 200) {
-		return nil, nil, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", limit)
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", limit)
 	}
 	market, err := normalizeMarket(in.Market)
 	if err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	industry := strings.TrimSpace(in.Industry)
 	if err := validateLength(industry, "industry", 0, 20); err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	if err := validateRSScoreBounds(in.MinRSScore, in.MaxRSScore); err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	if err := validateStreakBounds(in.MinForeignStreak, in.MinTrustStreak); err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	kind, indicator, err := normalizeSignalFilters(in.Kind, in.Indicator)
 	if err != nil {
-		return nil, nil, err
+		return ScreenBacktestOptions{}, err
 	}
 	if in.FeeDiscount != nil && (*in.FeeDiscount < 0 || *in.FeeDiscount > 1) {
-		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
-	envelope, err := ts.bq.ScreenBacktest(ctx, ScreenBacktestOptions{
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, Market: market, Industry: industry,
+	return ScreenBacktestOptions{
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
-	})
+	}, nil
+}
+
+// backtestToolError 把回測 API 的錯誤轉成給模型看的訊息;非預期錯誤記錄後只回通用訊息。
+func backtestToolError(err error, tool, industry string, logf func(string, ...any)) error {
+	switch {
+	case errors.Is(err, ErrMarketDataNotFound):
+		return fmt.Errorf("指定迄日之前查無相對強度資料")
+	case errors.Is(err, ErrIndustryNotFound):
+		return fmt.Errorf("找不到產業「%s」,請使用完整產業名稱,例如「半導體業」", industry)
+	}
+	logf("工具 %s 執行失敗:%v", tool, err)
+	return fmt.Errorf("%s", errInternal)
+}
+
+// screenBacktest 執行 get_screen_backtest。
+func (ts *screenBacktestToolset) screenBacktest(ctx context.Context, _ *mcp.CallToolRequest, in ScreenBacktestInput) (*mcp.CallToolResult, any, error) {
+	opt, err := screenBacktestOptions(in)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrMarketDataNotFound):
-			return nil, nil, fmt.Errorf("指定迄日之前查無相對強度資料")
-		case errors.Is(err, ErrIndustryNotFound):
-			return nil, nil, fmt.Errorf("找不到產業「%s」,請使用完整產業名稱,例如「半導體業」", industry)
-		}
-		ts.logf("工具 get_screen_backtest 執行失敗:%v", err)
-		return nil, nil, fmt.Errorf("%s", errInternal)
+		return nil, nil, err
+	}
+	envelope, err := ts.bq.ScreenBacktest(ctx, opt)
+	if err != nil {
+		return nil, nil, backtestToolError(err, "get_screen_backtest", opt.Industry, ts.logf)
 	}
 	return textResult(screenBacktestSummary(envelope)), ScreenBacktestOutput{
 		DataKind: "screen_backtest", IsRealtime: false, Disclaimer: AnalysisDisclaimer, ScreenBacktestEnvelope: envelope,
@@ -494,6 +518,9 @@ func backtestSignalText(indicator, kind *string) string {
 	}
 	return ""
 }
+
+// maxAvgTradeValueMillion 是流動性門檻上限(百萬元),與 Data API 相同。
+const maxAvgTradeValueMillion = 100_000
 
 // backtestRecentPeriods 是摘要列出的最近幾期。
 const backtestRecentPeriods = 6
@@ -518,6 +545,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {
 		filters = append(filters, fmt.Sprintf("換股前 %d 個交易日內出現 %s", e.HoldDays, signal))
+	}
+	if e.MinAvgTradeValue != nil {
+		filters = append(filters, fmt.Sprintf("近 20 個交易日平均成交金額 ≥ %d 百萬元(只限新買進)", *e.MinAvgTradeValue))
 	}
 	if len(filters) > 0 {
 		b.printf(",條件 %s", strings.Join(filters, "、"))

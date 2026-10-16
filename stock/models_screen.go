@@ -48,6 +48,8 @@ type ScreenedStock struct {
 	// 正數連續買超、負數連續賣超、0 為當天沒有買賣;當天沒有籌碼資料時為 nil。
 	ForeignStreak *int `json:"foreign_streak"`
 	TrustStreak   *int `json:"trust_streak"`
+	// AvgTradeValue20D 是查詢日之前 45 天內最近 20 筆日線的平均成交金額(百萬元);沒有日線時為 nil。
+	AvgTradeValue20D *float64 `json:"avg_trade_value_20d"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -85,6 +87,7 @@ type ScreenOptions struct {
 	MinRSScore              *int
 	MinForeignStreak        *int
 	MinTrustStreak          *int
+	MinAvgTradeValue        *int
 	SortBy                  string
 	SortOrder               string
 	Limit                   int

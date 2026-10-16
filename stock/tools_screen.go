@@ -48,6 +48,7 @@ type ScreenStocksInput struct {
 	MinRSScore              *int     `json:"min_rs_score,omitempty"`
 	MinForeignStreak        *int     `json:"min_foreign_streak,omitempty"`
 	MinTrustStreak          *int     `json:"min_trust_streak,omitempty"`
+	MinAvgTradeValue        *int     `json:"min_avg_trade_value,omitempty"`
 	SortBy                  string   `json:"sort_by,omitempty"`
 	SortOrder               string   `json:"sort_order,omitempty"`
 	Limit                   int      `json:"limit,omitempty"`
@@ -102,6 +103,10 @@ func screenStocksSchema() *jsonschema.Schema {
 			"min_trust_streak": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(60.0),
 				Description: "投信至少連續買超幾個交易日(1–60,截至最新籌碼資料日)",
+			},
+			"min_avg_trade_value": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(100000.0),
+				Description: "近 20 筆日線平均成交金額下限(百萬元,1–100000;例如 50 代表日均成交 5,000 萬元),與 get_screen_backtest 的同名參數一致,用來排除買不到量的股票",
 			},
 			"sort_by": {
 				Type:        "string",
@@ -200,13 +205,16 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MinTrustStreak != nil && (*in.MinTrustStreak < 1 || *in.MinTrustStreak > 60) {
 		return nil, nil, fmt.Errorf("參數 min_trust_streak 必須介於 1 到 60 之間")
 	}
+	if in.MinAvgTradeValue != nil && (*in.MinAvgTradeValue < 1 || *in.MinAvgTradeValue > maxAvgTradeValueMillion) {
+		return nil, nil, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
 	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
 		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
-		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil
+		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -242,7 +250,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinFScore: in.MinFScore, MinGrossMarginPercent: in.MinGrossMarginPercent,
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
-		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinAvgTradeValue: in.MinAvgTradeValue, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)
@@ -252,13 +260,14 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）、近 20 日平均成交 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
 			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
 			displayPercent(first.GrossMarginPercent), displayPercent(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
 			displayInt(first.RSScore), displayString(envelope.RSAsOf),
 			streakDisplay(first.ForeignStreak), streakDisplay(first.TrustStreak), displayString(envelope.ChipAsOf),
+			millionText(first.AvgTradeValue20D),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
 	}
@@ -274,6 +283,14 @@ func streakDisplay(days *int) string {
 		return "連續天數無資料"
 	}
 	return streakText(int64(*days))
+}
+
+// millionText 把百萬元金額顯示成「X 百萬元」;nil 回「無」。
+func millionText(million *float64) string {
+	if million == nil {
+		return "無"
+	}
+	return displayFloat(million) + " 百萬元"
 }
 
 // thousandsToHundredMillion 把千元金額換算成「X 億元」;nil 回「無」。

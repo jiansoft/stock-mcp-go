@@ -115,7 +115,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 60, Limit: 5, Market: "twse", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 95, MinForeignStreak: 3, MinTrustStreak: 2, Indicator: "52_week", Kind: "new_high",
 		FeeDiscount: ptr(0.0), KeepRank: 10, MarketFilterMA: 120, HoldMinRSScore: 60, MaxPerIndustry: 4, MarketBreadth: 40,
-		RebalanceOffset: 7,
+		RebalanceOffset: 7, MinAvgTradeValue: 50,
 	}
 	if _, err := client.ScreenBacktest(t.Context(), opt); !errors.Is(err, ErrMarketDataNotFound) {
 		t.Fatalf("404 應回 ErrMarketDataNotFound:%v", err)
@@ -124,7 +124,7 @@ func TestAPIClientScreenBacktest(t *testing.T) {
 		"from": "2019-01-02", "to": "2026-10-14", "hold_days": "60", "limit": "5", "industry": "半導體業",
 		"min_rs_score": "80", "max_rs_score": "95", "min_foreign_streak": "3", "min_trust_streak": "2",
 		"indicator": "52_week", "kind": "new_high", "fee_discount": "0", "keep_rank": "10", "market_filter_ma": "120", "hold_min_rs_score": "60",
-		"max_per_industry": "4", "market_filter_breadth": "40", "rebalance_offset": "7",
+		"max_per_industry": "4", "market_filter_breadth": "40", "rebalance_offset": "7", "min_avg_trade_value": "50",
 	} {
 		if gotQuery.Get(key) != want {
 			t.Errorf("query %s = %q,應為 %q", key, gotQuery.Get(key), want)
@@ -165,13 +165,13 @@ func TestScreenBacktestTool(t *testing.T) {
 	in := ScreenBacktestInput{
 		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, Market: " TPEX ", Industry: " 半導體業 ",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: " new_high ",
-		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4,
+		FeeDiscount: ptr(0.0), KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, MinAvgTradeValue: 100000,
 	}
 	if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, in); err != nil {
 		t.Fatalf("合法參數不應失敗:%v", err)
 	}
 	want := ScreenBacktestOptions{
-		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, Market: "tpex", Industry: "半導體業",
+		From: "2019-01-02", To: "2026-10-14", HoldDays: 5, Limit: 100, KeepRank: 200, MarketFilterMA: 240, HoldMinRSScore: 99, MaxPerIndustry: 100, RebalanceOffset: 4, MinAvgTradeValue: 100000, Market: "tpex", Industry: "半導體業",
 		MinRSScore: 80, MaxRSScore: 99, MinForeignStreak: 1, MinTrustStreak: 20, Indicator: "52_week", Kind: "new_high",
 	}
 	if f.got.FeeDiscount == nil || *f.got.FeeDiscount != 0 {
@@ -189,6 +189,7 @@ func TestScreenBacktestTool(t *testing.T) {
 		{MaxPerIndustry: 101}, {MaxPerIndustry: -1},
 		{MarketBreadth: 100}, {MarketBreadth: -1},
 		{RebalanceOffset: 20}, {RebalanceOffset: -1}, {HoldDays: 5, RebalanceOffset: 5},
+		{MinAvgTradeValue: 100001}, {MinAvgTradeValue: -1},
 	} {
 		if _, _, err := newToolset(f).screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
@@ -231,6 +232,7 @@ func TestScreenBacktestSummary(t *testing.T) {
 	e.Summary.MarketFilteredPeriods = 1
 	e.MarketBreadth = ptr(40)
 	e.RebalanceOffset = ptr(3)
+	e.MinAvgTradeValue = ptr(50)
 	e.Current = &BacktestCurrent{
 		Date: "2026-10-14", DaysElapsed: 3, DaysToNextRebalance: 17, Turnover: 0.25,
 		Holdings: []BacktestHolding{{Symbol: "2330", Name: ptr("台積電")}, {Symbol: "79979"}},
@@ -255,7 +257,7 @@ func TestScreenBacktestSummary(t *testing.T) {
 	summary := screenBacktestSummary(e)
 	for _, want := range []string{
 		"all 市場 2023-10-15～2026-10-14 條件選股回測:每 20 個交易日換股,依相對強度分數由高到低取前 20 檔等權持有",
-		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高;大盤濾網:換股日加權指數低於 60 日均線就空手;市場廣度濾網:換股日站上 60 日均線的股票比例低於 40% 就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱;換股日偏移:起日之後先跳過 3 個交易日。",
+		"條件 產業「半導體業」、換股當天 RS 分數 ≥ 80、投信已連買 3 天以上、換股前 20 個交易日內出現 52 週 新高、近 20 個交易日平均成交金額 ≥ 50 百萬元(只限新買進);大盤濾網:換股日加權指數低於 60 日均線就空手;市場廣度濾網:換股日站上 60 日均線的股票比例低於 40% 就空手;續抱條件:上一期持股 RS ≥ 50 就續抱;產業上限:同產業最多 4 檔;換股緩衝:上一期持股仍在前 40 名就續抱;換股日偏移:起日之後先跳過 3 個交易日。",
 		"\n目前持股(2026-10-14 換股、已過 3 個交易日,再 17 個交易日換股;還沒滿持有天數,不計入上面的績效):持有 2 檔(相對上一期換手 25%):2330 台積電、79979。",
 		"勝過基準 50%。因大盤濾網空手 1 期。",
 		"共 8 期(有持股 7 期,平均 20 檔):累積報酬 35.2%(基準 12.6%)、年化 10.6%(基準 4%)、最大回撤 -18.3%(基準 -9.1%)",

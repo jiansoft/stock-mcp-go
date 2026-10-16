@@ -1,0 +1,205 @@
+package stock
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// 換股日偏移穩健度:同一組回測條件換不同的換股日偏移重跑,看績效分布。
+
+// BacktestStat 是一組數值的分布(四分位以線性內插)。
+type BacktestStat struct {
+	Min    float64 `json:"min"`
+	P25    float64 `json:"p25"`
+	Median float64 `json:"median"`
+	Mean   float64 `json:"mean"`
+	P75    float64 `json:"p75"`
+	Max    float64 `json:"max"`
+}
+
+// BacktestOffsetResult 是一個換股日偏移的回測彙總。
+type BacktestOffsetResult struct {
+	RebalanceOffset int             `json:"rebalance_offset"`
+	Summary         BacktestSummary `json:"summary"`
+}
+
+// BacktestOffsetDistribution 是各偏移績效的分布;沒有任何偏移有該項數值時為 nil。
+type BacktestOffsetDistribution struct {
+	AnnualizedReturnAfterCosts *BacktestStat `json:"annualized_return_after_costs"`
+	SharpeRatio                *BacktestStat `json:"sharpe_ratio"`
+	MaxDrawdownAfterCosts      *BacktestStat `json:"max_drawdown_after_costs"`
+	EtfAnnualizedReturn        *BacktestStat `json:"etf_annualized_return"`
+	EtfSharpeRatio             *BacktestStat `json:"etf_sharpe_ratio"`
+	BeatEtfReturnRate          *float64      `json:"beat_etf_return_rate"`
+	BeatEtfSharpeRate          *float64      `json:"beat_etf_sharpe_rate"`
+}
+
+// ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應。
+type ScreenBacktestOffsetsEnvelope struct {
+	From         string                     `json:"from"`
+	To           string                     `json:"to"`
+	Market       string                     `json:"market"`
+	HoldDays     int                        `json:"hold_days"`
+	Limit        int                        `json:"limit"`
+	FeeDiscount  *float64                   `json:"fee_discount"`
+	EtfBenchmark *string                    `json:"etf_benchmark"`
+	Distribution BacktestOffsetDistribution `json:"distribution"`
+	Offsets      []BacktestOffsetResult     `json:"offsets"`
+}
+
+// ScreenBacktestOffsetsQuerier 是 get_screen_backtest_offsets 對資料來源的需求介面;只有 *APIClient 實作。
+type ScreenBacktestOffsetsQuerier interface {
+	ScreenBacktestOffsets(ctx context.Context, opt ScreenBacktestOptions) (*ScreenBacktestOffsetsEnvelope, error)
+}
+
+// ScreenBacktestOffsets 查詢換股日偏移穩健度;rebalance_offset 不使用(由 API 跑全部偏移)。
+// 404 代表迄日之前沒有相對強度資料,422 代表產業名稱不存在。
+func (c *APIClient) ScreenBacktestOffsets(ctx context.Context, opt ScreenBacktestOptions) (*ScreenBacktestOffsetsEnvelope, error) {
+	values := opt.query()
+	values.Del("rebalance_offset")
+	var body ScreenBacktestOffsetsEnvelope
+	if err := c.getBacktest(ctx, "/api/v1/stocks/screen/backtest/offsets?"+values.Encode(), &body); err != nil {
+		return nil, err
+	}
+	return &body, nil
+}
+
+// ScreenBacktestOffsetsOutput 是穩健度 envelope 加上 MCP 分析中繼資料。
+type ScreenBacktestOffsetsOutput struct {
+	DataKind   string `json:"data_kind"`
+	IsRealtime bool   `json:"is_realtime"`
+	Disclaimer string `json:"disclaimer"`
+	*ScreenBacktestOffsetsEnvelope
+}
+
+// screenBacktestOffsetsSchema 與 get_screen_backtest 相同,但不收 rebalance_offset。
+func screenBacktestOffsetsSchema() *jsonschema.Schema {
+	schema := screenBacktestSchema()
+	delete(schema.Properties, "rebalance_offset")
+	return schema
+}
+
+// screenBacktestOffsetsToolset 綁定穩健度資料來源與記錄函式。
+type screenBacktestOffsetsToolset struct {
+	oq   ScreenBacktestOffsetsQuerier
+	logf func(string, ...any)
+}
+
+// screenBacktestOffsets 執行 get_screen_backtest_offsets;參數驗證與 get_screen_backtest 相同,rebalance_offset 忽略。
+func (ts *screenBacktestOffsetsToolset) screenBacktestOffsets(ctx context.Context, _ *mcp.CallToolRequest, in ScreenBacktestInput) (*mcp.CallToolResult, any, error) {
+	in.RebalanceOffset = 0
+	opt, err := screenBacktestOptions(in)
+	if err != nil {
+		return nil, nil, err
+	}
+	envelope, err := ts.oq.ScreenBacktestOffsets(ctx, opt)
+	if err != nil {
+		return nil, nil, backtestToolError(err, "get_screen_backtest_offsets", opt.Industry, ts.logf)
+	}
+	return textResult(screenBacktestOffsetsSummary(envelope, opt)), ScreenBacktestOffsetsOutput{
+		DataKind: "screen_backtest_offsets", IsRealtime: false, Disclaimer: AnalysisDisclaimer, ScreenBacktestOffsetsEnvelope: envelope,
+	}, nil
+}
+
+// backtestOptionsText 用查詢條件描述回測設定(穩健度回應不回傳選股條件,改由輸入說明)。
+func backtestOptionsText(opt ScreenBacktestOptions) string {
+	var filters []string
+	if opt.Industry != "" {
+		filters = append(filters, "產業「"+opt.Industry+"」")
+	}
+	if rs := rsScoreRangeText(positiveOrNil(opt.MinRSScore), positiveOrNil(opt.MaxRSScore)); rs != "" {
+		filters = append(filters, "RS 分數 "+rs)
+	}
+	if opt.MinForeignStreak > 0 {
+		filters = append(filters, fmt.Sprintf("外資已連買 %d 天以上", opt.MinForeignStreak))
+	}
+	if opt.MinTrustStreak > 0 {
+		filters = append(filters, fmt.Sprintf("投信已連買 %d 天以上", opt.MinTrustStreak))
+	}
+	if signal := backtestSignalText(stringOrNil(opt.Indicator), stringOrNil(opt.Kind)); signal != "" {
+		filters = append(filters, "換股前出現 "+signal)
+	}
+	if opt.MinAvgTradeValue > 0 {
+		filters = append(filters, fmt.Sprintf("近 20 個交易日平均成交金額 ≥ %d 百萬元", opt.MinAvgTradeValue))
+	}
+	text := fmt.Sprintf("每 %d 個交易日換股、取 RS 最高的前 %d 檔", opt.HoldDays, opt.Limit)
+	if len(filters) > 0 {
+		text += ",條件 " + strings.Join(filters, "、")
+	}
+	var rules []string
+	if opt.MarketFilterMA > 0 {
+		rules = append(rules, fmt.Sprintf("大盤濾網 %d 日均線", opt.MarketFilterMA))
+	}
+	if opt.MarketBreadth > 0 {
+		rules = append(rules, fmt.Sprintf("市場廣度濾網 %d%%", opt.MarketBreadth))
+	}
+	if opt.HoldMinRSScore > 0 {
+		rules = append(rules, fmt.Sprintf("續抱 RS ≥ %d", opt.HoldMinRSScore))
+	}
+	if opt.MaxPerIndustry > 0 {
+		rules = append(rules, fmt.Sprintf("同產業最多 %d 檔", opt.MaxPerIndustry))
+	}
+	if opt.KeepRank > opt.Limit {
+		rules = append(rules, fmt.Sprintf("換股緩衝前 %d 名", opt.KeepRank))
+	}
+	if len(rules) > 0 {
+		text += ";" + strings.Join(rules, "、")
+	}
+	return text
+}
+
+// positiveOrNil 把 0(未設定)轉成 nil,其餘轉成指標。
+func positiveOrNil(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+// stringOrNil 把空字串(未設定)轉成 nil,其餘轉成指標。
+func stringOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// backtestStatText 以「中位數 X(四分位 a～b,最低 c、最高 d,平均 e)」描述分布;nil 回「無資料」。
+func backtestStatText(stat *BacktestStat, format func(*float64) string) string {
+	if stat == nil {
+		return "無資料"
+	}
+	return fmt.Sprintf("中位數 %s(四分位 %s～%s,最低 %s、最高 %s,平均 %s)",
+		format(&stat.Median), format(&stat.P25), format(&stat.P75), format(&stat.Min), format(&stat.Max), format(&stat.Mean))
+}
+
+// screenBacktestOffsetsSummary 組出給模型閱讀的文字摘要:設定、分布、勝過 0050 的比例與各偏移。
+func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBacktestOptions) string {
+	var b summaryBuilder
+	b.printf("%s 市場 %s～%s 換股日偏移穩健度:%s;把換股日偏移(起日之後先跳過幾個交易日才第一次換股)%d 種都跑一遍,扣交易成本(手續費折扣 %s)後:",
+		e.Market, e.From, e.To, backtestOptionsText(opt), len(e.Offsets), displayFloat(e.FeeDiscount))
+	d := e.Distribution
+	b.printf("\n- 年化報酬:%s", backtestStatText(d.AnnualizedReturnAfterCosts, displayPercent))
+	b.printf("\n- 夏普值:%s", backtestStatText(d.SharpeRatio, displayFloat))
+	b.printf("\n- 最大回撤:%s", backtestStatText(d.MaxDrawdownAfterCosts, displayPercent))
+	b.printf("\n- 同期 0050(同樣的換股日進出、未扣成本)年化報酬:%s;夏普值:%s",
+		backtestStatText(d.EtfAnnualizedReturn, displayPercent), backtestStatText(d.EtfSharpeRatio, displayFloat))
+	b.printf("\n年化報酬勝過同偏移 0050 的比例 %s、夏普值勝過 0050 的比例 %s。",
+		displayRate(d.BeatEtfReturnRate), displayRate(d.BeatEtfSharpeRate))
+	if len(e.Offsets) > 0 {
+		parts := make([]string, 0, len(e.Offsets))
+		for _, item := range e.Offsets {
+			s := item.Summary
+			parts = append(parts, fmt.Sprintf("偏移 %d:年化 %s、夏普 %s、回撤 %s", item.RebalanceOffset,
+				displayPercent(s.AnnualizedAfterCosts), displayFloat(s.SharpeRatio), displayPercent(s.MaxDrawdownAfterCosts)))
+		}
+		b.printf("\n各偏移(扣成本):%s。", strings.Join(parts, ";"))
+	}
+	b.printf("\n中位數比任何單一偏移更能代表這組條件;各偏移差距大,代表單次回測的好壞有很大一部分是換股日的運氣。過去表現不代表未來結果。免責聲明:%s",
+		AnalysisDisclaimer)
+	return b.String()
+}
