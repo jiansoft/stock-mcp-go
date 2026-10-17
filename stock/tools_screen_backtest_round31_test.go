@@ -58,6 +58,15 @@ func TestScreenBacktestOptionsPresetAndStops(t *testing.T) {
 	if got := opt.query().Encode(); got != "hold_days=60&keep_rank=10&limit=5&market=twse&preset=a&trailing_stop=8" {
 		t.Fatalf("覆蓋參數的 query 錯誤:%s", got)
 	}
+	// MCP SDK 會填入 schema 預設值:引用 preset 時等於預設值的參數視為沒給,不可蓋掉策略存的條件。
+	filled, err := screenBacktestOptions(ScreenBacktestInput{Preset: "a", HoldDays: 20, Limit: 20, RankBy: "rs_score", Weighting: "equal", FeeDiscount: ptr(1.0), Market: "all"})
+	if err != nil || filled.query().Encode() != "preset=a" {
+		t.Fatalf("schema 預設值不應送出:%v %s", err, filled.query().Encode())
+	}
+	kept, err := screenBacktestOptions(ScreenBacktestInput{Preset: "a", RankBy: "trade_value", Weighting: "trade_value", FeeDiscount: ptr(0.28)})
+	if err != nil || kept.query().Encode() != "fee_discount=0.28&preset=a&rank_by=trade_value&weighting=trade_value" {
+		t.Fatalf("非預設值要照送:%v %s", err, kept.query().Encode())
+	}
 	plain, err := screenBacktestOptions(ScreenBacktestInput{})
 	if err != nil || plain.query().Encode() != "hold_days=20&limit=20&market=all" {
 		t.Fatalf("沒有 preset 仍要帶預設值:%v %s", err, plain.query().Encode())

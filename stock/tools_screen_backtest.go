@@ -333,7 +333,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 			"preset": {
 				Type:        "string",
 				MaxLength:   ptr(maxPresetNameChars),
-				Description: "具名策略(選填,名稱見 list_strategy_presets):以存好的整組條件回測,另外指定的參數會覆蓋存的值(例如 preset=最佳組合、rebalance_offset=3);指定 preset 時 hold_days、limit、market 不套預設值,沿用存的條件",
+				Description: "具名策略(選填,名稱見 list_strategy_presets):以存好的整組條件回測,另外指定的參數會覆蓋存的值(例如 preset=最佳組合、rebalance_offset=3);指定 preset 時 hold_days、limit、market 不套預設值,沿用存的條件;與預設值相同的參數(hold_days=20、limit=20、rank_by=rs_score、weighting=equal、fee_discount=1、market=all)視為沒有指定",
 			},
 			"from": {
 				Type:        "string",
@@ -519,6 +519,9 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	preset := strings.TrimSpace(in.Preset)
 	if err := validateLength(preset, "preset", 0, maxPresetNameChars); err != nil {
 		return ScreenBacktestOptions{}, err
+	}
+	if preset != "" {
+		in = withoutSchemaDefaults(in)
 	}
 	holdDays := in.HoldDays
 	if holdDays == 0 && preset == "" {
@@ -937,6 +940,31 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 		}
 		b.printf("這次賣出 %d 檔:%s。", len(c.Exited), strings.Join(exits, "、"))
 	}
+}
+
+// withoutSchemaDefaults 把等於 schema 預設值的參數清成未指定:MCP SDK 會把 schema 的 default 填進沒給的
+// 參數,引用具名策略時這些值會蓋掉策略存的條件。代價是無法用預設值本身覆蓋策略(例如策略存 limit=10
+// 時傳 limit=20 會被當成沒給)。
+func withoutSchemaDefaults(in ScreenBacktestInput) ScreenBacktestInput {
+	if in.HoldDays == 20 {
+		in.HoldDays = 0
+	}
+	if in.Limit == 20 {
+		in.Limit = 0
+	}
+	if in.RankBy == "rs_score" {
+		in.RankBy = ""
+	}
+	if in.Weighting == "equal" {
+		in.Weighting = ""
+	}
+	if in.FeeDiscount != nil && *in.FeeDiscount == 1 {
+		in.FeeDiscount = nil
+	}
+	if strings.TrimSpace(in.Market) == "all" {
+		in.Market = ""
+	}
+	return in
 }
 
 // maxPresetNameChars 是具名策略名稱的長度上限,與 Data API 相同。
