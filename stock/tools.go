@@ -461,6 +461,44 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, fts.screenBacktestFrontier)
 	}
 
+	if aq, ok := q.(ScreenBacktestAttributionQuerier); ok {
+		ats := &screenBacktestAttributionToolset{aq: aq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_screen_backtest_attribution",
+			Description: "拆解條件選股策略為什麼贏或輸大盤:參數與 get_screen_backtest 相同(不收 etf_weight,只看策略部位),以 Brinson-Fachler 把策略相對「類 0050 基準」" +
+				"(每個換股日近 20 個交易日平均成交金額最高的 50 檔、依成交金額加權,近似 0050 的市值加權)的超額報酬拆成產業配置、選股與交互三項," +
+				"回傳整段、依年度(每年影響最大的 5 個產業)與各產業的效果及平均權重,並附同期 0050 報酬。" +
+				"適合回答「這個策略 2024 年為什麼輸 0050」「是少配了半導體還是選錯股」「哪個產業拖累最多」。效果為各期相加(百分點)、未扣成本。過去表現不代表未來結果。",
+			InputSchema: screenBacktestAttributionSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ats.screenBacktestAttribution)
+	}
+
+	if wq, ok := q.(ScreenBacktestWalkForwardQuerier); ok {
+		wts := &screenBacktestWalkForwardToolset{wq: wq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_screen_backtest_walk_forward",
+			Description: "用滾動前推(walk-forward)檢查條件選股策略是否過度配適:參數與 get_screen_backtest 相同,另收 train_years(1 至 5,預設 3)。" +
+				"每年年初只用之前 train_years 年的期數,在 36 組參數(0050 核心部位 0/30/50/70% × 單檔上限 不設/10/20% × 換股緩衝 limit 的 1/1.5/2 倍)中挑扣成本後夏普值最高的一組套用到這一年," +
+				"回傳逐年挑出的參數與報酬、串起樣本外年份的彙總,並與「不調參數」(請求本身的 etf_weight、max_weight、keep_rank)及 0050 比較;各換股日偏移都跑一次並回傳分布。" +
+				"適合回答「事後挑出的最佳參數當時真的挑得出來嗎」「每年重新調參數能贏 0050 嗎」。一次要跑多組回測,比 get_screen_backtest_offsets 慢。過去表現不代表未來結果。",
+			InputSchema: screenBacktestWalkForwardSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, wts.screenBacktestWalkForward)
+	}
+
+	if pq, ok := q.(StrategyPresetsQuerier); ok {
+		pts := &strategyPresetsToolset{pq: pq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "list_strategy_presets",
+			Description: "列出存好的具名策略(條件選股回測的整組條件):名稱、說明、條件與是否每個交易日 22:10 發換股通知。" +
+				"回測類工具(get_screen_backtest、_offsets、_frontier、_attribution、_walk_forward)可用 preset=名稱 引用,另外指定的參數會覆蓋存的值。" +
+				"適合回答「我設了哪些策略」「最佳組合的條件是什麼」。",
+			InputSchema: strategyPresetsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, pts.strategyPresets)
+	}
+
 	if fq, ok := q.(IndustryFlowQuerier); ok {
 		its := &industryFlowToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

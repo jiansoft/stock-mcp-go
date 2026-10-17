@@ -39,7 +39,9 @@ type BacktestPeriod struct {
 	Turnover         *float64 `json:"turnover"`
 	BenchmarkReturn  *float64 `json:"benchmark_return"`
 	EtfReturn        *float64 `json:"etf_return"`
-	Symbols          []string `json:"symbols"`
+	// Stopped 是這期觸發停損或移動停利、提前賣出的檔數;舊版 API 沒有。
+	Stopped *int     `json:"stopped"`
+	Symbols []string `json:"symbols"`
 }
 
 // BacktestSummary 是整段回測的彙總;沒有任何一期時數值為 nil。
@@ -47,6 +49,7 @@ type BacktestSummary struct {
 	Periods                   int      `json:"periods"`
 	InvestedPeriods           int      `json:"invested_periods"`
 	MarketFilteredPeriods     int      `json:"market_filtered_periods"`
+	StopExits                 *int     `json:"stop_exits"`
 	AvgHoldings               *float64 `json:"avg_holdings"`
 	AvgTurnover               *float64 `json:"avg_turnover"`
 	TotalReturn               *float64 `json:"total_return"`
@@ -141,6 +144,8 @@ type BacktestCurrent struct {
 
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
 type ScreenBacktestEnvelope struct {
+	// Preset 是引用的具名策略;沒有用 preset 為 nil。
+	Preset           *string               `json:"preset"`
 	From             string                `json:"from"`
 	To               string                `json:"to"`
 	Market           string                `json:"market"`
@@ -157,6 +162,8 @@ type ScreenBacktestEnvelope struct {
 	EtfWeight        *int                  `json:"etf_weight"`
 	Weighting        *string               `json:"weighting"`
 	MaxWeight        *int                  `json:"max_weight"`
+	StopLoss         *int                  `json:"stop_loss"`
+	TrailingStop     *int                  `json:"trailing_stop"`
 	Industry         *string               `json:"industry"`
 	ExcludeIndustry  *string               `json:"exclude_industry"`
 	MinRSScore       *int                  `json:"min_rs_score"`
@@ -176,7 +183,9 @@ type ScreenBacktestEnvelope struct {
 }
 
 // ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
+// Preset 不為空時以具名策略存的條件為準,其餘欄位只帶有指定的(覆蓋存的值),HoldDays、Limit、Market 也不套預設值。
 type ScreenBacktestOptions struct {
+	Preset           string
 	From             string
 	To               string
 	HoldDays         int
@@ -192,6 +201,8 @@ type ScreenBacktestOptions struct {
 	EtfWeight        int
 	Weighting        string
 	MaxWeight        int
+	StopLoss         int
+	TrailingStop     int
 	Market           string
 	Industry         string
 	ExcludeIndustry  string
@@ -236,15 +247,12 @@ func (c *APIClient) getBacktest(ctx context.Context, path string, body any) erro
 	return nil
 }
 
-// query 把回測條件轉成 Data API 的 query string;0 與空字串的條件不帶。
+// query 把回測條件轉成 Data API 的 query string;0 與空字串的條件不帶(沒有 preset 時 hold_days、limit、market
+// 已套用預設值,一定會帶)。
 func (opt ScreenBacktestOptions) query() url.Values {
-	values := url.Values{
-		"hold_days": []string{fmt.Sprint(opt.HoldDays)},
-		"limit":     []string{fmt.Sprint(opt.Limit)},
-		"market":    []string{opt.Market},
-	}
+	values := url.Values{}
 	for key, value := range map[string]string{
-		"from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
+		"preset": opt.Preset, "market": opt.Market, "from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
 		"rank_by": opt.RankBy, "weighting": opt.Weighting, "exclude_industry": opt.ExcludeIndustry, "split": opt.Split,
 	} {
 		if value != "" {
@@ -257,7 +265,8 @@ func (opt ScreenBacktestOptions) query() url.Values {
 		"keep_rank": opt.KeepRank, "market_filter_ma": opt.MarketFilterMA, "hold_min_rs_score": opt.HoldMinRSScore,
 		"max_per_industry": opt.MaxPerIndustry, "market_filter_breadth": opt.MarketBreadth,
 		"rebalance_offset": opt.RebalanceOffset, "min_avg_trade_value": opt.MinAvgTradeValue,
-		"etf_weight": opt.EtfWeight, "max_weight": opt.MaxWeight,
+		"etf_weight": opt.EtfWeight, "max_weight": opt.MaxWeight, "stop_loss": opt.StopLoss, "trailing_stop": opt.TrailingStop,
+		"hold_days": opt.HoldDays, "limit": opt.Limit,
 	} {
 		if value > 0 {
 			values.Set(key, fmt.Sprint(value))
@@ -271,6 +280,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 
 // ScreenBacktestInput 是 get_screen_backtest 的輸入。
 type ScreenBacktestInput struct {
+	Preset           string `json:"preset,omitempty"`
 	From             string `json:"from,omitempty"`
 	To               string `json:"to,omitempty"`
 	HoldDays         int    `json:"hold_days,omitempty"`
@@ -286,6 +296,8 @@ type ScreenBacktestInput struct {
 	EtfWeight        int    `json:"etf_weight,omitempty"`
 	Weighting        string `json:"weighting,omitempty"`
 	MaxWeight        int    `json:"max_weight,omitempty"`
+	StopLoss         int    `json:"stop_loss,omitempty"`
+	TrailingStop     int    `json:"trailing_stop,omitempty"`
 	Market           string `json:"market,omitempty"`
 	Industry         string `json:"industry,omitempty"`
 	ExcludeIndustry  string `json:"exclude_industry,omitempty"`
@@ -318,6 +330,11 @@ func screenBacktestSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
+			"preset": {
+				Type:        "string",
+				MaxLength:   ptr(maxPresetNameChars),
+				Description: "具名策略(選填,名稱見 list_strategy_presets):以存好的整組條件回測,另外指定的參數會覆蓋存的值(例如 preset=最佳組合、rebalance_offset=3);指定 preset 時 hold_days、limit、market 不套預設值,沿用存的條件",
+			},
 			"from": {
 				Type:        "string",
 				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
@@ -365,6 +382,18 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(100.0),
 				Description: "單檔權重上限(選填,1 至 100%):策略部位中每檔最多占這個比例,超出的部分依權重分給其他持股;檔數 × 上限不到 100%(例如上限 10% 只選到 5 檔)時剩下的放現金。依成交金額加權時用來避免集中在台積電等少數大型股,看成績是不是只靠單一權值股",
+			},
+			"stop_loss": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(50.0),
+				Description: "停損(選填,1 至 50%):持有期間每天以還原收盤檢查,收盤相對買進價跌幅達這個比例就當天收盤賣出、到下次換股前放現金(賣出付手續費與證交稅,下次仍入選視為重新買進);只檢查已滿持有天數的期數,目前持股不檢查",
+			},
+			"trailing_stop": {
+				Type:        "integer",
+				Minimum:     ptr(1.0),
+				Maximum:     ptr(50.0),
+				Description: "移動停利(選填,1 至 50%):持有期間收盤相對這期最高收盤(含買進價)回落達這個比例就賣出,規則同 stop_loss;兩者都設時先觸發的為準",
 			},
 			"keep_rank": {
 				Type:        "integer",
@@ -487,16 +516,22 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if err := validateBacktestPeriod(from, to); err != nil {
 		return ScreenBacktestOptions{}, err
 	}
+	preset := strings.TrimSpace(in.Preset)
+	if err := validateLength(preset, "preset", 0, maxPresetNameChars); err != nil {
+		return ScreenBacktestOptions{}, err
+	}
 	holdDays := in.HoldDays
-	if holdDays == 0 {
+	if holdDays == 0 && preset == "" {
 		holdDays = 20
 	}
-	if !slices.Contains(backtestHoldDays, holdDays) {
+	if holdDays != 0 && !slices.Contains(backtestHoldDays, holdDays) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 hold_days 必須為 5、20、60、120 或 240")
 	}
-	limit, err := rangedLimit(in.Limit, 20, 1, 100)
-	if err != nil {
-		return ScreenBacktestOptions{}, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
+	limit := in.Limit
+	if preset == "" || limit != 0 {
+		if limit, err = rangedLimit(in.Limit, 20, 1, 100); err != nil {
+			return ScreenBacktestOptions{}, fmt.Errorf("參數 limit 必須介於 1 到 100 之間")
+		}
 	}
 	if in.HoldMinRSScore != 0 && (in.HoldMinRSScore < 1 || in.HoldMinRSScore > 99) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 hold_min_rs_score 必須介於 1 到 99 之間")
@@ -522,18 +557,31 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.MaxWeight != 0 && (in.MaxWeight < 1 || in.MaxWeight > 100) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 max_weight 必須介於 1 到 100 之間")
 	}
-	if in.RebalanceOffset < 0 || in.RebalanceOffset >= holdDays {
-		return ScreenBacktestOptions{}, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", holdDays-1)
+	if in.StopLoss != 0 && (in.StopLoss < 1 || in.StopLoss > 50) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 stop_loss 必須介於 1 到 50 之間")
+	}
+	if in.TrailingStop != 0 && (in.TrailingStop < 1 || in.TrailingStop > 50) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 trailing_stop 必須介於 1 到 50 之間")
+	}
+	// 指定 preset 又沒給 hold_days 時持有天數由存的條件決定,只檢查上限,其餘交給 Data API。
+	maxOffset := holdDays - 1
+	if holdDays == 0 {
+		maxOffset = backtestHoldDays[len(backtestHoldDays)-1] - 1
+	}
+	if in.RebalanceOffset < 0 || in.RebalanceOffset > maxOffset {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 rebalance_offset 必須介於 0 到 hold_days-1(%d)之間", maxOffset)
 	}
 	if in.MarketFilterMA != 0 && !slices.Contains([]int{20, 60, 120, 240}, in.MarketFilterMA) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 market_filter_ma 必須為 20、60、120 或 240")
 	}
-	if in.KeepRank != 0 && (in.KeepRank < limit || in.KeepRank > 200) {
-		return ScreenBacktestOptions{}, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", limit)
+	if in.KeepRank != 0 && (in.KeepRank < max(limit, 1) || in.KeepRank > 200) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 keep_rank 必須介於 limit(%d)到 200 之間", max(limit, 1))
 	}
-	market, err := normalizeMarket(in.Market)
-	if err != nil {
-		return ScreenBacktestOptions{}, err
+	market := ""
+	if preset == "" || strings.TrimSpace(in.Market) != "" {
+		if market, err = normalizeMarket(in.Market); err != nil {
+			return ScreenBacktestOptions{}, err
+		}
 	}
 	industry := strings.TrimSpace(in.Industry)
 	if err := validateLength(industry, "industry", 0, 20); err != nil {
@@ -561,6 +609,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
 	return ScreenBacktestOptions{
+		Preset: preset, StopLoss: in.StopLoss, TrailingStop: in.TrailingStop,
 		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry, ExcludeIndustry: exclude, Split: split,
 		RankBy: in.RankBy, EtfWeight: in.EtfWeight, Weighting: in.Weighting, MaxWeight: in.MaxWeight,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
@@ -590,6 +639,8 @@ func validateBacktestSplit(split, from, to string) (string, error) {
 // backtestToolError 把回測 API 的錯誤轉成給模型看的訊息;非預期錯誤記錄後只回通用訊息。
 func backtestToolError(err error, tool string, opt ScreenBacktestOptions, logf func(string, ...any)) error {
 	switch {
+	case errors.Is(err, ErrMarketDataNotFound) && opt.Preset != "":
+		return fmt.Errorf("找不到具名策略「%s」(可用 list_strategy_presets 查看名稱),或迄日之前查無相對強度資料", opt.Preset)
 	case errors.Is(err, ErrMarketDataNotFound):
 		return fmt.Errorf("指定迄日之前查無相對強度資料")
 	case errors.Is(err, ErrIndustryNotFound):
@@ -692,6 +743,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.Weighting != nil {
 		weighting = *e.Weighting
 	}
+	if e.Preset != nil {
+		b.printf("具名策略「%s」:", *e.Preset)
+	}
 	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s由高到低取前 %d 檔%s(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
 		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), e.Limit, weightingText(weighting), returnBasisText(e.Adjusted))
 	var filters []string
@@ -737,6 +791,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.KeepRank != nil && *e.KeepRank > e.Limit {
 		b.printf(";換股緩衝:上一期持股仍在前 %d 名就續抱", *e.KeepRank)
 	}
+	if text := stopText(e.StopLoss, e.TrailingStop); text != "" {
+		b.printf(";%s", text)
+	}
 	if e.RebalanceOffset != nil && *e.RebalanceOffset > 0 {
 		b.printf(";換股日偏移:起日之後先跳過 %d 個交易日", *e.RebalanceOffset)
 	}
@@ -764,6 +821,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			} else {
 				b.printf("因大盤濾網空手 %d 期。", s.MarketFilteredPeriods)
 			}
+		}
+		if s.StopExits != nil && *s.StopExits > 0 {
+			b.printf("期間停損提前賣出共 %d 檔次。", *s.StopExits)
 		}
 		if s.TotalReturnAfterCosts != nil {
 			b.printf("\n扣交易成本(手續費 0.1425%%×%s 折扣、賣出證交稅 0.3%%,依換手計算,含續抱股票調回目標權重%s)後:累積報酬 %s、年化 %s、最大回撤 %s;平均換手率 %s。",
@@ -804,7 +864,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			if p.ReturnAfterCosts != nil {
 				cost = "扣成本 " + displayPercent(p.ReturnAfterCosts) + "、換手 " + displayRate(p.Turnover) + ","
 			}
-			b.printf("\n- %s 持有 %d 檔,報酬 %s(%s基準 %s%s);%s", p.Date, p.Holdings,
+			stopped := ""
+			if p.Stopped != nil && *p.Stopped > 0 {
+				stopped = fmt.Sprintf("(停損賣出 %d 檔)", *p.Stopped)
+			}
+			b.printf("\n- %s 持有 %d 檔%s,報酬 %s(%s基準 %s%s);%s", p.Date, p.Holdings, stopped,
 				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), etf, strings.Join(p.Symbols, "、"))
 		}
 	}
@@ -873,6 +937,24 @@ func writeBacktestCurrent(b *summaryBuilder, c *BacktestCurrent) {
 		}
 		b.printf("這次賣出 %d 檔:%s。", len(c.Exited), strings.Join(exits, "、"))
 	}
+}
+
+// maxPresetNameChars 是具名策略名稱的長度上限,與 Data API 相同。
+const maxPresetNameChars = 64
+
+// stopText 說明停損與移動停利;都沒設回空字串。
+func stopText(stopLoss, trailingStop *int) string {
+	var parts []string
+	if stopLoss != nil && *stopLoss > 0 {
+		parts = append(parts, fmt.Sprintf("停損 %d%%", *stopLoss))
+	}
+	if trailingStop != nil && *trailingStop > 0 {
+		parts = append(parts, fmt.Sprintf("移動停利 %d%%", *trailingStop))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "期間" + strings.Join(parts, "、") + "(每天以還原收盤檢查,觸發當天收盤賣出、到下次換股前放現金)"
 }
 
 // signedPercent 是帶正負號的百分比(兩位小數)。

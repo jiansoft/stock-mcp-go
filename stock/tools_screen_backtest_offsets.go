@@ -160,6 +160,16 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	if opt.RankBy != "" && opt.RankBy != "rs_score" {
 		text = fmt.Sprintf("每 %d 個交易日換股、取%s最高的前 %d 檔", opt.HoldDays, rankByText(opt.RankBy), opt.Limit)
 	}
+	if opt.Preset != "" {
+		// 具名策略的條件存在 Data API,這裡只列另外指定(覆蓋)的參數。
+		text = "具名策略「" + opt.Preset + "」"
+		if opt.HoldDays > 0 {
+			text += fmt.Sprintf(",每 %d 個交易日換股", opt.HoldDays)
+		}
+		if opt.Limit > 0 {
+			text += fmt.Sprintf(",取前 %d 檔", opt.Limit)
+		}
+	}
 	if len(filters) > 0 {
 		text += ",條件 " + strings.Join(filters, "、")
 	}
@@ -187,6 +197,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	}
 	if weight := etfWeightText(opt.EtfWeight); weight != "" {
 		rules = append(rules, weight)
+	}
+	if stop := stopText(positiveOrNil(opt.StopLoss), positiveOrNil(opt.TrailingStop)); stop != "" {
+		rules = append(rules, stop)
 	}
 	if len(rules) > 0 {
 		text += ";" + strings.Join(rules, "、")
