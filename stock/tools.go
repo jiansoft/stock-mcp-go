@@ -348,6 +348,20 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.stockSignalHistory)
 	}
 
+	if tq, ok := q.(StockTimelineQuerier); ok {
+		tts := &stockTimelineToolset{tq: tq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_stock_timeline",
+			Description: "查詢指定股票一段期間(預設 90 天,最長 730 天)的事件時間軸,由新到舊:除息/除權與股利發放、減資/分割、月營收(年增率、月增率)、" +
+				"季報(EPS、ROE)、技術訊號(均線/KD/MACD/RSI、相對強度穿越 80/50 分、52 週新高新低)、外資/投信連續買賣超達 5/10/20 天、" +
+				"董監持股或質押比例單月變化達 1%;另列之後 60 天內已公告的除權息、發放與減資(標示尚未發生),附各種類筆數。" +
+				"適合回答「這檔股票最近發生了什麼」「下次除息是什麼時候」「最近營收和法人動向如何」;可用 kinds 只看某幾類(技術訊號通常最多)。" +
+				"月營收與季報的日期是法定公布期限。法說會不在時間軸內。",
+			InputSchema: stockTimelineSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, tts.stockTimeline)
+	}
+
 	if rs, ok := q.(RelativeStrengthQuerier); ok {
 		rts := &relativeStrengthToolset{rs: rs, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
@@ -497,6 +511,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: strategyPresetsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, pts.strategyPresets)
+	}
+
+	if tq, ok := q.(StrategyTrackQuerier); ok {
+		sts := &strategyTrackToolset{tq: tq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_strategy_track",
+			Description: "查詢具名策略的實盤追蹤:每個換股日 22:10 發換股通知時記錄當天的持股與權重,之後逐期(換股日 → 下次換股日,最後一期到最新交易日)" +
+				"計算持股還原報酬、策略部位與混合 0050 核心部位後的組合報酬,連乘為累積報酬並與同期持有 0050 比較(未扣交易成本)。" +
+				"紀錄只寫一次,不受之後重跑回測或修改策略條件影響,所以看到的是「照著通知做」的實際結果。" +
+				"適合回答「最佳組合上線後實際表現如何」「這期持股目前賺多少」「實盤有沒有贏 0050」。過去表現不代表未來結果。",
+			InputSchema: strategyTrackSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.strategyTrack)
 	}
 
 	if fq, ok := q.(IndustryFlowQuerier); ok {

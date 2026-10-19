@@ -145,41 +145,47 @@ type BacktestCurrent struct {
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
 type ScreenBacktestEnvelope struct {
 	// Preset 是引用的具名策略;沒有用 preset 為 nil。
-	Preset           *string               `json:"preset"`
-	From             string                `json:"from"`
-	To               string                `json:"to"`
-	Market           string                `json:"market"`
-	HoldDays         int                   `json:"hold_days"`
-	Limit            int                   `json:"limit"`
-	KeepRank         *int                  `json:"keep_rank"`
-	MarketFilterMA   *int                  `json:"market_filter_ma"`
-	MarketBreadth    *int                  `json:"market_filter_breadth"`
-	HoldMinRSScore   *int                  `json:"hold_min_rs_score"`
-	MaxPerIndustry   *int                  `json:"max_per_industry"`
-	RebalanceOffset  *int                  `json:"rebalance_offset"`
-	MinAvgTradeValue *int                  `json:"min_avg_trade_value"`
-	RankBy           *string               `json:"rank_by"`
-	EtfWeight        *int                  `json:"etf_weight"`
-	Weighting        *string               `json:"weighting"`
-	MaxWeight        *int                  `json:"max_weight"`
-	StopLoss         *int                  `json:"stop_loss"`
-	TrailingStop     *int                  `json:"trailing_stop"`
-	Industry         *string               `json:"industry"`
-	ExcludeIndustry  *string               `json:"exclude_industry"`
-	MinRSScore       *int                  `json:"min_rs_score"`
-	MaxRSScore       *int                  `json:"max_rs_score"`
-	MinForeignStreak *int                  `json:"min_foreign_streak"`
-	MinTrustStreak   *int                  `json:"min_trust_streak"`
-	Indicator        *string               `json:"indicator"`
-	Kind             *string               `json:"kind"`
-	FeeDiscount      *float64              `json:"fee_discount"`
-	Adjusted         bool                  `json:"adjusted"`
-	EtfBenchmark     *string               `json:"etf_benchmark"`
-	Summary          BacktestSummary       `json:"summary"`
-	Years            []BacktestYear        `json:"years"`
-	Contributors     *BacktestContributors `json:"contributors"`
-	Current          *BacktestCurrent      `json:"current"`
-	Periods          []BacktestPeriod      `json:"periods"`
+	Preset           *string `json:"preset"`
+	From             string  `json:"from"`
+	To               string  `json:"to"`
+	Market           string  `json:"market"`
+	HoldDays         int     `json:"hold_days"`
+	Limit            int     `json:"limit"`
+	KeepRank         *int    `json:"keep_rank"`
+	MarketFilterMA   *int    `json:"market_filter_ma"`
+	MarketBreadth    *int    `json:"market_filter_breadth"`
+	HoldMinRSScore   *int    `json:"hold_min_rs_score"`
+	MaxPerIndustry   *int    `json:"max_per_industry"`
+	RebalanceOffset  *int    `json:"rebalance_offset"`
+	MinAvgTradeValue *int    `json:"min_avg_trade_value"`
+	RankBy           *string `json:"rank_by"`
+	EtfWeight        *int    `json:"etf_weight"`
+	Weighting        *string `json:"weighting"`
+	MaxWeight        *int    `json:"max_weight"`
+	StopLoss         *int    `json:"stop_loss"`
+	TrailingStop     *int    `json:"trailing_stop"`
+	Industry         *string `json:"industry"`
+	ExcludeIndustry  *string `json:"exclude_industry"`
+	MinRSScore       *int    `json:"min_rs_score"`
+	MaxRSScore       *int    `json:"max_rs_score"`
+	MinForeignStreak *int    `json:"min_foreign_streak"`
+	MinTrustStreak   *int    `json:"min_trust_streak"`
+	// MinRevenueYoYPercent 等是基本面門檻(只用換股當天已公布的資料);未篩選為 nil。
+	MinRevenueYoYPercent   *float64              `json:"min_revenue_yoy_percent"`
+	MinRevenueYoYStreak    *int                  `json:"min_revenue_yoy_streak"`
+	MinRevenueYoY3mPercent *float64              `json:"min_revenue_yoy_3m_percent"`
+	MinEPS                 *float64              `json:"min_eps"`
+	MinROEPercent          *float64              `json:"min_roe_percent"`
+	Indicator              *string               `json:"indicator"`
+	Kind                   *string               `json:"kind"`
+	FeeDiscount            *float64              `json:"fee_discount"`
+	Adjusted               bool                  `json:"adjusted"`
+	EtfBenchmark           *string               `json:"etf_benchmark"`
+	Summary                BacktestSummary       `json:"summary"`
+	Years                  []BacktestYear        `json:"years"`
+	Contributors           *BacktestContributors `json:"contributors"`
+	Current                *BacktestCurrent      `json:"current"`
+	Periods                []BacktestPeriod      `json:"periods"`
 }
 
 // ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
@@ -214,6 +220,8 @@ type ScreenBacktestOptions struct {
 	Indicator        string
 	Kind             string
 	FeeDiscount      *float64
+	// Fundamentals 是月營收與季報門檻。
+	Fundamentals BacktestFundamentals
 }
 
 // ScreenBacktestQuerier 是 get_screen_backtest 對資料來源的需求介面;只有 *APIClient 實作。
@@ -275,6 +283,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
+	opt.Fundamentals.set(values)
 	return values
 }
 
@@ -310,6 +319,12 @@ type ScreenBacktestInput struct {
 	Kind             string `json:"kind,omitempty"`
 	// FeeDiscount 用指標區分「沒給」與 0(免手續費)。
 	FeeDiscount *float64 `json:"fee_discount,omitempty"`
+	// 基本面門檻用指標區分「沒給」與 0(例如營收年增 ≥ 0%)。
+	MinRevenueYoYPercent   *float64 `json:"min_revenue_yoy_percent,omitempty"`
+	MinRevenueYoYStreak    int      `json:"min_revenue_yoy_streak,omitempty"`
+	MinRevenueYoY3mPercent *float64 `json:"min_revenue_yoy_3m_percent,omitempty"`
+	MinEPS                 *float64 `json:"min_eps,omitempty"`
+	MinROEPercent          *float64 `json:"min_roe_percent,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
@@ -327,7 +342,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 	for _, days := range backtestHoldDays {
 		holdDays = append(holdDays, days)
 	}
-	return &jsonschema.Schema{
+	schema := &jsonschema.Schema{
 		Type: "object",
 		Properties: map[string]*jsonschema.Schema{
 			"preset": {
@@ -463,6 +478,10 @@ func screenBacktestSchema() *jsonschema.Schema {
 			},
 		},
 	}
+	for name, property := range backtestFundamentalSchemas() {
+		schema.Properties[name] = property
+	}
+	return schema
 }
 
 // backtestStreakSchema 描述換股當天法人連續買超天數下限參數。
@@ -611,8 +630,16 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.FeeDiscount != nil && (*in.FeeDiscount < 0 || *in.FeeDiscount > 1) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
+	fundamentals := BacktestFundamentals{
+		MinRevenueYoYPercent: in.MinRevenueYoYPercent, MinRevenueYoYStreak: in.MinRevenueYoYStreak,
+		MinRevenueYoY3mPercent: in.MinRevenueYoY3mPercent, MinEPS: in.MinEPS, MinROEPercent: in.MinROEPercent,
+	}
+	if err := fundamentals.validate(); err != nil {
+		return ScreenBacktestOptions{}, err
+	}
 	return ScreenBacktestOptions{
-		Preset: preset, StopLoss: in.StopLoss, TrailingStop: in.TrailingStop,
+		Fundamentals: fundamentals,
+		Preset:       preset, StopLoss: in.StopLoss, TrailingStop: in.TrailingStop,
 		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry, ExcludeIndustry: exclude, Split: split,
 		RankBy: in.RankBy, EtfWeight: in.EtfWeight, Weighting: in.Weighting, MaxWeight: in.MaxWeight,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
@@ -767,6 +794,8 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.MinTrustStreak != nil {
 		filters = append(filters, fmt.Sprintf("投信已連買 %d 天以上", *e.MinTrustStreak))
 	}
+	filters = append(filters, fundamentalFilterTexts(e.MinRevenueYoYPercent, e.MinRevenueYoYStreak,
+		e.MinRevenueYoY3mPercent, e.MinEPS, e.MinROEPercent)...)
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {
 		filters = append(filters, fmt.Sprintf("換股前 %d 個交易日內出現 %s", e.HoldDays, signal))
 	}
