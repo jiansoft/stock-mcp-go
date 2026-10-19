@@ -296,6 +296,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.PositiveFreeCashFlow {
 		values.Set("positive_free_cash_flow", "true")
 	}
+	if opt.MinOperatingMarginPercent != nil {
+		values.Set("min_operating_margin_percent", formatFloat(*opt.MinOperatingMarginPercent))
+	}
+	if opt.MarginsYoYUp {
+		values.Set("margins_yoy_up", "true")
+	}
 	if opt.MinRSScore != nil {
 		values.Set("min_rs_score", fmt.Sprint(*opt.MinRSScore))
 	}
