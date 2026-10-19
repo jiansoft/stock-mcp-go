@@ -150,6 +150,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	if opt.MinTrustStreak > 0 {
 		filters = append(filters, fmt.Sprintf("投信已連買 %d 天以上", opt.MinTrustStreak))
 	}
+	fundamentals := opt.Fundamentals
+	filters = append(filters, fundamentalFilterTexts(fundamentals.MinRevenueYoYPercent, &fundamentals.MinRevenueYoYStreak,
+		fundamentals.MinRevenueYoY3mPercent, fundamentals.MinEPS, fundamentals.MinROEPercent)...)
 	if signal := backtestSignalText(stringOrNil(opt.Indicator), stringOrNil(opt.Kind)); signal != "" {
 		filters = append(filters, "換股前出現 "+signal)
 	}
