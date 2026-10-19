@@ -41,6 +41,13 @@ type ScreenedStock struct {
 	DebtRatioPercent   *float64 `json:"debt_ratio_percent"`
 	FreeCashFlowTTM    *int64   `json:"free_cash_flow_ttm"`
 	HealthPeriod       *string  `json:"health_period"`
+	// OperatingMarginPercent、NetMarginPercent 是 Yahoo 最新一季單季營業利益率、稅後淨利率;
+	// MarginsYoYUp 是三率(毛利率、營業利益率、淨利率)是否都高於去年同季,去年同季沒有資料時為 nil;
+	// 損益表落後超過兩季時三者皆為 nil,MarginPeriod 仍保留期間。
+	OperatingMarginPercent *float64 `json:"operating_margin_percent"`
+	NetMarginPercent       *float64 `json:"net_margin_percent"`
+	MarginsYoYUp           *bool    `json:"margins_yoy_up"`
+	MarginPeriod           *string  `json:"margin_period"`
 	// RSScore 是相對強度分數 1–99(上市櫃普通股(不含 ETF、特別股)百分位,資料日見 Screening.RSAsOf);
 	// 上市未滿 240 個交易日、暫停交易或尚無報酬資料時為 nil。
 	RSScore *int `json:"rs_score"`
@@ -70,27 +77,29 @@ type Screening struct {
 // 呼叫端沒有提供該條件。SortBy 與 SortOrder 在 tool 層驗證固定 enum，
 // Data API 再映射成固定 SQL 分支，不允許任意 SQL 欄位或片段。
 type ScreenOptions struct {
-	Market                  string
-	IndustryID              int
-	ValuationBand           string
-	MinRevenueYOYPercent    *float64
-	MinRevenueYOYStreak     *int
-	MinRevenueYOY3MPercent  *float64
-	MinMonthlyRevenue       *float64
-	MinEPS                  *float64
-	MinROEPercent           *float64
-	MinDividendYieldPercent *float64
-	MinFScore               *int
-	MinGrossMarginPercent   *float64
-	MaxDebtRatioPercent     *float64
-	PositiveFreeCashFlow    bool
-	MinRSScore              *int
-	MinForeignStreak        *int
-	MinTrustStreak          *int
-	MinAvgTradeValue        *int
-	SortBy                  string
-	SortOrder               string
-	Limit                   int
+	Market                    string
+	IndustryID                int
+	ValuationBand             string
+	MinRevenueYOYPercent      *float64
+	MinRevenueYOYStreak       *int
+	MinRevenueYOY3MPercent    *float64
+	MinMonthlyRevenue         *float64
+	MinEPS                    *float64
+	MinROEPercent             *float64
+	MinDividendYieldPercent   *float64
+	MinFScore                 *int
+	MinGrossMarginPercent     *float64
+	MaxDebtRatioPercent       *float64
+	MinOperatingMarginPercent *float64
+	MarginsYoYUp              bool
+	PositiveFreeCashFlow      bool
+	MinRSScore                *int
+	MinForeignStreak          *int
+	MinTrustStreak            *int
+	MinAvgTradeValue          *int
+	SortBy                    string
+	SortOrder                 string
+	Limit                     int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。

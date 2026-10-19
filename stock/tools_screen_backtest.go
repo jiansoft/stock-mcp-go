@@ -171,21 +171,26 @@ type ScreenBacktestEnvelope struct {
 	MinForeignStreak *int    `json:"min_foreign_streak"`
 	MinTrustStreak   *int    `json:"min_trust_streak"`
 	// MinRevenueYoYPercent 等是基本面門檻(只用換股當天已公布的資料);未篩選為 nil。
-	MinRevenueYoYPercent   *float64              `json:"min_revenue_yoy_percent"`
-	MinRevenueYoYStreak    *int                  `json:"min_revenue_yoy_streak"`
-	MinRevenueYoY3mPercent *float64              `json:"min_revenue_yoy_3m_percent"`
-	MinEPS                 *float64              `json:"min_eps"`
-	MinROEPercent          *float64              `json:"min_roe_percent"`
-	Indicator              *string               `json:"indicator"`
-	Kind                   *string               `json:"kind"`
-	FeeDiscount            *float64              `json:"fee_discount"`
-	Adjusted               bool                  `json:"adjusted"`
-	EtfBenchmark           *string               `json:"etf_benchmark"`
-	Summary                BacktestSummary       `json:"summary"`
-	Years                  []BacktestYear        `json:"years"`
-	Contributors           *BacktestContributors `json:"contributors"`
-	Current                *BacktestCurrent      `json:"current"`
-	Periods                []BacktestPeriod      `json:"periods"`
+	MinRevenueYoYPercent   *float64 `json:"min_revenue_yoy_percent"`
+	MinRevenueYoYStreak    *int     `json:"min_revenue_yoy_streak"`
+	MinRevenueYoY3mPercent *float64 `json:"min_revenue_yoy_3m_percent"`
+	MinEPS                 *float64 `json:"min_eps"`
+	MinROEPercent          *float64 `json:"min_roe_percent"`
+	// MinGrossMarginPercent 等是 Yahoo 單季財報的三率與負債比門檻;未篩選為 nil,三率三升未篩選為 false。
+	MinGrossMarginPercent     *float64              `json:"min_gross_margin_percent"`
+	MinOperatingMarginPercent *float64              `json:"min_operating_margin_percent"`
+	MarginsYoYUp              bool                  `json:"margins_yoy_up"`
+	MaxDebtRatioPercent       *float64              `json:"max_debt_ratio_percent"`
+	Indicator                 *string               `json:"indicator"`
+	Kind                      *string               `json:"kind"`
+	FeeDiscount               *float64              `json:"fee_discount"`
+	Adjusted                  bool                  `json:"adjusted"`
+	EtfBenchmark              *string               `json:"etf_benchmark"`
+	Summary                   BacktestSummary       `json:"summary"`
+	Years                     []BacktestYear        `json:"years"`
+	Contributors              *BacktestContributors `json:"contributors"`
+	Current                   *BacktestCurrent      `json:"current"`
+	Periods                   []BacktestPeriod      `json:"periods"`
 }
 
 // ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
@@ -325,6 +330,11 @@ type ScreenBacktestInput struct {
 	MinRevenueYoY3mPercent *float64 `json:"min_revenue_yoy_3m_percent,omitempty"`
 	MinEPS                 *float64 `json:"min_eps,omitempty"`
 	MinROEPercent          *float64 `json:"min_roe_percent,omitempty"`
+	// 財報三率與負債比門檻;三率三升 false 為不篩選。
+	MinGrossMarginPercent     *float64 `json:"min_gross_margin_percent,omitempty"`
+	MinOperatingMarginPercent *float64 `json:"min_operating_margin_percent,omitempty"`
+	MarginsYoYUp              bool     `json:"margins_yoy_up,omitempty"`
+	MaxDebtRatioPercent       *float64 `json:"max_debt_ratio_percent,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
@@ -633,6 +643,8 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	fundamentals := BacktestFundamentals{
 		MinRevenueYoYPercent: in.MinRevenueYoYPercent, MinRevenueYoYStreak: in.MinRevenueYoYStreak,
 		MinRevenueYoY3mPercent: in.MinRevenueYoY3mPercent, MinEPS: in.MinEPS, MinROEPercent: in.MinROEPercent,
+		MinGrossMarginPercent: in.MinGrossMarginPercent, MinOperatingMarginPercent: in.MinOperatingMarginPercent,
+		MarginsYoYUp: in.MarginsYoYUp, MaxDebtRatioPercent: in.MaxDebtRatioPercent,
 	}
 	if err := fundamentals.validate(); err != nil {
 		return ScreenBacktestOptions{}, err
@@ -796,6 +808,8 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	filters = append(filters, fundamentalFilterTexts(e.MinRevenueYoYPercent, e.MinRevenueYoYStreak,
 		e.MinRevenueYoY3mPercent, e.MinEPS, e.MinROEPercent)...)
+	filters = append(filters, marginFilterTexts(e.MinGrossMarginPercent, e.MinOperatingMarginPercent,
+		e.MarginsYoYUp, e.MaxDebtRatioPercent)...)
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {
 		filters = append(filters, fmt.Sprintf("換股前 %d 個交易日內出現 %s", e.HoldDays, signal))
 	}
