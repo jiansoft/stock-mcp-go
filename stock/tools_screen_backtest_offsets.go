@@ -195,6 +195,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	if opt.MarketMaxPE != nil {
 		rules = append(rules, "大盤估值濾網 本益比 ≤ "+formatFloat(*opt.MarketMaxPE)+" 倍")
 	}
+	if opt.MarketPEPercentile > 0 {
+		rules = append(rules, fmt.Sprintf("相對估值濾網 近 5 年第 %d 百分位以下", opt.MarketPEPercentile))
+	}
 	if opt.HoldMinRSScore > 0 {
 		rules = append(rules, fmt.Sprintf("續抱 RS ≥ %d", opt.HoldMinRSScore))
 	}
