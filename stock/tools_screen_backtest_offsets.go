@@ -166,7 +166,11 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	}
 	text := fmt.Sprintf("每 %d 個交易日換股、取 RS 最高的前 %d 檔", opt.HoldDays, opt.Limit)
 	if opt.RankBy != "" && opt.RankBy != "rs_score" {
-		text = fmt.Sprintf("每 %d 個交易日換股、取%s最高的前 %d 檔", opt.HoldDays, rankByText(opt.RankBy), opt.Limit)
+		extreme := "最高"
+		if rankAscending(opt.RankBy) {
+			extreme = "最低"
+		}
+		text = fmt.Sprintf("每 %d 個交易日換股、取%s%s的前 %d 檔", opt.HoldDays, rankByText(opt.RankBy), extreme, opt.Limit)
 	}
 	if opt.Preset != "" {
 		// 具名策略的條件存在 Data API,這裡只列另外指定(覆蓋)的參數。
