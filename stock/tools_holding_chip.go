@@ -32,6 +32,13 @@ type HoldingChipBroker struct {
 	Sellers   []HoldingChipBrokerNet `json:"sellers"`
 }
 
+// HoldingChipBrokerRecent 是持股近幾個主力交易日的主力累計(張)。
+type HoldingChipBrokerRecent struct {
+	MainNet  int64 `json:"main_net"`
+	BuyDays  int64 `json:"buy_days"`
+	SellDays int64 `json:"sell_days"`
+}
+
 // HoldingChipItem 是單一持股當天的籌碼;張數已由股換算成張,來源沒有資料時為 nil。
 type HoldingChipItem struct {
 	StockSymbol   string             `json:"stock_symbol"`
@@ -50,16 +57,20 @@ type HoldingChipItem struct {
 	ShortBalance  *int64             `json:"short_balance"`
 	ShortChange   *int64             `json:"short_change"`
 	Broker        *HoldingChipBroker `json:"broker"`
-	Reasons       []string           `json:"reasons"`
+	// BrokerRecent 是含當天最近 HoldingChipEnvelope.BrokerRecentDays 個主力交易日的累計;沒有資料為 nil。
+	BrokerRecent *HoldingChipBrokerRecent `json:"broker_recent"`
+	Reasons      []string                 `json:"reasons"`
 }
 
 // HoldingChipEnvelope 是 portfolio/chip endpoint 的完整回應;完全沒有籌碼資料時 Date 為 nil。
 type HoldingChipEnvelope struct {
-	Date         *string           `json:"date"`
-	PreviousDate *string           `json:"previous_date"`
-	NextDate     *string           `json:"next_date"`
-	Notable      int               `json:"notable"`
-	Items        []HoldingChipItem `json:"items"`
+	Date         *string `json:"date"`
+	PreviousDate *string `json:"previous_date"`
+	NextDate     *string `json:"next_date"`
+	Notable      int     `json:"notable"`
+	// BrokerRecentDays 是 BrokerRecent 涵蓋的主力交易日數;舊版 API 沒有這個欄位時為 0。
+	BrokerRecentDays int               `json:"broker_recent_days"`
+	Items            []HoldingChipItem `json:"items"`
 }
 
 // HoldingChipQuerier 是 get_holding_chip 對資料來源的需求介面;只有 *APIClient 實作。
@@ -158,7 +169,7 @@ func holdingChipSummary(e *HoldingChipEnvelope) string {
 				lotsText(item.ForeignNet), lotsText(item.TrustNet)))
 			continue
 		}
-		b.printf("\n%s", holdingChipItemText(item))
+		b.printf("\n%s", holdingChipItemText(item, e.BrokerRecentDays))
 	}
 	if len(quiet) > 0 {
 		b.printf("\n未達門檻(張):%s。", strings.Join(quiet, "、"))
@@ -168,7 +179,7 @@ func holdingChipSummary(e *HoldingChipEnvelope) string {
 }
 
 // holdingChipItemText 描述一檔達標持股的法人、信用交易與主力進出。
-func holdingChipItemText(item HoldingChipItem) string {
+func holdingChipItemText(item HoldingChipItem, recentDays int) string {
 	labels := make([]string, 0, len(item.Reasons))
 	for _, code := range item.Reasons {
 		if label, ok := holdingChipReasonLabels[code]; ok {
@@ -192,6 +203,9 @@ func holdingChipItemText(item HoldingChipItem) string {
 		if text := brokerNetsText(broker.Sellers); text != "" {
 			b.printf(",賣超分點 %s", text)
 		}
+	}
+	if recent := item.BrokerRecent; recent != nil && recentDays > 1 {
+		b.printf(";近 %d 日主力 %s 張(買超 %d 日、賣超 %d 日)", recentDays, signedText(recent.MainNet), recent.BuyDays, recent.SellDays)
 	}
 	b.printf("。")
 	return b.String()
