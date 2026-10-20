@@ -613,6 +613,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, hts.portfolioHistory)
 	}
 
+	if hq, ok := q.(HoldingChipQuerier); ok {
+		cts := &holdingChipToolset{hq: hq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_holding_chip",
+			Description: "查詢使用者持股在某交易日(預設最新)的籌碼日報(個人持股資料):當天收盤時仍持有的普通股(不含 ETF)" +
+				"三大法人買賣超與佔成交量比重、外資/投信連續買賣超天數、融資融券餘額與增減、主力買賣超與前幾名買賣超分點," +
+				"並標出達到每日 Telegram 通知門檻的原因(外資或投信大量買賣超、連續買賣超、融資或融券大幅增減、主力大量進出)。" +
+				"適合回答「今天我的持股有沒有法人大買大賣」「哪幾檔被主力倒貨」「上週五持股籌碼如何」;個股更長期的籌碼請用 get_chip_data。",
+			InputSchema: holdingChipSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, cts.holdingChip)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
