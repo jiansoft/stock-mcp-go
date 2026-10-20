@@ -45,8 +45,10 @@ type ScreenStocksInput struct {
 	MinGrossMarginPercent   *float64 `json:"min_gross_margin_percent,omitempty"`
 	MaxDebtRatioPercent     *float64 `json:"max_debt_ratio_percent,omitempty"`
 	// MinOperatingMarginPercent、MarginsYoYUp 取 Yahoo 最新一季單季損益表。
+	// RevenueRecord 為 true 時只留最新月營收創歷史新高的股票。
 	MinOperatingMarginPercent *float64 `json:"min_operating_margin_percent,omitempty"`
 	MarginsYoYUp              bool     `json:"margins_yoy_up,omitempty"`
+	RevenueRecord             bool     `json:"revenue_record,omitempty"`
 	PositiveFreeCashFlow      bool     `json:"positive_free_cash_flow,omitempty"`
 	MinRSScore                *int     `json:"min_rs_score,omitempty"`
 	MinForeignStreak          *int     `json:"min_foreign_streak,omitempty"`
@@ -95,6 +97,10 @@ func screenStocksSchema() *jsonschema.Schema {
 			"margins_yoy_up": {
 				Type:        "boolean",
 				Description: "true 時只留三率三升:最新一季毛利率、營業利益率、稅後淨利率都高於去年同一季",
+			},
+			"revenue_record": {
+				Type:        "boolean",
+				Description: "true 時只留最新月營收創歷史新高(高於之前所有月份,之前至少 12 個月)的股票",
 			},
 			"positive_free_cash_flow": {
 				Type:        "boolean",
@@ -223,7 +229,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
 		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
-		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp ||
+		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
@@ -259,7 +265,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinROEPercent: in.MinROEPercent, MinDividendYieldPercent: in.MinDividendYieldPercent,
 		MinFScore: in.MinFScore, MinGrossMarginPercent: in.MinGrossMarginPercent,
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
-		MinOperatingMarginPercent: in.MinOperatingMarginPercent, MarginsYoYUp: in.MarginsYoYUp,
+		MinOperatingMarginPercent: in.MinOperatingMarginPercent, MarginsYoYUp: in.MarginsYoYUp, RevenueRecord: in.RevenueRecord,
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		MinAvgTradeValue: in.MinAvgTradeValue, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
@@ -271,9 +277,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、營業利益率 %s、淨利率 %s、%s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）、近 20 日平均成交 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s（%s）、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、營業利益率 %s、淨利率 %s、%s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）、近 20 日平均成交 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
-			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
+			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), revenueRecordText(first.RevenueRecord), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
 			displayPercent(first.GrossMarginPercent), displayPercent(first.OperatingMarginPercent), displayPercent(first.NetMarginPercent),
 			marginsYoYText(first.MarginsYoYUp, first.MarginPeriod), displayPercent(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
@@ -287,6 +293,18 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
 		DataAsOf: envelope.DataAsOf, RSAsOf: envelope.RSAsOf, ChipAsOf: envelope.ChipAsOf, Stocks: envelope.Stocks,
 	}, nil
+}
+
+// revenueRecordText 描述最新月營收是否創歷史新高;nil 回「是否新高無法判斷」。
+func revenueRecordText(record *bool) string {
+	switch {
+	case record == nil:
+		return "是否新高無法判斷"
+	case *record:
+		return "創歷史新高"
+	default:
+		return "未創新高"
+	}
 }
 
 // marginsYoYText 描述三率三升判斷與損益表期間;nil 回「三率三升無法判斷」。

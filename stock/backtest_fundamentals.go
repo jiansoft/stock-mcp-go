@@ -9,7 +9,7 @@ import (
 
 // 回測的基本面條件:月營收與季報,只用換股當天已公布的資料(Data API 依法定公布期限判斷)。
 
-// BacktestFundamentals 是回測的基本面門檻;nil、0(連續月數)與 false(三率三升)代表不篩選。
+// BacktestFundamentals 是回測的基本面門檻;nil、0(連續月數)與 false(三率三升、營收新高)代表不篩選。
 type BacktestFundamentals struct {
 	MinRevenueYoYPercent      *float64
 	MinRevenueYoYStreak       int
@@ -20,6 +20,7 @@ type BacktestFundamentals struct {
 	MinOperatingMarginPercent *float64
 	MarginsYoYUp              bool
 	MaxDebtRatioPercent       *float64
+	RevenueRecord             bool
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -63,6 +64,10 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 		"max_debt_ratio_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1000.0),
 			Description: "換股當天已公布的最近一季季末負債比不超過這個值(%,選填,0 至 1000)。" + statementRule,
+		},
+		"revenue_record": {
+			Type:        "boolean",
+			Description: "true 時只選換股當天已公布的最新月營收創歷史新高(高於之前所有月份,之前至少 12 個月)的股票。" + revenueRule,
 		},
 	}
 }
@@ -110,6 +115,17 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
 	}
+	if f.RevenueRecord {
+		values.Set("revenue_record", "true")
+	}
+}
+
+// revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。
+func revenueRecordTexts(record bool) []string {
+	if !record {
+		return nil
+	}
+	return []string{"已公布的最新月營收創歷史新高"}
 }
 
 // fundamentalFilterTexts 描述有設定的基本面門檻;連續月數為 nil 或 0 代表不篩選。

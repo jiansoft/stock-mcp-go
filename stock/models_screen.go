@@ -48,6 +48,8 @@ type ScreenedStock struct {
 	NetMarginPercent       *float64 `json:"net_margin_percent"`
 	MarginsYoYUp           *bool    `json:"margins_yoy_up"`
 	MarginPeriod           *string  `json:"margin_period"`
+	// RevenueRecord 是最新月營收是否創歷史新高(高於之前所有月份);之前不滿 12 個月、沒有營收或過期時為 nil。
+	RevenueRecord *bool `json:"revenue_record"`
 	// RSScore 是相對強度分數 1–99(上市櫃普通股(不含 ETF、特別股)百分位,資料日見 Screening.RSAsOf);
 	// 上市未滿 240 個交易日、暫停交易或尚無報酬資料時為 nil。
 	RSScore *int `json:"rs_score"`
@@ -92,6 +94,7 @@ type ScreenOptions struct {
 	MaxDebtRatioPercent       *float64
 	MinOperatingMarginPercent *float64
 	MarginsYoYUp              bool
+	RevenueRecord             bool
 	PositiveFreeCashFlow      bool
 	MinRSScore                *int
 	MinForeignStreak          *int

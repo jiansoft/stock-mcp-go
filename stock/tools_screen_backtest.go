@@ -181,6 +181,7 @@ type ScreenBacktestEnvelope struct {
 	MinOperatingMarginPercent *float64              `json:"min_operating_margin_percent"`
 	MarginsYoYUp              bool                  `json:"margins_yoy_up"`
 	MaxDebtRatioPercent       *float64              `json:"max_debt_ratio_percent"`
+	RevenueRecord             bool                  `json:"revenue_record"`
 	Indicator                 *string               `json:"indicator"`
 	Kind                      *string               `json:"kind"`
 	FeeDiscount               *float64              `json:"fee_discount"`
@@ -335,6 +336,8 @@ type ScreenBacktestInput struct {
 	MinOperatingMarginPercent *float64 `json:"min_operating_margin_percent,omitempty"`
 	MarginsYoYUp              bool     `json:"margins_yoy_up,omitempty"`
 	MaxDebtRatioPercent       *float64 `json:"max_debt_ratio_percent,omitempty"`
+	// RevenueRecord 為 true 時只選最新月營收創歷史新高。
+	RevenueRecord bool `json:"revenue_record,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
@@ -644,7 +647,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinRevenueYoYPercent: in.MinRevenueYoYPercent, MinRevenueYoYStreak: in.MinRevenueYoYStreak,
 		MinRevenueYoY3mPercent: in.MinRevenueYoY3mPercent, MinEPS: in.MinEPS, MinROEPercent: in.MinROEPercent,
 		MinGrossMarginPercent: in.MinGrossMarginPercent, MinOperatingMarginPercent: in.MinOperatingMarginPercent,
-		MarginsYoYUp: in.MarginsYoYUp, MaxDebtRatioPercent: in.MaxDebtRatioPercent,
+		MarginsYoYUp: in.MarginsYoYUp, MaxDebtRatioPercent: in.MaxDebtRatioPercent, RevenueRecord: in.RevenueRecord,
 	}
 	if err := fundamentals.validate(); err != nil {
 		return ScreenBacktestOptions{}, err
@@ -812,6 +815,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	filters = append(filters, fundamentalFilterTexts(e.MinRevenueYoYPercent, e.MinRevenueYoYStreak,
 		e.MinRevenueYoY3mPercent, e.MinEPS, e.MinROEPercent)...)
+	filters = append(filters, revenueRecordTexts(e.RevenueRecord)...)
 	filters = append(filters, marginFilterTexts(e.MinGrossMarginPercent, e.MinOperatingMarginPercent,
 		e.MarginsYoYUp, e.MaxDebtRatioPercent)...)
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {

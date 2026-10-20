@@ -302,6 +302,9 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
 	}
+	if opt.RevenueRecord {
+		values.Set("revenue_record", "true")
+	}
 	if opt.MinRSScore != nil {
 		values.Set("min_rs_score", fmt.Sprint(*opt.MinRSScore))
 	}
