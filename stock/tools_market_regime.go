@@ -51,6 +51,18 @@ type MarketRegimeEnvelope struct {
 	Return240d       *float64              `json:"return_240d"`
 	RecentCrosses    []MovingAverageCross  `json:"recent_crosses"`
 	Breadth          *MarketRegimeBreadth  `json:"breadth"`
+	// Valuation 是估值水位;舊版 API 或沒有估值資料時為 nil。
+	Valuation *MarketRegimeValuation `json:"valuation"`
+}
+
+// MarketRegimeValuation 是上市櫃本益比、股價淨值比中位數在近 5 年的位置。
+type MarketRegimeValuation struct {
+	Date           string   `json:"date"`
+	MedianPE       *float64 `json:"median_pe"`
+	PEPercentile5y *float64 `json:"pe_percentile_5y"`
+	MedianPE5dAgo  *float64 `json:"median_pe_5d_ago"`
+	MedianPB       *float64 `json:"median_pb"`
+	PBPercentile5y *float64 `json:"pb_percentile_5y"`
 }
 
 // MarketRegimeBreadth 是上市櫃合併的市場廣度;舊版 API 或資料日之前沒有統計時為 nil。
@@ -181,8 +193,38 @@ func marketRegimeSummary(e *MarketRegimeEnvelope) string {
 			br.Date, displayPercent(br.AboveMA20Percent), displayPercent(br.AboveMA60Percent),
 			displayPercent(br.AboveMA60Percent5dAgo), displayPercent(br.AboveMA240Percent), br.NewHighs5d, br.NewLows5d)
 	}
+	if text := regimeValuationText(e.Valuation); text != "" {
+		b.printf("\n%s", text)
+	}
 	b.printf("\n趨勢狀態只描述價格位置,不代表後續走勢。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// regimeValuationText 描述估值水位;沒有資料時回空字串。
+func regimeValuationText(v *MarketRegimeValuation) string {
+	if v == nil || (v.MedianPE == nil && v.MedianPB == nil) {
+		return ""
+	}
+	var parts []string
+	if v.MedianPE != nil {
+		part := fmt.Sprintf("本益比中位數 %.2f 倍", *v.MedianPE)
+		if v.PEPercentile5y != nil {
+			part += fmt.Sprintf("(近 5 年第 %.0f 百分位", *v.PEPercentile5y)
+			if v.MedianPE5dAgo != nil {
+				part += fmt.Sprintf(",5 個交易日前 %.2f 倍", *v.MedianPE5dAgo)
+			}
+			part += ")"
+		}
+		parts = append(parts, part)
+	}
+	if v.MedianPB != nil {
+		part := fmt.Sprintf("股價淨值比中位數 %.2f 倍", *v.MedianPB)
+		if v.PBPercentile5y != nil {
+			part += fmt.Sprintf("(第 %.0f 百分位)", *v.PBPercentile5y)
+		}
+		parts = append(parts, part)
+	}
+	return fmt.Sprintf("估值水位(上市櫃,%s):%s。", v.Date, strings.Join(parts, "、"))
 }
 
 // crossesText 列出近 60 個交易日站上或跌破均線的日子(API 已由新到舊排序)。
