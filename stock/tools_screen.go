@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -33,6 +34,7 @@ type screenToolset struct {
 type ScreenStocksInput struct {
 	Market                  string   `json:"market,omitempty"`
 	IndustryID              int      `json:"industry_id,omitempty"`
+	ExcludeIndustryIDs      []int    `json:"exclude_industry_ids,omitempty"`
 	ValuationBand           string   `json:"valuation_band,omitempty"`
 	MinRevenueYOYPercent    *float64 `json:"min_revenue_yoy_percent,omitempty"`
 	MinRevenueYOYStreak     *int     `json:"min_revenue_yoy_streak,omitempty"`
@@ -71,6 +73,12 @@ func screenStocksSchema() *jsonschema.Schema {
 		Properties: map[string]*jsonschema.Schema{
 			"market":      listedOTCMarketSchema(),
 			"industry_id": {Type: "integer", Minimum: ptr(1.0), Description: "產業代碼(正整數,選填)"},
+			"exclude_industry_ids": {
+				Type:        "array",
+				Items:       &jsonschema.Schema{Type: "integer", Minimum: ptr(1.0)},
+				MaxItems:    ptr(maxExcludedIndustries),
+				Description: "排除的產業代碼(選填,最多 10 個,不可包含 industry_id),例如 [17] 排除金融保險業:金融業營收口徑不同,依毛利率或營業利益率排序時常佔滿前幾名",
+			},
 			"valuation_band": {
 				Type:        "string",
 				Enum:        []any{"undervalued", "fair_valued", "overvalued", "highly_overvalued"},
@@ -182,6 +190,10 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.IndustryID < 0 {
 		return nil, nil, fmt.Errorf("參數 industry_id 必須是正整數")
 	}
+	excluded, err := excludedIndustryIDs(in.ExcludeIndustryIDs, in.IndustryID)
+	if err != nil {
+		return nil, nil, err
+	}
 	valuationBand := strings.ToLower(strings.TrimSpace(in.ValuationBand))
 	if valuationBand != "" && valuationBand != "undervalued" && valuationBand != "fair_valued" && valuationBand != "overvalued" && valuationBand != "highly_overvalued" {
 		return nil, nil, fmt.Errorf("參數 valuation_band 必須為 undervalued、fair_valued、overvalued 或 highly_overvalued")
@@ -226,7 +238,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
-	hasFilter := market != "all" || in.IndustryID > 0 || valuationBand != "" ||
+	hasFilter := market != "all" || in.IndustryID > 0 || len(excluded) > 0 || valuationBand != "" ||
 		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
@@ -259,7 +271,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	}
 
 	envelope, err := ts.screener.ScreenStocks(ctx, ScreenOptions{
-		Market: market, IndustryID: in.IndustryID, ValuationBand: valuationBand,
+		Market: market, IndustryID: in.IndustryID, ExcludeIndustryIDs: excluded, ValuationBand: valuationBand,
 		MinRevenueYOYPercent: in.MinRevenueYOYPercent, MinRevenueYOYStreak: in.MinRevenueYOYStreak,
 		MinRevenueYOY3MPercent: in.MinRevenueYOY3MPercent, MinMonthlyRevenue: in.MinMonthlyRevenue, MinEPS: in.MinEPS,
 		MinROEPercent: in.MinROEPercent, MinDividendYieldPercent: in.MinDividendYieldPercent,
@@ -293,6 +305,29 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
 		DataAsOf: envelope.DataAsOf, RSAsOf: envelope.RSAsOf, ChipAsOf: envelope.ChipAsOf, Stocks: envelope.Stocks,
 	}, nil
+}
+
+// maxExcludedIndustries 是排除產業的上限,與 Data API 相同。
+const maxExcludedIndustries = 10
+
+// excludedIndustryIDs 驗證排除的產業代碼並去除重複(保留順序):須為正整數、最多 10 個、不可包含 industry_id。
+func excludedIndustryIDs(ids []int, industryID int) ([]int, error) {
+	var excluded []int
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, fmt.Errorf("參數 exclude_industry_ids 必須是正整數產業代碼")
+		}
+		if id == industryID {
+			return nil, fmt.Errorf("參數 exclude_industry_ids 不可包含 industry_id 指定的產業")
+		}
+		if !slices.Contains(excluded, id) {
+			excluded = append(excluded, id)
+		}
+	}
+	if len(excluded) > maxExcludedIndustries {
+		return nil, fmt.Errorf("參數 exclude_industry_ids 最多 %d 個", maxExcludedIndustries)
+	}
+	return excluded, nil
 }
 
 // revenueRecordText 描述最新月營收是否創歷史新高;nil 回「是否新高無法判斷」。
