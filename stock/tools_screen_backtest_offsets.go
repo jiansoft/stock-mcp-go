@@ -153,6 +153,7 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	fundamentals := opt.Fundamentals
 	filters = append(filters, fundamentalFilterTexts(fundamentals.MinRevenueYoYPercent, &fundamentals.MinRevenueYoYStreak,
 		fundamentals.MinRevenueYoY3mPercent, fundamentals.MinEPS, fundamentals.MinROEPercent)...)
+	filters = append(filters, revenueRecordTexts(fundamentals.RevenueRecord)...)
 	filters = append(filters, marginFilterTexts(fundamentals.MinGrossMarginPercent, fundamentals.MinOperatingMarginPercent,
 		fundamentals.MarginsYoYUp, fundamentals.MaxDebtRatioPercent)...)
 	if signal := backtestSignalText(stringOrNil(opt.Indicator), stringOrNil(opt.Kind)); signal != "" {
