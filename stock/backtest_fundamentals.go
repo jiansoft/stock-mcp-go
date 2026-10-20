@@ -23,6 +23,8 @@ type BacktestFundamentals struct {
 	RevenueRecord             bool
 	MinMonthlyRevenue         *float64
 	PositiveFreeCashFlow      bool
+	MaxPE                     *float64
+	MaxPB                     *float64
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -81,6 +83,15 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Description: "true 時只選換股當天已公布的近四季自由現金流合計為正的股票:最近一季" + statementRule +
 				";連同之前 3 季須四季都有資料",
 		},
+		"max_pe": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(10000.0),
+			Description: "換股當天的官方本益比(證交所/櫃買中心日資料)不超過這個值(倍,選填,0 至 10000)。" +
+				"本益比為 0(近四季虧損或沒有資料)的股票不通過;收盤後公布,與以收盤價買進同一時點;只用於新買進",
+		},
+		"max_pb": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1000.0),
+			Description: "換股當天的官方股價淨值比不超過這個值(倍,選填,0 至 1000);為 0(沒有資料)的股票不通過,其餘同 max_pe",
+		},
 	}
 }
 
@@ -99,6 +110,8 @@ func (f BacktestFundamentals) validate() error {
 		{"min_operating_margin_percent", f.MinOperatingMarginPercent, -10000, 100},
 		{"max_debt_ratio_percent", f.MaxDebtRatioPercent, 0, 1000},
 		{"min_monthly_revenue", f.MinMonthlyRevenue, 0, 1e12},
+		{"max_pe", f.MaxPE, 0, 10000},
+		{"max_pb", f.MaxPB, 0, 1000},
 	} {
 		if v := bound.value; v != nil && (math.IsNaN(*v) || *v < bound.min || *v > bound.max) {
 			return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", bound.name, formatFloat(bound.min), formatFloat(bound.max))
@@ -117,6 +130,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_eps": f.MinEPS, "min_roe_percent": f.MinROEPercent,
 		"min_gross_margin_percent": f.MinGrossMarginPercent, "min_operating_margin_percent": f.MinOperatingMarginPercent,
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
+		"max_pe": f.MaxPE, "max_pb": f.MaxPB,
 	} {
 		if value != nil {
 			values.Set(key, formatFloat(*value))
@@ -144,6 +158,18 @@ func revenueScaleCashTexts(minMonthlyRevenue *float64, positiveFreeCashFlow bool
 	}
 	if positiveFreeCashFlow {
 		filters = append(filters, "已公布的近四季自由現金流為正")
+	}
+	return filters
+}
+
+// valuationCapTexts 描述換股當天本益比與股價淨值比上限;nil 代表不篩選。
+func valuationCapTexts(maxPE, maxPB *float64) []string {
+	var filters []string
+	if maxPE != nil {
+		filters = append(filters, "換股當天本益比 ≤ "+formatFloat(*maxPE)+" 倍(虧損不選)")
+	}
+	if maxPB != nil {
+		filters = append(filters, "換股當天股價淨值比 ≤ "+formatFloat(*maxPB)+" 倍")
 	}
 	return filters
 }

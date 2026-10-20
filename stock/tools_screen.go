@@ -56,9 +56,12 @@ type ScreenStocksInput struct {
 	MinForeignStreak          *int     `json:"min_foreign_streak,omitempty"`
 	MinTrustStreak            *int     `json:"min_trust_streak,omitempty"`
 	MinAvgTradeValue          *int     `json:"min_avg_trade_value,omitempty"`
-	SortBy                    string   `json:"sort_by,omitempty"`
-	SortOrder                 string   `json:"sort_order,omitempty"`
-	Limit                     int      `json:"limit,omitempty"`
+	// MaxPE、MaxPB 是最新一筆日線(10 天內)的官方本益比、股價淨值比上限;虧損或沒有資料的股票不符合。
+	MaxPE     *float64 `json:"max_pe,omitempty"`
+	MaxPB     *float64 `json:"max_pb,omitempty"`
+	SortBy    string   `json:"sort_by,omitempty"`
+	SortOrder string   `json:"sort_order,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -130,9 +133,12 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(100000.0),
 				Description: "近 20 筆日線平均成交金額下限(百萬元,1–100000;例如 50 代表日均成交 5,000 萬元),與 get_screen_backtest 的同名參數一致,用來排除買不到量的股票",
 			},
+			"max_pe": number(0, 10000,
+				"本益比上限(倍):取查詢日之前 10 天內最新一筆日線的官方本益比(證交所/櫃買中心),虧損或沒有資料的股票不符合"),
+			"max_pb": number(0, 1000, "股價淨值比上限(倍),資料規則同 max_pe"),
 			"sort_by": {
 				Type:        "string",
-				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score"},
+				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio"},
 				Default:     []byte(`"stock_symbol"`),
 				Description: "固定白名單排序欄位",
 			},
@@ -212,6 +218,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"min_gross_margin_percent", in.MinGrossMarginPercent, -10000, 100},
 		{"max_debt_ratio_percent", in.MaxDebtRatioPercent, 0, 1000},
 		{"min_operating_margin_percent", in.MinOperatingMarginPercent, -10000, 100},
+		{"max_pe", in.MaxPE, 0, 10000},
+		{"max_pb", in.MaxPB, 0, 1000},
 	} {
 		if err := validateOptionalFloat(check.field, check.value, check.minimum, check.max); err != nil {
 			return nil, nil, err
@@ -242,7 +250,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinRevenueYOYPercent != nil || in.MinRevenueYOYStreak != nil || in.MinRevenueYOY3MPercent != nil || in.MinMonthlyRevenue != nil || in.MinEPS != nil || in.MinROEPercent != nil || in.MinDividendYieldPercent != nil ||
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
-		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil
+		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
+		in.MaxPE != nil || in.MaxPB != nil
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -254,6 +263,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	validSort := map[string]bool{
 		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true, "operating_margin": true, "rs_score": true,
+		"pe_ratio": true, "pb_ratio": true,
 	}
 	if !validSort[sortBy] {
 		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
@@ -279,7 +289,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MinOperatingMarginPercent: in.MinOperatingMarginPercent, MarginsYoYUp: in.MarginsYoYUp, RevenueRecord: in.RevenueRecord,
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
-		MinAvgTradeValue: in.MinAvgTradeValue, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)
@@ -289,7 +299,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	summary := fmt.Sprintf("指定條件下沒有符合的股票。此工具只描述歷史資料符合情形,不替使用者做投資決策。\n免責聲明:%s", AnalysisDisclaimer)
 	if len(envelope.Stocks) > 0 {
 		first := envelope.Stocks[0]
-		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s（%s）、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、營業利益率 %s、淨利率 %s、%s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）、近 20 日平均成交 %s；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
+		summary = fmt.Sprintf("依固定條件篩選出 %d 檔股票；排序首筆為 %s %s（營收年增率 %s、連續年增 %s 個月、近 3 月累計年增 %s、最新月營收 %s（%s）、EPS %s、ROE %s、殖利率 %s、F 分數 %s（%s 年）、毛利率 %s、營業利益率 %s、淨利率 %s、%s、負債比 %s、近四季自由現金流 %s、相對強度 %s（%s）、外資%s、投信%s（%s）、近 20 日平均成交 %s、本益比 %s、股價淨值比 %s（%s）；營收期 %s、財報期 %s、估值日 %s、殖利率日 %s、季報指標期 %s）。各股票指標日期可能不同,結果不構成買賣建議。\n免責聲明:%s",
 			len(envelope.Stocks), first.StockSymbol, first.Name,
 			displayPercent(first.RevenueYOYPercent), displayInt(first.RevenueYOYStreak), displayPercent(first.RevenueYOY3MPercent), thousandsToHundredMillion(first.MonthlyRevenue), revenueRecordText(first.RevenueRecord), displayFloat(first.EarningsPerShare), displayPercent(first.ReturnOnEquity), displayPercent(first.DividendYieldPercent),
 			fScoreText(first.FScore, first.FScoreEvaluated), displayInt(first.FScoreYear),
@@ -297,7 +307,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			marginsYoYText(first.MarginsYoYUp, first.MarginPeriod), displayPercent(first.DebtRatioPercent), hundredMillion(first.FreeCashFlowTTM),
 			displayInt(first.RSScore), displayString(envelope.RSAsOf),
 			streakDisplay(first.ForeignStreak), streakDisplay(first.TrustStreak), displayString(envelope.ChipAsOf),
-			millionText(first.AvgTradeValue20D),
+			millionText(first.AvgTradeValue20D), displayFloat(first.PERatio), displayFloat(first.PBRatio), displayString(first.RatioDate),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
 	}
