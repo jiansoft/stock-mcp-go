@@ -174,3 +174,17 @@ func TestHoldingChipToolIsRegisteredReadOnly(t *testing.T) {
 		t.Fatal("具備 HoldingChipQuerier 時應註冊 get_holding_chip")
 	}
 }
+
+// TestHoldingChipBrokersCappedInSummary 驗證摘要每一側只列前 3 名分點,結構化輸出保留全部。
+func TestHoldingChipBrokersCappedInSummary(t *testing.T) {
+	nets := []HoldingChipBrokerNet{{Name: "甲", Net: 40}, {Name: "乙", Net: 30}, {Name: "丙", Net: 20}, {Name: "丁", Net: 10}}
+	if got, want := brokerNetsText(nets), "甲 40 張、乙 30 張、丙 20 張"; got != want {
+		t.Fatalf("brokerNetsText() = %q,want %q", got, want)
+	}
+	if len(nets) != 4 {
+		t.Fatal("不可改動原本的分點清單")
+	}
+	if got := brokerNetsText(nil); got != "" {
+		t.Fatalf("沒有分點應回空字串:%q", got)
+	}
+}

@@ -28,6 +28,9 @@ type ChipDay struct {
 	MarginChange  *int64 `json:"margin_change"`
 	ShortBalance  *int64 `json:"short_balance"`
 	ShortChange   *int64 `json:"short_change"`
+	// MainNet、MainShare 是當天主力(買賣超前幾名分點)買賣超張數與佔成交量(%);只有持股才有,其餘為 nil。
+	MainNet   *int64   `json:"main_net"`
+	MainShare *float64 `json:"main_share"`
 }
 
 // ChipStreak 是外資、投信從最新一天往回數的連續同向天數:正值連買、負值連賣。
@@ -195,8 +198,34 @@ func chipSummary(e *ChipEnvelope) string {
 	if e.BrokerFlow != nil {
 		fmt.Fprintf(&b, "主力 %s %s 張(佔成交量 %s)。", e.BrokerFlow.Date, signedText(e.BrokerFlow.MainNet), displayPercent(e.BrokerFlow.MainShare))
 	}
+	if text := mainFlowText(e.Daily); text != "" {
+		b.WriteString(text)
+	}
 	fmt.Fprintf(&b, "\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// mainFlowText 彙總每日明細中有主力資料的日子:累計張數與買超、賣超天數;都沒有時回空字串。
+func mainFlowText(daily []ChipDay) string {
+	var total int64
+	var days, buys, sells int
+	for _, d := range daily {
+		if d.MainNet == nil {
+			continue
+		}
+		days++
+		total += *d.MainNet
+		switch {
+		case *d.MainNet > 0:
+			buys++
+		case *d.MainNet < 0:
+			sells++
+		}
+	}
+	if days == 0 {
+		return ""
+	}
+	return fmt.Sprintf("近 %d 個有主力資料的交易日主力累計 %s 張(買超 %d 日、賣超 %d 日)。", days, signedText(total), buys, sells)
 }
 
 // lots 把買賣超股數換成帶正負號的張數文字;無資料回「無資料」。

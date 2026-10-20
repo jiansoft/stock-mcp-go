@@ -147,3 +147,27 @@ func TestChipToolIsRegisteredReadOnly(t *testing.T) {
 		t.Error("tools/list 缺少 get_chip_data")
 	}
 }
+
+// TestChipMainFlowText 驗證每日主力的累計與買賣超天數:沒有主力資料的日子不計,都沒有時不出現這句。
+func TestChipMainFlowText(t *testing.T) {
+	daily := []ChipDay{
+		{Date: "2026-10-20", MainNet: i64(1_351), MainShare: ptr(4.08)},
+		{Date: "2026-10-17", MainNet: i64(-2_000)},
+		{Date: "2026-10-16", MainNet: i64(0)},
+		{Date: "2026-10-15"},
+	}
+	if got, want := mainFlowText(daily), "近 3 個有主力資料的交易日主力累計 -649 張(買超 1 日、賣超 1 日)。"; got != want {
+		t.Fatalf("mainFlowText() = %q,want %q", got, want)
+	}
+	if got := mainFlowText(daily[3:]); got != "" {
+		t.Fatalf("沒有主力資料應回空字串:%q", got)
+	}
+	e := sampleChip()
+	if strings.Contains(chipSummary(e), "主力累計") {
+		t.Fatal("沒有主力資料的股票不應出現主力累計")
+	}
+	e.Daily = daily
+	if summary := chipSummary(e); !strings.Contains(summary, "主力累計 -649 張") {
+		t.Fatalf("摘要缺少主力累計:%s", summary)
+	}
+}

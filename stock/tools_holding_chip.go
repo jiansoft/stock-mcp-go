@@ -223,8 +223,12 @@ func flowDetail(share *float64, streak int) string {
 	return "(" + strings.Join(parts, ",") + ")"
 }
 
-// brokerNetsText 把分點買賣超串成「名稱 張數」清單。
+// holdingChipTopBrokers 是摘要每一側列出的分點數;完整清單在結構化輸出。
+const holdingChipTopBrokers = 3
+
+// brokerNetsText 把前 holdingChipTopBrokers 名分點買賣超串成「名稱 張數」清單。
 func brokerNetsText(nets []HoldingChipBrokerNet) string {
+	nets = nets[:min(len(nets), holdingChipTopBrokers)]
 	parts := make([]string, 0, len(nets))
 	for _, net := range nets {
 		parts = append(parts, fmt.Sprintf("%s %d 張", net.Name, net.Net))
