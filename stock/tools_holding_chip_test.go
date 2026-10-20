@@ -32,7 +32,7 @@ func (f *fakeHoldingChipQuerier) HoldingChip(_ context.Context, date string) (*H
 // sampleHoldingChip 產生一檔達標(外資大量、連買、主力)與一檔未達標的持股。
 func sampleHoldingChip() *HoldingChipEnvelope {
 	return &HoldingChipEnvelope{
-		Date: ptr("2026-10-20"), PreviousDate: ptr("2026-10-17"), Notable: 1,
+		Date: ptr("2026-10-20"), PreviousDate: ptr("2026-10-17"), Notable: 1, BrokerRecentDays: 5,
 		Items: []HoldingChipItem{
 			{
 				StockSymbol: "1101", Name: "台泥", ClosingPrice: ptr(25.5), Volume: i64(8_000),
@@ -48,7 +48,8 @@ func sampleHoldingChip() *HoldingChipEnvelope {
 					Buyers:  []HoldingChipBrokerNet{{Name: "摩根大通", Buy: 6_000, Sell: 100, Net: 5_900, Share: 19.67}},
 					Sellers: []HoldingChipBrokerNet{{Name: "凱基台北", Buy: 10, Sell: 410, Net: 400, Share: 1.33}},
 				},
-				Reasons: []string{"foreign_heavy", "foreign_streak", "broker", "future_code"},
+				BrokerRecent: &HoldingChipBrokerRecent{MainNet: 15_000, BuyDays: 4, SellDays: 1},
+				Reasons:      []string{"foreign_heavy", "foreign_streak", "broker", "future_code"},
 			},
 		},
 	}
@@ -116,7 +117,7 @@ func TestHoldingChipTool(t *testing.T) {
 		"持股籌碼日報 2026-10-20(前一交易日 2026-10-17、後一交易日 無):共 2 檔持股(普通股,不含 ETF),1 檔達通知門檻。",
 		"2330 台積電(收盤 1450,成交 30000 張)〔外資大量、外資連續、主力、future_code〕:" +
 			"外資 +12000 張(佔量 40%,連買 6 日)、投信 -300 張(佔量 -1%,連賣 2 日)、自營 -50 張;" +
-			"融資餘額 20000(-600 張)、融券餘額 500(+10 張);主力 +9000 張(佔量 30%),買超分點 摩根大通 5900 張,賣超分點 凱基台北 400 張。",
+			"融資餘額 20000(-600 張)、融券餘額 500(+10 張);主力 +9000 張(佔量 30%),買超分點 摩根大通 5900 張,賣超分點 凱基台北 400 張;近 5 日主力 +15000 張(買超 4 日、賣超 1 日)。",
 		"未達門檻(張):1101 台泥 外資 -120 張/投信 0 張。",
 	} {
 		if !strings.Contains(text, want) {
@@ -136,7 +137,7 @@ func TestHoldingChipTool(t *testing.T) {
 		t.Errorf("沒有資料的摘要錯誤:%s", summary)
 	}
 	quiet := HoldingChipItem{StockSymbol: "2603", Name: "長榮", Reasons: []string{"margin"}}
-	if text := holdingChipItemText(quiet); !strings.Contains(text, "外資 無、投信 無、自營 無資料 張") || strings.Contains(text, "主力") {
+	if text := holdingChipItemText(quiet, 5); !strings.Contains(text, "外資 無、投信 無、自營 無資料 張") || strings.Contains(text, "主力") {
 		t.Errorf("缺資料的持股文字錯誤:%s", text)
 	}
 	if date := holdingChipSchema().Properties["date"]; date == nil || date.Default != nil {
