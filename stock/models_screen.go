@@ -81,6 +81,7 @@ type Screening struct {
 type ScreenOptions struct {
 	Market                    string
 	IndustryID                int
+	ExcludeIndustryIDs        []int
 	ValuationBand             string
 	MinRevenueYOYPercent      *float64
 	MinRevenueYOYStreak       *int

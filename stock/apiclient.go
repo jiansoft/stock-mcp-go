@@ -260,6 +260,13 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.IndustryID != 0 {
 		values.Set("industry_id", fmt.Sprint(opt.IndustryID))
 	}
+	if len(opt.ExcludeIndustryIDs) > 0 {
+		ids := make([]string, len(opt.ExcludeIndustryIDs))
+		for i, id := range opt.ExcludeIndustryIDs {
+			ids[i] = fmt.Sprint(id)
+		}
+		values.Set("exclude_industry_ids", strings.Join(ids, ","))
+	}
 	if opt.ValuationBand != "" {
 		values.Set("valuation_band", opt.ValuationBand)
 	}
