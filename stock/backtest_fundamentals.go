@@ -9,7 +9,7 @@ import (
 
 // 回測的基本面條件:月營收與季報,只用換股當天已公布的資料(Data API 依法定公布期限判斷)。
 
-// BacktestFundamentals 是回測的基本面門檻;nil、0(連續月數)與 false(三率三升、營收新高)代表不篩選。
+// BacktestFundamentals 是回測的基本面門檻;nil、0(連續月數)與 false(三率三升、營收新高、自由現金流)代表不篩選。
 type BacktestFundamentals struct {
 	MinRevenueYoYPercent      *float64
 	MinRevenueYoYStreak       int
@@ -21,6 +21,8 @@ type BacktestFundamentals struct {
 	MarginsYoYUp              bool
 	MaxDebtRatioPercent       *float64
 	RevenueRecord             bool
+	MinMonthlyRevenue         *float64
+	PositiveFreeCashFlow      bool
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -69,6 +71,16 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type:        "boolean",
 			Description: "true 時只選換股當天已公布的最新月營收創歷史新高(高於之前所有月份,之前至少 12 個月)的股票。" + revenueRule,
 		},
+		"min_monthly_revenue": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1e12),
+			Description: "換股當天已公布的最近一個月營收至少這麼多(新台幣千元,選填,0 至 1000000000000;例如 100000 為 1 億元)。" +
+				"用來排除營收規模太小、年增率或營業利益率因低基期失真的股票(依 rank_by=revenue_yoy、operating_margin 排序時特別有用)。" + revenueRule,
+		},
+		"positive_free_cash_flow": {
+			Type: "boolean",
+			Description: "true 時只選換股當天已公布的近四季自由現金流合計為正的股票:最近一季" + statementRule +
+				";連同之前 3 季須四季都有資料",
+		},
 	}
 }
 
@@ -86,6 +98,7 @@ func (f BacktestFundamentals) validate() error {
 		{"min_gross_margin_percent", f.MinGrossMarginPercent, -10000, 100},
 		{"min_operating_margin_percent", f.MinOperatingMarginPercent, -10000, 100},
 		{"max_debt_ratio_percent", f.MaxDebtRatioPercent, 0, 1000},
+		{"min_monthly_revenue", f.MinMonthlyRevenue, 0, 1e12},
 	} {
 		if v := bound.value; v != nil && (math.IsNaN(*v) || *v < bound.min || *v > bound.max) {
 			return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", bound.name, formatFloat(bound.min), formatFloat(bound.max))
@@ -103,7 +116,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_revenue_yoy_percent": f.MinRevenueYoYPercent, "min_revenue_yoy_3m_percent": f.MinRevenueYoY3mPercent,
 		"min_eps": f.MinEPS, "min_roe_percent": f.MinROEPercent,
 		"min_gross_margin_percent": f.MinGrossMarginPercent, "min_operating_margin_percent": f.MinOperatingMarginPercent,
-		"max_debt_ratio_percent": f.MaxDebtRatioPercent,
+		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
 	} {
 		if value != nil {
 			values.Set(key, formatFloat(*value))
@@ -118,6 +131,21 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	if f.RevenueRecord {
 		values.Set("revenue_record", "true")
 	}
+	if f.PositiveFreeCashFlow {
+		values.Set("positive_free_cash_flow", "true")
+	}
+}
+
+// revenueScaleCashTexts 描述月營收下限與近四季自由現金流條件;nil 與 false 代表不篩選。
+func revenueScaleCashTexts(minMonthlyRevenue *float64, positiveFreeCashFlow bool) []string {
+	var filters []string
+	if minMonthlyRevenue != nil {
+		filters = append(filters, "已公布的最新月營收 ≥ "+thousandsToHundredMillion(minMonthlyRevenue))
+	}
+	if positiveFreeCashFlow {
+		filters = append(filters, "已公布的近四季自由現金流為正")
+	}
+	return filters
 }
 
 // revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。
