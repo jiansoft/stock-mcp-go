@@ -192,6 +192,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	if opt.MarketBreadth > 0 {
 		rules = append(rules, fmt.Sprintf("市場廣度濾網 %d%%", opt.MarketBreadth))
 	}
+	if opt.MarketMaxPE != nil {
+		rules = append(rules, "大盤估值濾網 本益比 ≤ "+formatFloat(*opt.MarketMaxPE)+" 倍")
+	}
 	if opt.HoldMinRSScore > 0 {
 		rules = append(rules, fmt.Sprintf("續抱 RS ≥ %d", opt.HoldMinRSScore))
 	}

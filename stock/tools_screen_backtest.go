@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -145,31 +146,33 @@ type BacktestCurrent struct {
 // ScreenBacktestEnvelope 是 screen/backtest endpoint 的完整回應。
 type ScreenBacktestEnvelope struct {
 	// Preset 是引用的具名策略;沒有用 preset 為 nil。
-	Preset           *string `json:"preset"`
-	From             string  `json:"from"`
-	To               string  `json:"to"`
-	Market           string  `json:"market"`
-	HoldDays         int     `json:"hold_days"`
-	Limit            int     `json:"limit"`
-	KeepRank         *int    `json:"keep_rank"`
-	MarketFilterMA   *int    `json:"market_filter_ma"`
-	MarketBreadth    *int    `json:"market_filter_breadth"`
-	HoldMinRSScore   *int    `json:"hold_min_rs_score"`
-	MaxPerIndustry   *int    `json:"max_per_industry"`
-	RebalanceOffset  *int    `json:"rebalance_offset"`
-	MinAvgTradeValue *int    `json:"min_avg_trade_value"`
-	RankBy           *string `json:"rank_by"`
-	EtfWeight        *int    `json:"etf_weight"`
-	Weighting        *string `json:"weighting"`
-	MaxWeight        *int    `json:"max_weight"`
-	StopLoss         *int    `json:"stop_loss"`
-	TrailingStop     *int    `json:"trailing_stop"`
-	Industry         *string `json:"industry"`
-	ExcludeIndustry  *string `json:"exclude_industry"`
-	MinRSScore       *int    `json:"min_rs_score"`
-	MaxRSScore       *int    `json:"max_rs_score"`
-	MinForeignStreak *int    `json:"min_foreign_streak"`
-	MinTrustStreak   *int    `json:"min_trust_streak"`
+	Preset         *string `json:"preset"`
+	From           string  `json:"from"`
+	To             string  `json:"to"`
+	Market         string  `json:"market"`
+	HoldDays       int     `json:"hold_days"`
+	Limit          int     `json:"limit"`
+	KeepRank       *int    `json:"keep_rank"`
+	MarketFilterMA *int    `json:"market_filter_ma"`
+	MarketBreadth  *int    `json:"market_filter_breadth"`
+	// MarketMaxPE 是大盤估值濾網(換股日市場本益比中位數上限,倍);未設定為 nil。
+	MarketMaxPE      *float64 `json:"market_filter_max_pe"`
+	HoldMinRSScore   *int     `json:"hold_min_rs_score"`
+	MaxPerIndustry   *int     `json:"max_per_industry"`
+	RebalanceOffset  *int     `json:"rebalance_offset"`
+	MinAvgTradeValue *int     `json:"min_avg_trade_value"`
+	RankBy           *string  `json:"rank_by"`
+	EtfWeight        *int     `json:"etf_weight"`
+	Weighting        *string  `json:"weighting"`
+	MaxWeight        *int     `json:"max_weight"`
+	StopLoss         *int     `json:"stop_loss"`
+	TrailingStop     *int     `json:"trailing_stop"`
+	Industry         *string  `json:"industry"`
+	ExcludeIndustry  *string  `json:"exclude_industry"`
+	MinRSScore       *int     `json:"min_rs_score"`
+	MaxRSScore       *int     `json:"max_rs_score"`
+	MinForeignStreak *int     `json:"min_foreign_streak"`
+	MinTrustStreak   *int     `json:"min_trust_streak"`
 	// MinRevenueYoYPercent 等是基本面門檻(只用換股當天已公布的資料);未篩選為 nil。
 	MinRevenueYoYPercent   *float64 `json:"min_revenue_yoy_percent"`
 	MinRevenueYoYStreak    *int     `json:"min_revenue_yoy_streak"`
@@ -209,6 +212,7 @@ type ScreenBacktestOptions struct {
 	KeepRank         int
 	MarketFilterMA   int
 	MarketBreadth    int
+	MarketMaxPE      *float64
 	HoldMinRSScore   int
 	MaxPerIndustry   int
 	RebalanceOffset  int
@@ -293,40 +297,45 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	if opt.FeeDiscount != nil {
 		values.Set("fee_discount", strconv.FormatFloat(*opt.FeeDiscount, 'f', -1, 64))
 	}
+	if opt.MarketMaxPE != nil {
+		values.Set("market_filter_max_pe", formatFloat(*opt.MarketMaxPE))
+	}
 	opt.Fundamentals.set(values)
 	return values
 }
 
 // ScreenBacktestInput 是 get_screen_backtest 的輸入。
 type ScreenBacktestInput struct {
-	Preset           string `json:"preset,omitempty"`
-	From             string `json:"from,omitempty"`
-	To               string `json:"to,omitempty"`
-	HoldDays         int    `json:"hold_days,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
-	KeepRank         int    `json:"keep_rank,omitempty"`
-	MarketFilterMA   int    `json:"market_filter_ma,omitempty"`
-	MarketBreadth    int    `json:"market_filter_breadth,omitempty"`
-	HoldMinRSScore   int    `json:"hold_min_rs_score,omitempty"`
-	MaxPerIndustry   int    `json:"max_per_industry,omitempty"`
-	RebalanceOffset  int    `json:"rebalance_offset,omitempty"`
-	MinAvgTradeValue int    `json:"min_avg_trade_value,omitempty"`
-	RankBy           string `json:"rank_by,omitempty"`
-	EtfWeight        int    `json:"etf_weight,omitempty"`
-	Weighting        string `json:"weighting,omitempty"`
-	MaxWeight        int    `json:"max_weight,omitempty"`
-	StopLoss         int    `json:"stop_loss,omitempty"`
-	TrailingStop     int    `json:"trailing_stop,omitempty"`
-	Market           string `json:"market,omitempty"`
-	Industry         string `json:"industry,omitempty"`
-	ExcludeIndustry  string `json:"exclude_industry,omitempty"`
-	Split            string `json:"split,omitempty"`
-	MinRSScore       int    `json:"min_rs_score,omitempty"`
-	MaxRSScore       int    `json:"max_rs_score,omitempty"`
-	MinForeignStreak int    `json:"min_foreign_streak,omitempty"`
-	MinTrustStreak   int    `json:"min_trust_streak,omitempty"`
-	Indicator        string `json:"indicator,omitempty"`
-	Kind             string `json:"kind,omitempty"`
+	Preset         string `json:"preset,omitempty"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
+	HoldDays       int    `json:"hold_days,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	KeepRank       int    `json:"keep_rank,omitempty"`
+	MarketFilterMA int    `json:"market_filter_ma,omitempty"`
+	MarketBreadth  int    `json:"market_filter_breadth,omitempty"`
+	// MarketMaxPE 是大盤估值濾網:換股日市場本益比中位數高於這個倍數就空手。
+	MarketMaxPE      *float64 `json:"market_filter_max_pe,omitempty"`
+	HoldMinRSScore   int      `json:"hold_min_rs_score,omitempty"`
+	MaxPerIndustry   int      `json:"max_per_industry,omitempty"`
+	RebalanceOffset  int      `json:"rebalance_offset,omitempty"`
+	MinAvgTradeValue int      `json:"min_avg_trade_value,omitempty"`
+	RankBy           string   `json:"rank_by,omitempty"`
+	EtfWeight        int      `json:"etf_weight,omitempty"`
+	Weighting        string   `json:"weighting,omitempty"`
+	MaxWeight        int      `json:"max_weight,omitempty"`
+	StopLoss         int      `json:"stop_loss,omitempty"`
+	TrailingStop     int      `json:"trailing_stop,omitempty"`
+	Market           string   `json:"market,omitempty"`
+	Industry         string   `json:"industry,omitempty"`
+	ExcludeIndustry  string   `json:"exclude_industry,omitempty"`
+	Split            string   `json:"split,omitempty"`
+	MinRSScore       int      `json:"min_rs_score,omitempty"`
+	MaxRSScore       int      `json:"max_rs_score,omitempty"`
+	MinForeignStreak int      `json:"min_foreign_streak,omitempty"`
+	MinTrustStreak   int      `json:"min_trust_streak,omitempty"`
+	Indicator        string   `json:"indicator,omitempty"`
+	Kind             string   `json:"kind,omitempty"`
 	// FeeDiscount 用指標區分「沒給」與 0(免手續費)。
 	FeeDiscount *float64 `json:"fee_discount,omitempty"`
 	// 基本面門檻用指標區分「沒給」與 0(例如營收年增 ≥ 0%)。
@@ -470,6 +479,12 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Maximum:     ptr(99.0),
 				Description: "市場廣度濾網(選填,1 至 99):換股日同市場站上 60 日均線的股票比例低於此百分比時這期空手、賣光上一期持股;可與 market_filter_ma 併用(兩者都通過才持股)。統計從 2019 年起",
 			},
+			"market_filter_max_pe": {
+				Type:        "number",
+				Minimum:     ptr(5.0),
+				Maximum:     ptr(100.0),
+				Description: "大盤估值濾網(選填,5 至 100 倍):換股日同市場官方本益比中位數(get_market_valuation 的每日值)高於此值時這期空手、賣光上一期持股;可與 market_filter_ma、market_filter_breadth 併用(都通過才持股)。資料從 2012 年起,當天沒有估值資料視為通過",
+			},
 			"market_filter_ma": {
 				Type:        "integer",
 				Enum:        []any{20, 60, 120, 240},
@@ -587,6 +602,9 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.MarketBreadth != 0 && (in.MarketBreadth < 1 || in.MarketBreadth > 99) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 market_filter_breadth 必須介於 1 到 99 之間")
 	}
+	if v := in.MarketMaxPE; v != nil && (math.IsNaN(*v) || *v < 5 || *v > 100) {
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 market_filter_max_pe 必須介於 5 到 100 之間")
+	}
 	if in.MinAvgTradeValue != 0 && (in.MinAvgTradeValue < 1 || in.MinAvgTradeValue > maxAvgTradeValueMillion) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
@@ -667,7 +685,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	return ScreenBacktestOptions{
 		Fundamentals: fundamentals,
 		Preset:       preset, StopLoss: in.StopLoss, TrailingStop: in.TrailingStop,
-		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry, ExcludeIndustry: exclude, Split: split,
+		From: from, To: to, HoldDays: holdDays, Limit: limit, KeepRank: in.KeepRank, MarketFilterMA: in.MarketFilterMA, HoldMinRSScore: in.HoldMinRSScore, MaxPerIndustry: in.MaxPerIndustry, MarketBreadth: in.MarketBreadth, MarketMaxPE: in.MarketMaxPE, RebalanceOffset: in.RebalanceOffset, MinAvgTradeValue: in.MinAvgTradeValue, Market: market, Industry: industry, ExcludeIndustry: exclude, Split: split,
 		RankBy: in.RankBy, EtfWeight: in.EtfWeight, Weighting: in.Weighting, MaxWeight: in.MaxWeight,
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
@@ -864,6 +882,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.MarketBreadth != nil {
 		b.printf(";市場廣度濾網:換股日站上 60 日均線的股票比例低於 %d%% 就空手", *e.MarketBreadth)
 	}
+	if e.MarketMaxPE != nil {
+		b.printf(";大盤估值濾網:換股日市場本益比中位數高於 %s 倍就空手", formatFloat(*e.MarketMaxPE))
+	}
 	if e.HoldMinRSScore != nil {
 		b.printf(";續抱條件:上一期持股 RS ≥ %d 就續抱", *e.HoldMinRSScore)
 	}
@@ -900,7 +921,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 			displayPercent(s.MaxDrawdown), displayPercent(s.BenchmarkMaxDrawdown),
 			displayPercent(s.AvgPeriodReturn), displayPercent(s.AvgBenchmarkReturn),
 			displayRate(s.WinRate), displayRate(s.BeatMarketRate))
-		if e.MarketFilterMA != nil || e.MarketBreadth != nil {
+		if e.MarketFilterMA != nil || e.MarketBreadth != nil || e.MarketMaxPE != nil {
 			if e.EtfWeight != nil && *e.EtfWeight > 0 {
 				b.printf("因大盤濾網策略部位空手 %d 期(0050 核心部位照常持有)。", s.MarketFilteredPeriods)
 			} else {
