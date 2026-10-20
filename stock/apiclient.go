@@ -324,6 +324,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinAvgTradeValue != nil {
 		values.Set("min_avg_trade_value", fmt.Sprint(*opt.MinAvgTradeValue))
 	}
+	if opt.MaxPE != nil {
+		values.Set("max_pe", formatFloat(*opt.MaxPE))
+	}
+	if opt.MaxPB != nil {
+		values.Set("max_pb", formatFloat(*opt.MaxPB))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {

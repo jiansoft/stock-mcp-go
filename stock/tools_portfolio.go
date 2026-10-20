@@ -64,7 +64,9 @@ type PortfolioHolding struct {
 	NetMarginPercent       *float64 `json:"net_margin_percent"`
 	// MarginsTrend 是三率與去年同季相比:all_up、all_down 或 mixed;去年同季查不到時為 nil。
 	MarginsTrend *string `json:"margins_trend"`
-	// Warnings 是基本面警示:revenue_decline、margins_all_down、operating_loss。
+	// FreeCashFlowTTM 是截至最近一季的近四季自由現金流合計(千元);四季不齊、落後超過 2 季或金融保險業時為 nil。
+	FreeCashFlowTTM *int64 `json:"free_cash_flow_ttm"`
+	// Warnings 是基本面警示:revenue_decline、margins_all_down、operating_loss、negative_free_cash_flow。
 	Warnings []string `json:"warnings"`
 }
 
@@ -219,9 +221,10 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 
 // warningLabels 是基本面警示的中文名稱。
 var warningLabels = map[string]string{
-	"revenue_decline":  "營收連續年減",
-	"margins_all_down": "三率三降",
-	"operating_loss":   "營業虧損",
+	"revenue_decline":         "營收連續年減",
+	"margins_all_down":        "三率三降",
+	"operating_loss":          "營業虧損",
+	"negative_free_cash_flow": "自由現金流為負",
 }
 
 // marginTrendLabels 是三率方向的中文名稱。
@@ -267,6 +270,9 @@ func fundamentalsText(h PortfolioHolding) string {
 			text += "(" + marginTrendLabels[*h.MarginsTrend] + ")"
 		}
 		parts = append(parts, text)
+	}
+	if h.FreeCashFlowTTM != nil {
+		parts = append(parts, "近四季自由現金流 "+hundredMillion(h.FreeCashFlowTTM))
 	}
 	if len(parts) == 0 {
 		return "查無營收與財報"

@@ -59,6 +59,11 @@ type ScreenedStock struct {
 	TrustStreak   *int `json:"trust_streak"`
 	// AvgTradeValue20D 是查詢日之前 45 天內最近 20 筆日線的平均成交金額(百萬元);沒有日線時為 nil。
 	AvgTradeValue20D *float64 `json:"avg_trade_value_20d"`
+	// PERatio、PBRatio 是查詢日之前 10 天內最新一筆日線的官方本益比、股價淨值比(虧損或沒有資料時為 nil);
+	// RatioDate 是那筆日線的日期。
+	PERatio   *float64 `json:"pe_ratio"`
+	PBRatio   *float64 `json:"pb_ratio"`
+	RatioDate *string  `json:"ratio_date"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -101,6 +106,8 @@ type ScreenOptions struct {
 	MinForeignStreak          *int
 	MinTrustStreak            *int
 	MinAvgTradeValue          *int
+	MaxPE                     *float64
+	MaxPB                     *float64
 	SortBy                    string
 	SortOrder                 string
 	Limit                     int
