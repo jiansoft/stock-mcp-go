@@ -235,7 +235,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "get_chip_data",
 			Description: "查詢指定股票的籌碼面:近 N 個交易日三大法人買賣超(股)與融資融券餘額(張)、外資與投信連續買賣超天數、" +
-				"最近 8 週千張大戶持股比例、最新月份董監持股與設質比例,以及最近一天券商分點主力進出(只有部分股票有)。" +
+				"最近 8 週千張大戶持股比例、最新月份董監持股與設質比例,以及券商分點主力進出(每日主力買賣超與最近一天的分點;只有持股才有)。" +
 				"資料為盤後彙整,非即時。",
 			InputSchema: chipSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
