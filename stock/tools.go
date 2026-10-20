@@ -564,6 +564,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, rts.marketRegime)
 	}
 
+	if vq, ok := q.(MarketValuationQuerier); ok {
+		vts := &marketValuationToolset{vq: vq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_market_valuation",
+			Description: "查詢台股整體估值水位:上市櫃股票官方本益比與股價淨值比的每日中位數(只計大於 0,不含虧損股與 ETF)," +
+				"回看 1–10 年(預設 5 年)的分布(最低、四分位、中位數、最高)、最新一天落在第幾百分位,以及每月月底的走勢;可只看上市或上櫃、可指定歷史日期。" +
+				"適合回答「現在台股貴不貴」「本益比在近五年的什麼位置」「淨值比比去年高還是低」;搭配 get_market_regime 看趨勢、get_screen_backtest 的 max_pe 看估值條件的歷史效果。",
+			InputSchema: marketValuationSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, vts.marketValuation)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

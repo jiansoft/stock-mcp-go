@@ -64,6 +64,9 @@ type PortfolioHolding struct {
 	NetMarginPercent       *float64 `json:"net_margin_percent"`
 	// MarginsTrend 是三率與去年同季相比:all_up、all_down 或 mixed;去年同季查不到時為 nil。
 	MarginsTrend *string `json:"margins_trend"`
+	// PERatio、PBRatio 是最新一筆日線的官方本益比、股價淨值比;虧損或沒有資料時為 nil。
+	PERatio *float64 `json:"pe_ratio"`
+	PBRatio *float64 `json:"pb_ratio"`
 	// FreeCashFlowTTM 是截至最近一季的近四季自由現金流合計(千元);四季不齊、落後超過 2 季或金融保險業時為 nil。
 	FreeCashFlowTTM *int64 `json:"free_cash_flow_ttm"`
 	// Warnings 是基本面警示:revenue_decline、margins_all_down、operating_loss、negative_free_cash_flow。
@@ -72,21 +75,24 @@ type PortfolioHolding struct {
 
 // PortfolioSummary 是 portfolio/summary endpoint 的完整回應。
 type PortfolioSummary struct {
-	MemberID              int64               `json:"member_id"`
-	DataAsOf              *string             `json:"data_as_of"`
-	RSAsOf                *string             `json:"rs_as_of"`
-	ChipAsOf              *string             `json:"chip_as_of"`
-	WarningSymbols        int                 `json:"warning_symbols"`
-	Symbols               int                 `json:"symbols"`
-	MarketValue           float64             `json:"market_value"`
-	Cost                  float64             `json:"cost"`
-	UnrealizedGain        float64             `json:"unrealized_gain"`
-	UnrealizedGainPercent *float64            `json:"unrealized_gain_percent"`
-	DividendsReceived     float64             `json:"dividends_received"`
-	WeightedDividendYield *WeightedMetric     `json:"weighted_dividend_yield"`
-	WeightedFScore        *WeightedMetric     `json:"weighted_f_score"`
-	Industries            []PortfolioIndustry `json:"industries"`
-	Holdings              []PortfolioHolding  `json:"holdings"`
+	MemberID              int64           `json:"member_id"`
+	DataAsOf              *string         `json:"data_as_of"`
+	RSAsOf                *string         `json:"rs_as_of"`
+	ChipAsOf              *string         `json:"chip_as_of"`
+	WarningSymbols        int             `json:"warning_symbols"`
+	Symbols               int             `json:"symbols"`
+	MarketValue           float64         `json:"market_value"`
+	Cost                  float64         `json:"cost"`
+	UnrealizedGain        float64         `json:"unrealized_gain"`
+	UnrealizedGainPercent *float64        `json:"unrealized_gain_percent"`
+	DividendsReceived     float64         `json:"dividends_received"`
+	WeightedDividendYield *WeightedMetric `json:"weighted_dividend_yield"`
+	WeightedFScore        *WeightedMetric `json:"weighted_f_score"`
+	// WeightedPE、WeightedPB 是市值加權的調和平均(總市值 ÷ 依持股比例分得的盈餘或淨值),虧損部位不列入。
+	WeightedPE *WeightedMetric     `json:"weighted_pe"`
+	WeightedPB *WeightedMetric     `json:"weighted_pb"`
+	Industries []PortfolioIndustry `json:"industries"`
+	Holdings   []PortfolioHolding  `json:"holdings"`
 }
 
 // PortfolioQuerier 是 get_portfolio_summary 對資料來源的需求介面;只有 *APIClient 實作。
@@ -181,6 +187,8 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 		scope, p.Symbols, displayString(p.DataAsOf), formatFloat(p.MarketValue), formatFloat(p.Cost),
 		formatFloat(p.UnrealizedGain), displayPercent(p.UnrealizedGainPercent), formatFloat(p.DividendsReceived))
 	b.printf("\n市值加權殖利率 %s;市值加權 F 分數 %s。", weightedText(p.WeightedDividendYield, "%"), weightedText(p.WeightedFScore, ""))
+	b.printf("\n組合本益比 %s;組合股價淨值比 %s(市值加權的調和平均,虧損部位不列入)。",
+		weightedText(p.WeightedPE, " 倍"), weightedText(p.WeightedPB, " 倍"))
 
 	if len(p.Industries) > 0 {
 		b.printf("\n產業分布:")
@@ -207,9 +215,9 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 			b.printf("\n…其餘 %d 檔見結構化資料。", len(p.Holdings)-maxHoldingsInSummary)
 			break
 		}
-		b.printf("\n- %s %s:%d 股,權重 %s,未實現 %s,殖利率 %s,F 分數 %s,RS %s,外資%s,投信%s",
+		b.printf("\n- %s %s:%d 股,權重 %s,未實現 %s,殖利率 %s,本益比 %s,F 分數 %s,RS %s,外資%s,投信%s",
 			holding.StockSymbol, holding.Name, holding.Shares, displayPercent(holding.WeightPercent),
-			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayInt(holding.FScore),
+			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayFloat(holding.PERatio), displayInt(holding.FScore),
 			displayInt(holding.RSScore), streakDisplay(holding.ForeignStreak), streakDisplay(holding.TrustStreak))
 	}
 	writeWarningHoldings(&b, p)

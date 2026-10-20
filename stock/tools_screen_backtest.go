@@ -398,9 +398,9 @@ func screenBacktestSchema() *jsonschema.Schema {
 			},
 			"rank_by": {
 				Type:        "string",
-				Enum:        []any{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin"},
+				Enum:        []any{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio"},
 				Default:     []byte(`"rs_score"`),
-				Description: "符合條件者依什麼排序取前 limit 檔(選填,預設 rs_score):rs_score 相對強度分數;trade_value 近 20 個交易日平均成交金額(偏向大型股);foreign_streak／trust_streak 外資／投信連續買超天數;revenue_yoy 換股日已公布的最新月營收年增率;operating_margin 換股日已公布的最近一季營業利益率。同值或查不到時再依 RS 排序(查不到的排最後),keep_rank 的名次也依此排序",
+				Description: "符合條件者依什麼排序取前 limit 檔(選填,預設 rs_score):rs_score 相對強度分數;trade_value 近 20 個交易日平均成交金額(偏向大型股);foreign_streak／trust_streak 外資／投信連續買超天數;revenue_yoy 換股日已公布的最新月營收年增率;operating_margin 換股日已公布的最近一季營業利益率;pe_ratio／pb_ratio 換股當天官方本益比／股價淨值比由低到高(虧損或沒有資料的排最後)。同值或查不到時再依 RS 排序(查不到的排最後),keep_rank 的名次也依此排序",
 			},
 			"etf_weight": {
 				Type:        "integer",
@@ -591,7 +591,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
 	if in.RankBy != "" && !slices.Contains(backtestRankBy, in.RankBy) {
-		return ScreenBacktestOptions{}, fmt.Errorf("參數 rank_by 必須為 rs_score、trade_value、foreign_streak、trust_streak、revenue_yoy 或 operating_margin")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 rank_by 必須為 rs_score、trade_value、foreign_streak、trust_streak、revenue_yoy、operating_margin、pe_ratio 或 pb_ratio")
 	}
 	if in.EtfWeight < 0 || in.EtfWeight > 100 {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 etf_weight 必須介於 0 到 100 之間")
@@ -746,7 +746,7 @@ func backtestSignalText(indicator, kind *string) string {
 }
 
 // backtestRankBy 是候選股可用的排序方式,與 Data API 相同。
-var backtestRankBy = []string{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin"}
+var backtestRankBy = []string{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio"}
 
 // rankByText 把排序方式轉成中文;空字串(未指定)與 rs_score 為相對強度分數。
 func rankByText(rankBy string) string {
@@ -761,8 +761,25 @@ func rankByText(rankBy string) string {
 		return "最新月營收年增率"
 	case "operating_margin":
 		return "最近一季營業利益率"
+	case "pe_ratio":
+		return "換股當天本益比"
+	case "pb_ratio":
+		return "換股當天股價淨值比"
 	}
 	return "相對強度分數"
+}
+
+// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比);其餘由高到低。
+func rankAscending(rankBy string) bool {
+	return rankBy == "pe_ratio" || rankBy == "pb_ratio"
+}
+
+// rankOrderText 是排序方向的中文:由低到高或由高到低。
+func rankOrderText(rankBy string) string {
+	if rankAscending(rankBy) {
+		return "由低到高"
+	}
+	return "由高到低"
 }
 
 // backtestWeighting 是策略部位可用的持股加權方式,與 Data API 相同。
@@ -807,8 +824,8 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.Preset != nil {
 		b.printf("具名策略「%s」:", *e.Preset)
 	}
-	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s由高到低取前 %d 檔%s(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
-		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), e.Limit, weightingText(weighting), returnBasisText(e.Adjusted))
+	b.printf("%s 市場 %s～%s 條件選股回測:每 %d 個交易日換股,依%s%s取前 %d 檔%s(%s;母體為上市櫃普通股,基準為同日同市場全部母體的平均)",
+		e.Market, e.From, e.To, e.HoldDays, rankByText(rankBy), rankOrderText(rankBy), e.Limit, weightingText(weighting), returnBasisText(e.Adjusted))
 	var filters []string
 	if e.Industry != nil {
 		filters = append(filters, "產業「"+*e.Industry+"」")
