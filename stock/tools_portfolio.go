@@ -2,13 +2,15 @@
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/portfolio/summary:目前持有(未賣出)的部位
 // 依代號合併,回傳市值、權重、未實現損益、已領股利、產業分布,以及市值加權殖利率與
-// F 分數。member_id=0 為全部會員合計。金額單位為新台幣元。這是個人持股資料。
+// F 分數;每檔另附最新月營收、最近一季三率與基本面警示。member_id=0 為全部會員合計。
+// 金額單位為新台幣元。這是個人持股資料。
 package stock
 
 import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -50,6 +52,20 @@ type PortfolioHolding struct {
 	// ForeignStreak、TrustStreak 是外資、投信連續買賣超天數(正連買、負連賣),資料日見 ChipAsOf。
 	ForeignStreak *int `json:"foreign_streak"`
 	TrustStreak   *int `json:"trust_streak"`
+	// RevenueMonth(YYYY-MM)、RevenueYoYPercent、RevenueDeclineMonths 是最新月營收、年增率與從最新一個月起
+	// 連續年減的月數;超過 2 個月沒更新時為 nil。
+	RevenueMonth         *string  `json:"revenue_month"`
+	RevenueYoYPercent    *float64 `json:"revenue_yoy_percent"`
+	RevenueDeclineMonths *int     `json:"revenue_decline_months"`
+	// MarginPeriod(如 2026-Q2)與三率是最近一季 Yahoo 單季財報;落後超過 2 季或屬於金融保險業時為 nil。
+	MarginPeriod           *string  `json:"margin_period"`
+	GrossMarginPercent     *float64 `json:"gross_margin_percent"`
+	OperatingMarginPercent *float64 `json:"operating_margin_percent"`
+	NetMarginPercent       *float64 `json:"net_margin_percent"`
+	// MarginsTrend 是三率與去年同季相比:all_up、all_down 或 mixed;去年同季查不到時為 nil。
+	MarginsTrend *string `json:"margins_trend"`
+	// Warnings 是基本面警示:revenue_decline、margins_all_down、operating_loss。
+	Warnings []string `json:"warnings"`
 }
 
 // PortfolioSummary 是 portfolio/summary endpoint 的完整回應。
@@ -58,6 +74,7 @@ type PortfolioSummary struct {
 	DataAsOf              *string             `json:"data_as_of"`
 	RSAsOf                *string             `json:"rs_as_of"`
 	ChipAsOf              *string             `json:"chip_as_of"`
+	WarningSymbols        int                 `json:"warning_symbols"`
 	Symbols               int                 `json:"symbols"`
 	MarketValue           float64             `json:"market_value"`
 	Cost                  float64             `json:"cost"`
@@ -193,10 +210,68 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 			displayPercent(holding.UnrealizedGainPercent), displayPercent(holding.DividendYieldPercent), displayInt(holding.FScore),
 			displayInt(holding.RSScore), streakDisplay(holding.ForeignStreak), streakDisplay(holding.TrustStreak))
 	}
+	writeWarningHoldings(&b, p)
 	b.printf("\nRS(相對強度 1–99)截至 %s、法人連續天數截至 %s。", displayString(p.RSAsOf), displayString(p.ChipAsOf))
 	b.printf("\n殖利率與 F 分數只用有該指標的部位加權,括號內為覆蓋的市值比例。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// warningLabels 是基本面警示的中文名稱。
+var warningLabels = map[string]string{
+	"revenue_decline":  "營收連續年減",
+	"margins_all_down": "三率三降",
+	"operating_loss":   "營業虧損",
+}
+
+// marginTrendLabels 是三率方向的中文名稱。
+var marginTrendLabels = map[string]string{"all_up": "三率三升", "all_down": "三率三降", "mixed": "三率有升有降"}
+
+// writeWarningHoldings 列出有基本面警示的持股(不受摘要持股檔數上限影響),附營收與三率。
+func writeWarningHoldings(b *summaryBuilder, p *PortfolioSummary) {
+	if p.WarningSymbols == 0 {
+		b.printf("\n基本面警示:無。")
+		return
+	}
+	b.printf("\n基本面警示 %d 檔:", p.WarningSymbols)
+	for _, holding := range p.Holdings {
+		if len(holding.Warnings) == 0 {
+			continue
+		}
+		labels := make([]string, 0, len(holding.Warnings))
+		for _, warning := range holding.Warnings {
+			if label, ok := warningLabels[warning]; ok {
+				labels = append(labels, label)
+			} else {
+				labels = append(labels, warning)
+			}
+		}
+		b.printf("\n- %s %s:%s;%s", holding.StockSymbol, holding.Name, strings.Join(labels, "、"), fundamentalsText(holding))
+	}
+}
+
+// fundamentalsText 描述持股的最新月營收與最近一季三率。
+func fundamentalsText(h PortfolioHolding) string {
+	parts := []string{}
+	if h.RevenueMonth != nil {
+		text := fmt.Sprintf("%s 營收年增 %s", *h.RevenueMonth, displayPercent(h.RevenueYoYPercent))
+		if h.RevenueDeclineMonths != nil && *h.RevenueDeclineMonths > 0 {
+			text += fmt.Sprintf("(連續 %d 個月年減)", *h.RevenueDeclineMonths)
+		}
+		parts = append(parts, text)
+	}
+	if h.MarginPeriod != nil {
+		text := fmt.Sprintf("%s 毛利率 %s、營益率 %s、淨利率 %s", *h.MarginPeriod, displayPercent(h.GrossMarginPercent),
+			displayPercent(h.OperatingMarginPercent), displayPercent(h.NetMarginPercent))
+		if h.MarginsTrend != nil {
+			text += "(" + marginTrendLabels[*h.MarginsTrend] + ")"
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return "查無營收與財報"
+	}
+	return strings.Join(parts, ";")
 }
 
 // weightedText 以「值(覆蓋 X% 市值)」表示加權指標;沒有資料回「無」。

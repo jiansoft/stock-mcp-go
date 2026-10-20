@@ -1,7 +1,7 @@
 // Package stock 的 get_stock_timeline 工具:個股事件時間軸。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/{symbol}/timeline:除權息與股利發放、減資／分割、
-// 月營收、季報、技術訊號(含相對強度穿越與 52 週新高新低)、外資／投信連續買賣超里程碑與董監持股變化,
+// 月營收與營收創歷史新高、季報與三率三升／三降、技術訊號(含相對強度穿越與 52 週新高新低)、外資／投信連續買賣超里程碑與董監持股變化,
 // 依日期合併成一條時間軸,另列迄日之後已公告的除權息、發放與減資。
 package stock
 
@@ -20,14 +20,14 @@ import (
 // timelineKinds 是時間軸的事件種類,與 Data API 一致(也是同一天的排列順序)。
 var timelineKinds = []string{
 	"ex_dividend", "ex_right", "cash_payable", "stock_payable", "corporate_action",
-	"monthly_revenue", "quarterly_report", "signal", "chip_streak", "insider",
+	"monthly_revenue", "revenue_record", "quarterly_report", "margin_trend", "signal", "chip_streak", "insider",
 }
 
 // timelineKindLabels 是事件種類的中文名稱。
 var timelineKindLabels = map[string]string{
 	"ex_dividend": "除息", "ex_right": "除權", "cash_payable": "現金股利發放", "stock_payable": "股票股利發放",
-	"corporate_action": "減資/分割", "monthly_revenue": "月營收", "quarterly_report": "季報", "signal": "技術訊號",
-	"chip_streak": "法人連續買賣超", "insider": "董監持股",
+	"corporate_action": "減資/分割", "monthly_revenue": "月營收", "revenue_record": "營收新高", "quarterly_report": "季報",
+	"margin_trend": "三率三升/三降", "signal": "技術訊號", "chip_streak": "法人連續買賣超", "insider": "董監持股",
 }
 
 // TimelineEvent 是時間軸上的一筆事件。
@@ -144,7 +144,8 @@ func stockTimelineSchema() *jsonschema.Schema {
 				Type:  "array",
 				Items: &jsonschema.Schema{Type: "string", Enum: kinds},
 				Description: "只列這些種類(選填,省略為全部):ex_dividend 除息、ex_right 除權、cash_payable 現金股利發放、" +
-					"stock_payable 股票股利發放、corporate_action 減資/分割、monthly_revenue 月營收、quarterly_report 季報、" +
+					"stock_payable 股票股利發放、corporate_action 減資/分割、monthly_revenue 月營收、revenue_record 月營收創歷史新高、" +
+					"quarterly_report 季報、margin_trend 三率三升/三降、" +
 					"signal 技術訊號、chip_streak 外資/投信連續買賣超達 5/10/20 天、insider 董監持股或質押比例單月變化達 1%。" +
 					"技術訊號通常占大多數,只想看基本面與籌碼大事時可排除 signal",
 			},
