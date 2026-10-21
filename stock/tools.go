@@ -626,6 +626,18 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, cts.holdingChip)
 	}
 
+	if fq, ok := q.(HoldingDividendFillQuerier); ok {
+		fts := &holdingDividendFillToolset{fq: fq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_holding_dividend_fill",
+			Description: "查詢使用者目前持股(含 ETF)近 N 天(預設 365,30–730)每次除權息的填息狀態(個人持股資料):" +
+				"填息價(除權息前一日收盤)、最新收盤、是否已填息、第幾個交易日填息,尚未填息的列出距離填息價的缺口並依缺口由大到小排在前面," +
+				"另附整體填息統計。適合回答「我的持股哪些還沒填息」「今年配息的股票填息了嗎」;單一股票的歷次填息請用 get_dividend_fill。",
+			InputSchema: holdingDividendFillSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, fts.holdingDividendFill)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
