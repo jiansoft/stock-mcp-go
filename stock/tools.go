@@ -638,6 +638,27 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, fts.holdingDividendFill)
 	}
 
+	if eq, ok := q.(EtfQuerier); ok {
+		ets := &etfToolset{eq: eq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "screen_etfs",
+			Description: "篩選並排序台灣上市櫃 ETF(每天收盤後更新):可依分類(市值型、高股息、主動式、債券、槓桿、反向、期貨商品、海外股票、主題)、" +
+				"投資地區、配息頻率、市場與關鍵字篩選,依成交值、資產規模、折溢價、近 12 個月殖利率、淨申購、含息報酬或受益人數排序;" +
+				"每檔附收盤、預估淨值與折溢價、規模、淨申購、配息與下次除息、含息報酬、受益人數。" +
+				"適合回答「月配息的債券 ETF 哪幾檔折價最多」「今年報酬最好的高股息 ETF」「哪些 ETF 資金流入最多」;單檔細節請用 get_etf_detail。",
+			InputSchema: screenEtfsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ets.screenEtfs)
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_etf_detail",
+			Description: "查詢單檔台灣 ETF 的完整資料:分類、發行投信、追蹤指數、經理費與保管費,收盤、預估淨值、折溢價與近 20 筆平均,規模、淨申購、受益人數," +
+				"近 12 個月配息與下次除息,市價含息報酬與淨值含息報酬(1 週至 5 年,1 年以上年化)、近 1 年波動、最大回撤、beta、夏普值," +
+				"前十大持股、行業比重、資產分佈,以及近期每日淨值與折溢價。",
+			InputSchema: etfDetailSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ets.etfDetail)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
