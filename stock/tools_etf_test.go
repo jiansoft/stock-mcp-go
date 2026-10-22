@@ -23,6 +23,13 @@ type fakeEtfQuerier struct {
 	gotParams EtfScreenParams
 	gotSymbol string
 	gotDays   int
+	compare   *EtfCompareEnvelope
+	gotList   []string
+}
+
+func (f *fakeEtfQuerier) CompareEtfs(_ context.Context, symbols []string) (*EtfCompareEnvelope, error) {
+	f.gotList = symbols
+	return f.compare, f.err
 }
 
 func (f *fakeEtfQuerier) ScreenEtfs(_ context.Context, params EtfScreenParams) (*EtfListEnvelope, error) {
@@ -157,6 +164,12 @@ func TestScreenEtfsSummaryLimitsList(t *testing.T) {
 	if yiText(nil) != "無" || signedPercentPtr(nil) != "無" || int64Text(nil) != "無" || orNone("") != "無" {
 		t.Fatal("nil 與空值應顯示無")
 	}
+	if got := yiText(ptr(3.4e6)); got != "340 萬" {
+		t.Fatalf("不到 1 億應以萬元顯示:%s", got)
+	}
+	if got := yiText(ptr(-1.25e8)); got != "-1.3 億" {
+		t.Fatalf("1 億以上以億元顯示:%s", got)
+	}
 }
 
 // TestEtfDetailTool 驗證代號正規化、範圍檢查、查無資料、摘要與錯誤轉換。
@@ -243,11 +256,96 @@ func TestEtfToolsAreRegisteredReadOnly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("列出工具:%v", err)
 		}
-		if tool.Name == "screen_etfs" || tool.Name == "get_etf_detail" {
+		if tool.Name == "screen_etfs" || tool.Name == "get_etf_detail" || tool.Name == "compare_etfs" {
 			found[tool.Name] = tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 		}
 	}
-	if !found["screen_etfs"] || !found["get_etf_detail"] {
-		t.Fatalf("具備 EtfQuerier 時應註冊兩個唯讀工具:%v", found)
+	if !found["screen_etfs"] || !found["get_etf_detail"] || !found["compare_etfs"] {
+		t.Fatalf("具備 EtfQuerier 時應註冊三個唯讀工具:%v", found)
+	}
+}
+
+// TestAPIClientCompareEtfs 驗證路徑與參數、404 回 nil、清單防禦。
+func TestAPIClientCompareEtfs(t *testing.T) {
+	var gotRaw string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRaw = r.URL.RawQuery
+		if r.URL.Path != "/api/v1/etfs/compare" {
+			t.Errorf("路徑錯誤:%s", r.URL.Path)
+		}
+		if strings.Contains(r.URL.Query().Get("symbols"), "9999") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"items":null,"overlaps":[{"a":"0050","b":"006208","common":null,"overlap_weight":0}]}`))
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	envelope, err := client.CompareEtfs(t.Context(), []string{"0050", "006208"})
+	if err != nil || gotRaw != "symbols=0050%2C006208" || envelope.Items == nil || envelope.Overlaps[0].Common == nil {
+		t.Fatalf("CompareEtfs() = %#v, %v, %s", envelope, err, gotRaw)
+	}
+	if missing, err := client.CompareEtfs(t.Context(), []string{"0050", "9999"}); err != nil || missing != nil {
+		t.Fatalf("404 應回 nil, nil:%#v, %v", missing, err)
+	}
+}
+
+// TestCompareEtfsTool 驗證代號正規化與驗證、摘要、查無與錯誤轉換。
+func TestCompareEtfsTool(t *testing.T) {
+	toolset := func(f *fakeEtfQuerier) *etfToolset {
+		return &etfToolset{eq: f, logf: func(string, ...any) {}}
+	}
+	f := &fakeEtfQuerier{compare: &EtfCompareEnvelope{
+		Items: []EtfCompareItem{
+			{StockSymbol: "0050", Name: "元大台灣50", Strategy: "market_cap", ManagementFee: "0.32%", TotalAssets: ptr(2.46e12),
+				PremiumRate: ptr(0.46), Yield12m: ptr(1.5), DividendFrequency: "semi_annual", Ret1y: ptr(73.95), NavRet1y: ptr(73.92)},
+			{StockSymbol: "006208", Name: "富邦台50", Strategy: "market_cap", TotalAssets: ptr(4.5e7)},
+		},
+		Overlaps: []EtfOverlap{
+			{A: "0050", B: "006208", Common: []string{"2330 台積電", "2454 聯發科"}, OverlapWeight: 60.6},
+			{A: "0050", B: "00679B", Common: []string{}},
+		},
+	}}
+	result, output, err := toolset(f).compareEtfs(t.Context(), nil, CompareEtfsInput{Symbols: []string{" 0050 ", "006208"}})
+	if err != nil || strings.Join(f.gotList, ",") != "0050,006208" {
+		t.Fatalf("代號應正規化:%v %v", err, f.gotList)
+	}
+	if out, ok := output.(CompareEtfsOutput); !ok || out.DataKind != "etf_compare" || len(out.Items) != 2 {
+		t.Fatalf("structured output 錯誤:%#v", output)
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{
+		"比較 2 檔 ETF:",
+		"0050 元大台灣50(市值型):經理費 0.32%、保管費 無、規模 24600 億、折溢價 +0.46%(近 20 筆平均 無)、殖利率 1.5%(半年配)、" +
+			"近 1 年市價含息 +73.95%／淨值含息 +73.92%",
+		"006208 富邦台50(市值型):經理費 無、保管費 無、規模 4500 萬",
+		"0050 與 006208 重疊 60.6%(共同 2330 台積電、2454 聯發科)",
+		"0050 與 00679B 重疊 0%(沒有共同持股)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("摘要缺少 %q:%s", want, text)
+		}
+	}
+	for _, in := range []CompareEtfsInput{
+		{Symbols: []string{"0050"}},
+		{Symbols: []string{"1", "2", "3", "4", "5"}},
+		{Symbols: []string{"0050", "0050"}},
+		{Symbols: []string{"0050", ""}},
+	} {
+		if _, _, err := toolset(f).compareEtfs(t.Context(), nil, in); err == nil {
+			t.Errorf("%#v 應回錯誤", in)
+		}
+	}
+	if _, _, err := toolset(&fakeEtfQuerier{}).compareEtfs(t.Context(), nil, CompareEtfsInput{Symbols: []string{"0050", "9999"}}); err == nil ||
+		!strings.Contains(err.Error(), "0050、9999 之中有查無的 ETF") {
+		t.Fatalf("查無應提示:%v", err)
+	}
+	if _, _, err := toolset(&fakeEtfQuerier{err: errors.New("boom")}).compareEtfs(t.Context(), nil, CompareEtfsInput{Symbols: []string{"0050", "006208"}}); err == nil || err.Error() != errInternal {
+		t.Fatalf("內部錯誤不可外洩細節:%v", err)
+	}
+	if summary := compareEtfsSummary(&EtfCompareEnvelope{Items: []EtfCompareItem{{StockSymbol: "0050"}}}); strings.Contains(summary, "前十大持股重疊") {
+		t.Fatalf("沒有重疊資料時不應出現該段:%s", summary)
 	}
 }

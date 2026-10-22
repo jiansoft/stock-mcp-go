@@ -1,6 +1,6 @@
-// Package stock 的 screen_etfs 與 get_etf_detail 工具:ETF 專區的清單篩選與單檔明細。
+// Package stock 的 screen_etfs、get_etf_detail 與 compare_etfs 工具:ETF 專區的清單篩選、單檔明細與並排比較。
 //
-// 資料來自 stock_rust Data API 的 GET /api/v1/etfs 與 GET /api/v1/etfs/{symbol}:
+// 資料來自 stock_rust Data API 的 GET /api/v1/etfs、GET /api/v1/etfs/{symbol} 與 GET /api/v1/etfs/compare:
 // 清單讀每天收盤後整理好的 ETF 快照(行情、預估淨值與折溢價、規模、淨申購、配息、含息報酬、受益人數),
 // 明細另含基本資料、市價與淨值含息報酬、風險指標、前十大持股、行業比重、資產分佈與近期每日折溢價。
 package stock
@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -146,6 +147,43 @@ type EtfDetailEnvelope struct {
 	Navs           []EtfNavPoint       `json:"navs"`
 }
 
+// EtfCompareItem 是比較表的一檔 ETF;比率為 %,金額為元,報酬 3 年以上年化。
+type EtfCompareItem struct {
+	StockSymbol       string   `json:"stock_symbol"`
+	Name              string   `json:"name"`
+	Strategy          string   `json:"strategy"`
+	Benchmark         string   `json:"benchmark"`
+	ManagementFee     string   `json:"management_fee"`
+	CustodianFee      string   `json:"custodian_fee"`
+	TotalAssets       *float64 `json:"total_assets"`
+	ClosingPrice      *float64 `json:"closing_price"`
+	PremiumRate       *float64 `json:"premium_rate"`
+	PremiumAvg20d     *float64 `json:"premium_avg_20d"`
+	Yield12m          *float64 `json:"yield_12m"`
+	DividendFrequency string   `json:"dividend_frequency"`
+	Ret1y             *float64 `json:"ret_1y"`
+	Ret3y             *float64 `json:"ret_3y"`
+	NavRet1y          *float64 `json:"nav_ret_1y"`
+	Vol1y             *float64 `json:"vol_1y"`
+	Mdd1y             *float64 `json:"mdd_1y"`
+	Sharpe1y          *float64 `json:"sharpe_1y"`
+	HoldingsAsOf      *string  `json:"holdings_as_of"`
+}
+
+// EtfOverlap 是兩檔 ETF 前十大持股的重疊。
+type EtfOverlap struct {
+	A             string   `json:"a"`
+	B             string   `json:"b"`
+	Common        []string `json:"common"`
+	OverlapWeight float64  `json:"overlap_weight"`
+}
+
+// EtfCompareEnvelope 是 /api/v1/etfs/compare 的回應。
+type EtfCompareEnvelope struct {
+	Items    []EtfCompareItem `json:"items"`
+	Overlaps []EtfOverlap     `json:"overlaps"`
+}
+
 // EtfScreenParams 是 ETF 清單的查詢條件;零值欄位不送出,交給 Data API 的預設值。
 type EtfScreenParams struct {
 	Strategies []string
@@ -163,6 +201,8 @@ type EtfQuerier interface {
 	ScreenEtfs(ctx context.Context, params EtfScreenParams) (*EtfListEnvelope, error)
 	// EtfDetail 查無這檔 ETF 時回傳 nil, nil。
 	EtfDetail(ctx context.Context, symbol string, navDays int) (*EtfDetailEnvelope, error)
+	// CompareEtfs 其中有查無的 ETF 時回傳 nil, nil。
+	CompareEtfs(ctx context.Context, symbols []string) (*EtfCompareEnvelope, error)
 }
 
 // ScreenEtfs 查詢 ETF 清單。
@@ -220,6 +260,111 @@ func (c *APIClient) EtfDetail(ctx context.Context, symbol string, navDays int) (
 		body.Navs = []EtfNavPoint{}
 	}
 	return &body, nil
+}
+
+// CompareEtfs 比較 2 至 4 檔 ETF;404 代表其中有不是上市櫃 ETF 的代號。
+func (c *APIClient) CompareEtfs(ctx context.Context, symbols []string) (*EtfCompareEnvelope, error) {
+	var body EtfCompareEnvelope
+	found, err := c.getFound(ctx, "/api/v1/etfs/compare?"+url.Values{"symbols": {strings.Join(symbols, ",")}}.Encode(), &body)
+	if err != nil || !found {
+		return nil, err
+	}
+	if body.Items == nil {
+		body.Items = []EtfCompareItem{}
+	}
+	if body.Overlaps == nil {
+		body.Overlaps = []EtfOverlap{}
+	}
+	for i := range body.Overlaps {
+		if body.Overlaps[i].Common == nil {
+			body.Overlaps[i].Common = []string{}
+		}
+	}
+	return &body, nil
+}
+
+// CompareEtfsInput 是 compare_etfs 的輸入。
+type CompareEtfsInput struct {
+	Symbols []string `json:"symbols"`
+}
+
+// CompareEtfsOutput 是 ETF 比較加上 MCP 分析中繼資料。
+type CompareEtfsOutput struct {
+	DataKind   string `json:"data_kind"`
+	IsRealtime bool   `json:"is_realtime"`
+	Disclaimer string `json:"disclaimer"`
+	*EtfCompareEnvelope
+}
+
+// compareEtfsSchema 描述 compare_etfs 的輸入形狀。
+func compareEtfsSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:     "object",
+		Required: []string{"symbols"},
+		Properties: map[string]*jsonschema.Schema{
+			"symbols": {
+				Type: "array", MinItems: ptr(2), MaxItems: ptr(4),
+				Items:       &jsonschema.Schema{Type: "string", MinLength: ptr(1), MaxLength: ptr(12)},
+				Description: "要比較的 ETF 代號,2 至 4 檔,例如 [\"0050\", \"006208\"]",
+			},
+		},
+	}
+}
+
+// compareEtfs 執行 compare_etfs。
+func (ts *etfToolset) compareEtfs(ctx context.Context, _ *mcp.CallToolRequest, in CompareEtfsInput) (*mcp.CallToolResult, any, error) {
+	if len(in.Symbols) < 2 || len(in.Symbols) > 4 {
+		return nil, nil, fmt.Errorf("參數 symbols 必須是 2 到 4 檔 ETF 代號")
+	}
+	symbols := make([]string, 0, len(in.Symbols))
+	for _, raw := range in.Symbols {
+		symbol, err := normalizeSymbol(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		if slices.Contains(symbols, symbol) {
+			return nil, nil, fmt.Errorf("參數 symbols 不可重複:%s", symbol)
+		}
+		symbols = append(symbols, symbol)
+	}
+	envelope, err := ts.eq.CompareEtfs(ctx, symbols)
+	if err != nil {
+		ts.logf("工具 compare_etfs 執行失敗:%v", err)
+		return nil, nil, fmt.Errorf("%s", errInternal)
+	}
+	if envelope == nil {
+		return nil, nil, fmt.Errorf("%s 之中有查無的 ETF;可用 screen_etfs 以名稱或關鍵字找代號", strings.Join(symbols, "、"))
+	}
+	return textResult(compareEtfsSummary(envelope)), CompareEtfsOutput{
+		DataKind: "etf_compare", IsRealtime: false, Disclaimer: AnalysisDisclaimer, EtfCompareEnvelope: envelope,
+	}, nil
+}
+
+// compareEtfsSummary 組出給模型閱讀的比較摘要:每檔一行,再列兩兩前十大重疊。
+func compareEtfsSummary(e *EtfCompareEnvelope) string {
+	var b summaryBuilder
+	b.printf("比較 %d 檔 ETF:", len(e.Items))
+	for _, item := range e.Items {
+		b.printf("\n%s %s(%s):經理費 %s、保管費 %s、規模 %s、折溢價 %s(近 20 筆平均 %s)、殖利率 %s(%s)、"+
+			"近 1 年市價含息 %s／淨值含息 %s、3 年年化 %s、波動 %s、最大回撤 %s、夏普 %s",
+			item.StockSymbol, item.Name, labelOf(etfStrategyLabels, item.Strategy), orNone(item.ManagementFee),
+			orNone(item.CustodianFee), yiText(item.TotalAssets), signedPercentPtr(item.PremiumRate),
+			signedPercentPtr(item.PremiumAvg20d), displayPercent(item.Yield12m), orNone(etfFrequencyLabels[item.DividendFrequency]),
+			signedPercentPtr(item.Ret1y), signedPercentPtr(item.NavRet1y), signedPercentPtr(item.Ret3y),
+			displayPercent(item.Vol1y), signedPercentPtr(item.Mdd1y), displayFloat(item.Sharpe1y))
+	}
+	if len(e.Overlaps) > 0 {
+		b.printf("\n前十大持股重疊(共同持股取兩檔較小比例加總;只看前十大,實際重疊只會更高):")
+		for _, o := range e.Overlaps {
+			common := "沒有共同持股"
+			if len(o.Common) > 0 {
+				common = "共同 " + strings.Join(o.Common, "、")
+			}
+			b.printf("\n%s 與 %s 重疊 %s%%(%s)", o.A, o.B, formatFloat(o.OverlapWeight), common)
+		}
+	}
+	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
+	return b.String()
 }
 
 // ScreenEtfsInput 是 screen_etfs 的輸入。
@@ -353,10 +498,13 @@ func labelOf(pairs []struct{ code, label string }, code string) string {
 	return code
 }
 
-// yiText 把元換成億元(小數一位);nil 顯示「無」。
+// yiText 把元換成億元(小數一位);不到 1 億改用萬元(整數),小額才不會顯示成「0 億」;nil 顯示「無」。
 func yiText(v *float64) string {
 	if v == nil {
 		return "無"
+	}
+	if math.Abs(*v) < 1e8 {
+		return formatFloat(math.Round(*v/1e4)) + " 萬"
 	}
 	return formatFloat(math.Round(*v/1e7)/10) + " 億"
 }

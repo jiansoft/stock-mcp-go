@@ -657,6 +657,14 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			InputSchema: etfDetailSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ets.etfDetail)
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "compare_etfs",
+			Description: "並排比較 2 至 4 檔台灣 ETF:經理費與保管費、規模、折溢價(含近 20 筆平均)、殖利率與配息頻率、" +
+				"近 1 年市價與淨值含息報酬、3 年年化報酬、波動、最大回撤、夏普值,以及兩兩之間前十大持股的重疊權重(共同持股取較小比例加總)。" +
+				"適合回答「0050 和 006208 差在哪」「這幾檔高股息 ETF 持股重疊多少」。",
+			InputSchema: compareEtfsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ets.compareEtfs)
 	}
 
 	if forecast, ok := q.(DividendForecastQuerier); ok {
