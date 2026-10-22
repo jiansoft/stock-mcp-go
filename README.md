@@ -5,17 +5,17 @@
 A read-only Model Context Protocol (MCP) server for Taiwan stock data, built with Go and the official MCP Go SDK. It exposes stock quotes, company fundamentals, financial history, valuation, screening, and market analytics over stateless Streamable HTTP.
 
 > [!IMPORTANT]
-> Most data returned by this server is historical or the latest data available from the upstream database. It is not exchange-grade tick data and must not be treated as guaranteed real-time market data. The only tool that may return real-time results is `get_market_movers` during market hours. All responses include data provenance, freshness, and disclaimer fields.
+> Most data returned by this server is historical or the latest data available from the upstream database. It is not exchange-grade tick data and must not be treated as guaranteed real-time market data. The only tool that may return real-time results is `get_market_movers` during market hours. Check each tool's source, date, and disclaimer fields; their exact structure varies by tool.
 
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 40 read-only tools backed by the `stock_rust` Data API
+- 51 read-only tools backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
 - Embedded administration UI with secure, eight-hour HttpOnly sessions
-- Per-key and per-client-IP rate limiting
+- Rate limiting by the combination of API-key ID and client IP
 - Origin validation, request-size limits, structured logging, and graceful shutdown
 - Liveness and data-source-aware readiness endpoints
 - One structured log entry per tool call (tool, result, duration, API-key prefix)
@@ -99,18 +99,18 @@ stock-mcp-go
 | `get_holding_chip` | API | Daily chip report for the personal holdings on a trading day (default latest): for each common stock still held at that close (ETFs excluded), net buy/sell by foreign investors, investment trusts and dealers with their share of volume, foreign/trust consecutive net-buy or net-sell days, margin and short balances with daily changes, and main-force (top brokers) net with the top buying and selling branches plus its sum over the last five main-force trading days; holdings that hit the daily Telegram alert thresholds are flagged with their reasons |
 | `get_dividend_forecast` | API | Expected cash dividends from current holdings over the next 1-24 months: announced payouts plus last year's pattern, monthly totals, per-payout details, and forward yield |
 
-Every tool is read-only. Outputs include `data_kind`, `data_as_of`, `is_realtime`, and a disclaimer. Missing values remain `null`; the server does not invent zeroes or estimates.
+Every tool is read-only. Response fields vary by tool: quote outputs include `data_as_of`, while other tools may use dates or ranges in their result objects instead. Nullable missing metrics remain `null`; empty collections and zero totals can be valid results. `get_dividend_forecast` explicitly separates announced and estimated dividends using each item's `basis` and the `announced_total` / `estimated_total` fields; estimates are not announced payouts.
 
 ## Requirements
 
-- Go 1.27 (`go.mod` currently targets `go1.27rc2`)
-- Default `api` mode: access to a compatible `stock_rust` Data API and its bearer key
+- Go 1.27 (as specified in `go.mod`)
+- Access to a compatible `stock_rust` Data API and its bearer key (the only supported data source)
 - Production: an HTTPS reverse proxy such as Caddy or Nginx
 
 ## Quick start
 
 ```bash
-git clone https://github.com/<owner>/stock-mcp-go.git
+git clone https://github.com/jiansoft/stock-mcp-go.git
 cd stock-mcp-go
 cp .env.example .env
 ```
@@ -126,6 +126,8 @@ MCP_ADMIN_TOKEN=replace-with-a-different-32-byte-random-secret
 ```
 
 `MCP_API_KEY` is only a bootstrap value. It is imported when the API-key SQLite database is empty and can be removed from the environment after the first successful import.
+
+Startup loads `.env` from the current working directory without overriding existing OS environment variables. The SQLite path is also relative to the working directory unless absolute; its directory must be writable by the service user.
 
 Start the server:
 
@@ -143,6 +145,8 @@ curl http://127.0.0.1:9005/readyz
 ```
 
 Expected responses are `{"status":"ok"}`. `/readyz` returns HTTP 503 when the upstream Data API is unavailable or rejects the key.
+
+`/healthz` checks only the HTTP process. `/readyz` performs an authenticated upstream stock search (`2330`, limit 1), with a three-second deadline and a two-second result cache; success does not verify all 51 tools or data freshness.
 
 API documentation: open `http://127.0.0.1:9005/docs` (Swagger UI, no authentication). It is generated from the registered tools, so `tools/call` lists each tool's arguments; Try it out works with an MCP API key and adds the `Accept: application/json, text/event-stream` header that MCP requires.
 
@@ -168,7 +172,7 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `APP_ENV` | `development` | `development`, `production`, or `test` |
-| `HOST` | `127.0.0.1` | Listen address; use `0.0.0.0` inside a container |
+| `HOST` | `127.0.0.1` | Listen IP address (hostnames are rejected); use `0.0.0.0` inside a container |
 | `PORT` | `3000` | HTTP port (`.env.example` overrides it to `9005`) |
 | `MCP_PATH` | `/mcp` | MCP endpoint path |
 | `TRUST_PROXY` | `false` | Trust proxy-appended client IP information |
@@ -182,7 +186,7 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | `MCP_ADMIN_TOKEN` | required | Separate administration secret of at least 32 bytes |
 | `MCP_TRUSTED_ORIGINS` | empty | Comma-separated allowed browser origins |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
-| `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per API key and source IP per window |
+| `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per API-key ID + source-IP combination per window; excess requests return HTTP 429 |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 
 The upstream key, MCP client keys, pepper, and admin token must all be separate secrets. Do not commit `.env`.
@@ -197,7 +201,7 @@ Open the embedded UI at:
 https://mcp.example.com/admin/mcp-api-keys
 ```
 
-Sign in once with `MCP_ADMIN_TOKEN`. The server exchanges it for an in-memory, eight-hour `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. The token is not stored in browser storage.
+Sign in once with `MCP_ADMIN_TOKEN`. The server creates an eight-hour session held in memory and returns an `HttpOnly`, `SameSite=Strict` cookie. It sets `Secure` when the request uses TLS, or when `TRUST_PROXY=true` and `X-Forwarded-Proto=https`. Restarting the process clears all administration sessions. The token is not stored in browser storage.
 
 The administration API also accepts `Authorization: Bearer <MCP_ADMIN_TOKEN>` for automation:
 
@@ -212,6 +216,8 @@ The administration API also accepts `Authorization: Bearer <MCP_ADMIN_TOKEN>` fo
 
 Complete API keys are returned only once, after creation or rotation. SQLite stores a public prefix and `HMAC-SHA-256(pepper, full-key)`, never the plaintext key. Changes are published to an immutable in-memory snapshot immediately after the database transaction commits.
 
+Back up the SQLite key database and preserve its matching `MCP_API_KEY_PEPPER` separately. A different pepper causes startup to fail against the existing database; the database alone cannot restore usable keys. Stop the process before copying the database, or use a SQLite-aware backup that includes committed WAL data.
+
 The API-key store supports one Go process with one local SQLite volume. Do not share the same SQLite file between replicas. A multi-replica deployment requires a shared relational key store and a cross-process refresh mechanism.
 
 ## Docker
@@ -223,6 +229,8 @@ docker compose -f docker-compose.example.yml up --build
 ```
 
 The Compose example publishes `127.0.0.1:9004` to container port `3000` and persists API-key state in the `mcp-api-key-data` named volume. The image runs as a non-root user and uses the executable's `-health-check` mode because the distroless runtime contains no shell, `curl`, or `wget`.
+
+Set `STOCK_RUST_API_BASE_URL` to an address reachable from the container; `127.0.0.1:9002` refers to the container itself. With Compose, point the host's reverse proxy to `127.0.0.1:9004`; the native-process examples below use `9005`.
 
 `Dockerfile_live` and `control.sh` provide a separate ARM deployment flow for binaries produced by `build.ps1`. They support Linux ARM64 and ARMv7 and expect the selected `stock-mcp_linux_*` binary at the deployment root.
 
@@ -252,6 +260,7 @@ location / {
     proxy_pass http://127.0.0.1:9005;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 ```
@@ -286,6 +295,7 @@ make build       # build ./stock-mcp
 ## Known limitations
 
 - Data freshness depends on the upstream `stock_rust` collection and processing schedule.
+- Tool registration reflects the client implementation, not a capability probe of the deployed upstream. New tools require matching stock_rust endpoints and datasets; `/readyz` alone does not establish compatibility.
 - Rate-limit counters and API-key verification snapshots are process-local.
 - The SQLite API-key repository is designed for a single process and local persistent volume.
 - The server exposes MCP tools only; it does not expose Resources, Prompts, or Sampling.
