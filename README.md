@@ -99,6 +99,8 @@ stock-mcp-go
 | `screen_etfs` | API | Filter and sort Taiwan-listed ETFs (refreshed after each close) by category, region, distribution frequency, market and keyword; sort by trade value, assets, premium/discount, trailing-12-month yield, net creation, total return or holders. Each ETF includes close, estimated NAV, premium/discount, assets, net creation, distributions and next ex-date |
 | `get_etf_detail` | API | One ETF in full: category, issuer, index, fees, close, estimated NAV and premium/discount (with 20-day average), assets, net creation, holders, distributions, market-price and NAV total returns (1 week to 5 years), 1-year risk, top-10 holdings, sector and asset allocation, and recent daily NAV/premium |
 | `compare_etfs` | API | Compare 2–4 ETFs side by side: fees, assets, premium/discount (with 20-day average), yield and distribution frequency, 1-year market-price and NAV total return, 3-year annualized return, volatility, max drawdown, Sharpe ratio, and pairwise top-10 holdings overlap |
+| `get_etf_holding_changes` | API | An ETF's top-10 holdings for the last few periods (default 6, roughly monthly), each with additions, removals and weight changes against the previous period |
+| `get_portfolio_etf_exposure` | API | Look-through exposure of the personal holdings: held ETFs are split into their latest top-10 constituents by weight and merged with direct positions, listing the largest combined exposures (direct, via which ETFs, share of portfolio value) and how much of each ETF could be decomposed |
 | `get_holding_chip` | API | Daily chip report for the personal holdings on a trading day (default latest): for each common stock still held at that close (ETFs excluded), net buy/sell by foreign investors, investment trusts and dealers with their share of volume, foreign/trust consecutive net-buy or net-sell days, margin and short balances with daily changes, and main-force (top brokers) net with the top buying and selling branches plus its sum over the last five main-force trading days; holdings that hit the daily Telegram alert thresholds are flagged with their reasons |
 | `get_dividend_forecast` | API | Expected cash dividends from current holdings over the next 1-24 months: announced payouts plus last year's pattern, monthly totals, per-payout details, and forward yield |
 
@@ -149,7 +151,7 @@ curl http://127.0.0.1:9005/readyz
 
 Expected responses are `{"status":"ok"}`. `/readyz` returns HTTP 503 when the upstream Data API is unavailable or rejects the key.
 
-`/healthz` checks only the HTTP process. `/readyz` performs an authenticated upstream stock search (`2330`, limit 1), with a three-second deadline and a two-second result cache; success does not verify all 54 tools or data freshness.
+`/healthz` checks only the HTTP process. `/readyz` performs an authenticated upstream stock search (`2330`, limit 1), with a three-second deadline and a two-second result cache; success does not verify all 56 tools or data freshness.
 
 API documentation: open `http://127.0.0.1:9005/docs` (Swagger UI, no authentication). It is generated from the registered tools, so `tools/call` lists each tool's arguments; Try it out works with an MCP API key and adds the `Accept: application/json, text/event-stream` header that MCP requires.
 

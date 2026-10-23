@@ -667,6 +667,29 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, ets.compareEtfs)
 	}
 
+	if hq, ok := q.(EtfHoldingHistoryQuerier); ok {
+		hts := &etfHoldingChangesToolset{hq: hq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_etf_holding_changes",
+			Description: "查詢單檔台灣 ETF 近幾期(預設 6,約每月一期)的前十大持股,並逐期列出與前一期相比的新進、剔除與權重變化。" +
+				"適合回答「0056 這次換股換了什麼」「00878 最近加碼哪些成分股」;只涵蓋前十大持股,目前的完整前十大與配置也可用 get_etf_detail。",
+			InputSchema: etfHoldingChangesSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, hts.etfHoldingChanges)
+	}
+
+	if eq, ok := q.(PortfolioEtfExposureQuerier); ok {
+		ets := &portfolioEtfExposureToolset{eq: eq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_portfolio_etf_exposure",
+			Description: "查詢使用者持股的穿透曝險(個人持股資料):把持有 ETF 的市值依最新一期前十大持股權重拆到成分股,與直接持股合併," +
+				"列出合計曝險最大的成分股(直接持有、經由哪些 ETF、占總市值比例),以及每檔 ETF 可拆解的比例;前十大以外無法拆解的金額另計。" +
+				"適合回答「加上 ETF 之後我實際持有多少台積電」「我的持股是不是太集中」。member_id 預設 0 為全部會員合計。",
+			InputSchema: portfolioEtfExposureSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ets.portfolioEtfExposure)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
