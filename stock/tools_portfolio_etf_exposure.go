@@ -7,6 +7,7 @@ package stock
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 
@@ -132,6 +133,14 @@ func (ts *portfolioEtfExposureToolset) portfolioEtfExposure(ctx context.Context,
 	}, nil
 }
 
+// moneyText 顯示金額:不到 1 萬以元顯示(零股與小額 ETF 部位常不到 1 萬,用 yiText 會變成「0 萬」),其餘同 yiText。
+func moneyText(v float64) string {
+	if math.Abs(v) < 1e4 {
+		return formatFloat(math.Round(v)) + " 元"
+	}
+	return yiText(&v)
+}
+
 // portfolioEtfExposureSummary 組出給模型閱讀的摘要:總市值與 ETF 拆解程度,再列合計曝險前幾大的成分股。
 func portfolioEtfExposureSummary(e *PortfolioEtfExposureEnvelope) string {
 	var b summaryBuilder
@@ -140,16 +149,16 @@ func portfolioEtfExposureSummary(e *PortfolioEtfExposureEnvelope) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("持股總市值 %s,其中 ETF %s;ETF 前十大以外無法拆解 %s。", yiText(&e.TotalValue), yiText(&e.EtfValue), yiText(&e.UncoveredValue))
+	b.printf("持股總市值 %s,其中 ETF %s;ETF 前十大以外無法拆解 %s。", moneyText(e.TotalValue), moneyText(e.EtfValue), moneyText(e.UncoveredValue))
 	if len(e.Etfs) > 0 {
 		etfs := make([]string, 0, len(e.Etfs))
 		for _, etf := range e.Etfs {
 			if etf.HoldingsAsOf == nil {
-				etfs = append(etfs, fmt.Sprintf("%s %s %s(沒有前十大持股,無法拆解)", etf.StockSymbol, etf.Name, yiText(&etf.MarketValue)))
+				etfs = append(etfs, fmt.Sprintf("%s %s %s(沒有前十大持股,無法拆解)", etf.StockSymbol, etf.Name, moneyText(etf.MarketValue)))
 				continue
 			}
 			etfs = append(etfs, fmt.Sprintf("%s %s %s(前十大 %s%%,%s)",
-				etf.StockSymbol, etf.Name, yiText(&etf.MarketValue), formatFloat(etf.CoveredWeight), *etf.HoldingsAsOf))
+				etf.StockSymbol, etf.Name, moneyText(etf.MarketValue), formatFloat(etf.CoveredWeight), *etf.HoldingsAsOf))
 		}
 		b.printf("\n持有 ETF:%s。", strings.Join(etfs, "、"))
 	}
@@ -163,9 +172,9 @@ func portfolioEtfExposureSummary(e *PortfolioEtfExposureEnvelope) string {
 			}
 			via := make([]string, 0, len(item.Sources))
 			for _, source := range item.Sources {
-				via = append(via, fmt.Sprintf("%s %s", source.EtfSymbol, yiText(&source.Value)))
+				via = append(via, fmt.Sprintf("%s %s", source.EtfSymbol, moneyText(source.Value)))
 			}
-			line := fmt.Sprintf("%s %s(%s%%;直接 %s", label, yiText(&item.TotalValue), formatFloat(item.Weight), yiText(&item.DirectValue))
+			line := fmt.Sprintf("%s %s(%s%%;直接 %s", label, moneyText(item.TotalValue), formatFloat(item.Weight), moneyText(item.DirectValue))
 			if len(via) > 0 {
 				line += ",經由 " + strings.Join(via, "、")
 			}
