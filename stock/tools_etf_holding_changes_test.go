@@ -185,7 +185,7 @@ func TestPortfolioEtfExposureTool(t *testing.T) {
 	for _, want := range []string{
 		"持股總市值 3.6 億,其中 ETF 2.6 億;ETF 前十大以外無法拆解 1.3 億。",
 		"持有 ETF:0050 元大台灣50 2 億(前十大 62%,2026-09-30)、00679B 元大美債20年 1000 萬(沒有前十大持股,無法拆解)。",
-		"合計曝險前 2 大(共 3 檔):2330 台積電 2.1 億(58.89%;直接 1 億,經由 0050 1.1 億);現金 100 萬(0.28%;直接 0 萬,經由 0056 100 萬)。",
+		"合計曝險前 2 大(共 3 檔):2330 台積電 2.1 億(58.89%;直接 1 億,經由 0050 1.1 億);現金 100 萬(0.28%;直接 0 元,經由 0056 100 萬)。",
 		"沒有收盤價、未列入:2887Z1。",
 		"免責聲明",
 	} {
@@ -194,6 +194,9 @@ func TestPortfolioEtfExposureTool(t *testing.T) {
 		}
 	}
 
+	if got := moneyText(3678.4); got != "3678 元" {
+		t.Errorf("不到 1 萬應以元顯示:%s", got)
+	}
 	none := &fakeEtfHoldingQuerier{exposure: &PortfolioEtfExposureEnvelope{}}
 	result, _, err = toolset(none).portfolioEtfExposure(t.Context(), nil, PortfolioEtfExposureInput{})
 	if err != nil || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "目前沒有可計算市值的持股") {
