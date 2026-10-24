@@ -8,7 +8,6 @@ package stock
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/url"
 	"slices"
 	"strings"
@@ -500,13 +499,7 @@ func labelOf(pairs []struct{ code, label string }, code string) string {
 
 // yiText 把元換成億元(小數一位);不到 1 億改用萬元(整數),小額才不會顯示成「0 億」;nil 顯示「無」。
 func yiText(v *float64) string {
-	if v == nil {
-		return "無"
-	}
-	if math.Abs(*v) < 1e8 {
-		return formatFloat(math.Round(*v/1e4)) + " 萬"
-	}
-	return formatFloat(math.Round(*v/1e7)/10) + " 億"
+	return FormatCurrencyWithUnit(v, CurrencyYuan)
 }
 
 // signedPercentPtr 顯示帶正負號的百分比;nil 顯示「無」。

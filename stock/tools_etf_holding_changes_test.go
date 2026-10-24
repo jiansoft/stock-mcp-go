@@ -231,11 +231,11 @@ func TestEtfHoldingToolsAreRegisteredReadOnly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("列出工具:%v", err)
 		}
-		if tool.Name == "get_etf_holding_changes" || tool.Name == "get_portfolio_etf_exposure" {
+		if tool.Name == "get_etf_holding_changes" || tool.Name == "get_etf_holding_history" || tool.Name == "get_portfolio_etf_exposure" {
 			found[tool.Name] = tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 		}
 	}
-	if !found["get_etf_holding_changes"] || !found["get_portfolio_etf_exposure"] {
+	if !found["get_etf_holding_changes"] || !found["get_etf_holding_history"] || !found["get_portfolio_etf_exposure"] {
 		t.Fatalf("應註冊兩個唯讀工具:%v", found)
 	}
 }

@@ -27,14 +27,14 @@ func TestBacktestRevenueScaleAndCashFlow(t *testing.T) {
 		}
 	}
 	text := backtestOptionsText(opt)
-	if !strings.Contains(text, "已公布的最新月營收 ≥ 1.00 億元") || !strings.Contains(text, "近四季自由現金流為正") {
+	if !strings.Contains(text, "已公布的最新月營收 ≥ 1 億") || !strings.Contains(text, "近四季自由現金流為正") {
 		t.Fatalf("穩健度摘要缺少條件:%s", text)
 	}
 	summary := screenBacktestSummary(&ScreenBacktestEnvelope{
 		From: "2019-01-02", To: "2026-10-20", Market: "all", HoldDays: 20, Limit: 20,
 		MinMonthlyRevenue: &revenue, PositiveFreeCashFlow: true,
 	})
-	if !strings.Contains(summary, "已公布的最新月營收 ≥ 1.00 億元") || !strings.Contains(summary, "近四季自由現金流為正") {
+	if !strings.Contains(summary, "已公布的最新月營收 ≥ 1 億") || !strings.Contains(summary, "近四季自由現金流為正") {
 		t.Fatalf("回測摘要缺少條件:%s", summary)
 	}
 	if revenueScaleCashTexts(nil, false) != nil {

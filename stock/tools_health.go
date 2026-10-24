@@ -204,7 +204,7 @@ func healthValue(key, unit string, v *float64) string {
 	}
 	switch {
 	case unit == "thousand_twd":
-		return fmt.Sprintf("%.2f 億元", *v/100_000)
+		return FormatCurrencyWithUnit(v, CurrencyThousand)
 	case key == "current_ratio_improved" || key == "asset_turnover_improved":
 		return fmt.Sprintf("%.2f 倍", *v)
 	default:

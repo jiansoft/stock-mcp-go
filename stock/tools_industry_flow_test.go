@@ -103,9 +103,9 @@ func TestIndustryFlowTool(t *testing.T) {
 		t.Fatalf("structured output 錯誤:%#v", output)
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
-	for _, want := range []string{"外資產業資金流向(2026-10-07 至 2026-10-13 共 5 個交易日,all 市場,淨流入最多在前)", "全體合計 -12.35 億元",
-		"第 1 名 半導體業:淨額 +250 億元(占產業成交金額 4.5%);160 檔中買超 90、賣超 70;買超最多:2330 台積電 +115.71 億、3661 世芯-KY +78.73 億;賣超最多:2408 南亞科 -5 億",
-		"第 2 名 航運業:淨額 -30 億元(占產業成交金額 無);30 檔中買超 5、賣超 25;買超最多:無;賣超最多:2603 長榮 -20 億"} {
+	for _, want := range []string{"外資產業資金流向(2026-10-07 至 2026-10-13 共 5 個交易日,all 市場,淨流入最多在前)", "全體合計 -12.3 億",
+		"第 1 名 半導體業:淨額 +250 億(占產業成交金額 4.5%);160 檔中買超 90、賣超 70;買超最多:2330 台積電 +115.7 億、3661 世芯-KY +78.7 億;賣超最多:2408 南亞科 -5 億",
+		"第 2 名 航運業:淨額 -30 億(占產業成交金額 無);30 檔中買超 5、賣超 25;買超最多:無;賣超最多:2603 長榮 -20 億"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("摘要缺少 %q:%s", want, text)
 		}
@@ -138,7 +138,7 @@ func TestIndustryFlowTool(t *testing.T) {
 // TestIndustryFlowSummary 驗證 asc 方向與沒有產業的說明。
 func TestIndustryFlowSummary(t *testing.T) {
 	asc := industryFlowSummary(&IndustryFlowEnvelope{DataAsOf: "2026-10-13", From: "2026-10-13", Days: 1, Investor: "total", Market: "twse", Order: "asc"})
-	for _, want := range []string{"三大法人合計產業資金流向", "淨流出最多在前", "全體合計 0 億元", "沒有產業資料"} {
+	for _, want := range []string{"三大法人合計產業資金流向", "淨流出最多在前", "全體合計 0 元", "沒有產業資料"} {
 		if !strings.Contains(asc, want) {
 			t.Errorf("asc 摘要缺少 %q:%s", want, asc)
 		}

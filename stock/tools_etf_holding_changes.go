@@ -124,6 +124,32 @@ type etfHoldingChangesToolset struct {
 	logf func(string, ...any)
 }
 
+// etfHoldingHistory 直接列出每期完整前十大，沿用同一查詢與輸入驗證。
+func (ts *etfHoldingChangesToolset) etfHoldingHistory(ctx context.Context, req *mcp.CallToolRequest, in EtfHoldingChangesInput) (*mcp.CallToolResult, any, error) {
+	_, value, err := ts.etfHoldingChanges(ctx, req, in)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := value.(EtfHoldingChangesOutput)
+	out.DataKind = "etf_holding_history"
+	var b summaryBuilder
+	b.printf("%s %s 歷史前十大持股（資料期別，不代表固定季度）:", out.StockSymbol, out.Name)
+	for _, period := range out.Periods {
+		b.printf("\n%s:", period.AsOf)
+		for _, h := range period.Holdings {
+			b.printf(" %s %s %s%%;", h.Symbol, h.Name, formatFloat(h.Weight))
+		}
+		if len(period.Holdings) == 0 {
+			b.writeString("沒有持股紀錄")
+		}
+	}
+	if len(out.Periods) == 0 {
+		b.writeString("沒有歷史紀錄")
+	}
+	b.printf("\n只涵蓋前十大。%s", AnalysisDisclaimer)
+	return textResult(b.String()), out, nil
+}
+
 // etfHoldingChanges 執行 get_etf_holding_changes。
 func (ts *etfHoldingChangesToolset) etfHoldingChanges(ctx context.Context, _ *mcp.CallToolRequest, in EtfHoldingChangesInput) (*mcp.CallToolResult, any, error) {
 	symbol, err := normalizeSymbol(in.Symbol)

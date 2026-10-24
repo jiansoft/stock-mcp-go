@@ -183,9 +183,9 @@ func portfolioSummaryText(p *PortfolioSummary) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s目前持有 %d 檔(報價截至 %s):市值 %s 元、成本 %s 元,未實現損益 %s 元(%s),目前持股累計已領股利 %s 元。",
-		scope, p.Symbols, displayString(p.DataAsOf), formatFloat(p.MarketValue), formatFloat(p.Cost),
-		formatFloat(p.UnrealizedGain), displayPercent(p.UnrealizedGainPercent), formatFloat(p.DividendsReceived))
+	b.printf("%s目前持有 %d 檔(報價截至 %s):市值 %s、成本 %s,未實現損益 %s(%s),目前持股累計已領股利 %s。",
+		scope, p.Symbols, displayString(p.DataAsOf), FormatCurrencyWithUnit(&p.MarketValue, CurrencyYuan), FormatCurrencyWithUnit(&p.Cost, CurrencyYuan),
+		FormatCurrencyWithUnit(&p.UnrealizedGain, CurrencyYuan), displayPercent(p.UnrealizedGainPercent), FormatCurrencyWithUnit(&p.DividendsReceived, CurrencyYuan))
 	b.printf("\n市值加權殖利率 %s;市值加權 F 分數 %s。", weightedText(p.WeightedDividendYield, "%"), weightedText(p.WeightedFScore, ""))
 	b.printf("\n組合本益比 %s;組合股價淨值比 %s(市值加權的調和平均,虧損部位不列入)。",
 		weightedText(p.WeightedPE, " 倍"), weightedText(p.WeightedPB, " 倍"))

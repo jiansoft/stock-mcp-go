@@ -135,7 +135,7 @@ func (ts *peersToolset) stockPeers(ctx context.Context, _ *mcp.CallToolRequest, 
 
 // peerMetricLabels 是各指標的中文名稱與單位。
 var peerMetricLabels = map[string][2]string{
-	"market_cap":             {"市值", " 億元"},
+	"market_cap":             {"市值", ""},
 	"price_earning_ratio":    {"本益比", " 倍"},
 	"price_to_book_ratio":    {"股價淨值比", " 倍"},
 	"dividend_yield_percent": {"殖利率", "%"},
@@ -168,15 +168,16 @@ func peersSummary(e *PeersEnvelope) string {
 			direction = "越低越好"
 		}
 		target, median := m.Target, m.IndustryMedian
+		targetText, medianText := displayWithUnit(target, label[1]), displayWithUnit(median, label[1])
 		if m.Metric == "market_cap" {
-			target, median = capToHundredMillion(target), capToHundredMillion(median)
+			targetText, medianText = FormatCurrencyWithUnit(target, CurrencyYuan), FormatCurrencyWithUnit(median, CurrencyYuan)
 		}
 		rank := "無名次"
 		if m.Rank != nil {
 			rank = fmt.Sprintf("第 %d／%d 名", *m.Rank, m.Samples)
 		}
 		b.printf("\n- %s(%s):目標 %s,%s,產業中位數 %s", label[0], direction,
-			displayWithUnit(target, label[1]), rank, displayWithUnit(median, label[1]))
+			targetText, rank, medianText)
 	}
 	if len(e.Peers) > 0 {
 		b.printf("\n市值前 %d 檔:", len(e.Peers))
@@ -196,8 +197,8 @@ func peerStockText(p *PeerStock) string {
 	if p.FScore != nil {
 		fScore = fmt.Sprint(*p.FScore)
 	}
-	return fmt.Sprintf("市值 %s 億元、本益比 %s、股價淨值比 %s、殖利率 %s、F 分數 %s、毛利率 %s、月營收年增 %s",
-		displayFloat(capToHundredMillion(p.MarketCap)), displayFloat(p.PriceEarningRatio), displayFloat(p.PriceToBookRatio),
+	return fmt.Sprintf("市值 %s、本益比 %s、股價淨值比 %s、殖利率 %s、F 分數 %s、毛利率 %s、月營收年增 %s",
+		FormatCurrencyWithUnit(p.MarketCap, CurrencyYuan), displayFloat(p.PriceEarningRatio), displayFloat(p.PriceToBookRatio),
 		displayPercent(p.DividendYieldPercent), fScore, displayPercent(p.GrossMarginPercent), displayPercent(p.RevenueYOYPercent))
 }
 

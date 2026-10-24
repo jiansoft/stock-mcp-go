@@ -138,17 +138,18 @@ func dividendForecastText(f *DividendForecast) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s 元(已公告 %s 元、依去年同期推估 %s 元),預估殖利率 %s。",
-		scope, f.From, f.To, formatFloat(f.Total), formatFloat(f.AnnouncedTotal), formatFloat(f.EstimatedTotal), displayPercent(f.ForwardYieldPercent))
+	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s(已公告 %s、依去年同期推估 %s),預估殖利率 %s。",
+		scope, f.From, f.To, FormatCurrencyWithUnit(&f.Total, CurrencyYuan), FormatCurrencyWithUnit(&f.AnnouncedTotal, CurrencyYuan), FormatCurrencyWithUnit(&f.EstimatedTotal, CurrencyYuan), displayPercent(f.ForwardYieldPercent))
 
 	b.printf("\n每月入帳:")
 	for _, month := range f.Months {
 		if month.Announced == 0 && month.Estimated == 0 {
 			continue
 		}
-		b.printf("\n- %s:%s 元", month.Month, formatFloat(month.Announced+month.Estimated))
+		amount := month.Announced + month.Estimated
+		b.printf("\n- %s:%s", month.Month, FormatCurrencyWithUnit(&amount, CurrencyYuan))
 		if month.Estimated > 0 && month.Announced > 0 {
-			b.printf("(其中推估 %s 元)", formatFloat(month.Estimated))
+			b.printf("(其中推估 %s)", FormatCurrencyWithUnit(&month.Estimated, CurrencyYuan))
 		} else if month.Estimated > 0 {
 			b.printf("(推估)")
 		}
@@ -161,8 +162,8 @@ func dividendForecastText(f *DividendForecast) string {
 	}
 	b.printf("\n金額最大的幾筆:")
 	for _, item := range largest {
-		b.printf("\n- %s %s %s 發放 %s 元(%d 股 × %s 元,%s)",
-			item.StockSymbol, item.Name, item.PayDate, formatFloat(item.Amount), item.Shares, formatFloat(item.CashPerShare), basisText(item.Basis))
+		b.printf("\n- %s %s %s 發放 %s(%d 股 × %s 元,%s)",
+			item.StockSymbol, item.Name, item.PayDate, FormatCurrencyWithUnit(&item.Amount, CurrencyYuan), item.Shares, formatFloat(item.CashPerShare), basisText(item.Basis))
 	}
 	b.printf("\n只含現金股利,未扣二代健保補充保費與所得稅,並假設目前持股持有到各次除息日。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)

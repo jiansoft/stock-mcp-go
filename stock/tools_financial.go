@@ -261,8 +261,8 @@ func (ts *financialToolset) monthlyRevenueHistory(ctx context.Context, _ *mcp.Ca
 		summary = fmt.Sprintf("股票 %s 在指定範圍內沒有月營收資料。\n免責聲明:%s", symbol, AnalysisDisclaimer)
 	} else {
 		latest := history.Revenues[0]
-		summary = fmt.Sprintf("取得股票 %s 共 %d 筆月營收(最新 %s:當月營收 %s 仟元,年增率 %s)。\n免責聲明:%s",
-			symbol, len(history.Revenues), latest.Month, displayFloat(latest.MonthlyRevenue), displayPercent(latest.YearOverYearPercent), AnalysisDisclaimer)
+		summary = fmt.Sprintf("取得股票 %s 共 %d 筆月營收(最新 %s:當月營收 %s,年增率 %s)。\n免責聲明:%s",
+			symbol, len(history.Revenues), latest.Month, FormatCurrencyWithUnit(latest.MonthlyRevenue, CurrencyThousand), displayPercent(latest.YearOverYearPercent), AnalysisDisclaimer)
 	}
 	out := MonthlyRevenueOutput{
 		DataKind:    "monthly_revenue_history",

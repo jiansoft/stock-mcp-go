@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -266,9 +265,9 @@ func institutionalFlowSummary(e *InstitutionalFlowEnvelope) string {
 		if industry == "" {
 			industry = "未分類"
 		}
-		b.printf("\n- 第 %d 名 %s %s(%s,%s):淨%s %s 張、約 %s 億元,占期間成交量 %s;買超 %d 天、賣超 %d 天,%s;收盤 %s",
+		b.printf("\n- 第 %d 名 %s %s(%s,%s):淨%s %s 張、約 %s,占期間成交量 %s;買超 %d 天、賣超 %d 天,%s;收盤 %s",
 			item.Rank, item.StockSymbol, item.Name, item.Market, industry, side, signedText(item.NetLots),
-			formatFloat(math.Round(item.NetAmount/1e6)/100), displayPercent(item.VolumeRatio),
+			FormatCurrencyWithUnit(&item.NetAmount, CurrencyYuan), displayPercent(item.VolumeRatio),
 			item.BuyDays, item.SellDays, streakText(item.Streak), displayFloat(item.ClosingPrice))
 	}
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
