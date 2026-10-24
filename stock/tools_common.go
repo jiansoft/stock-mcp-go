@@ -2,6 +2,7 @@ package stock
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +14,42 @@ import (
 )
 
 // 各組工具共用的參數驗證、文字摘要格式化與共用 schema。
+
+// CurrencyUnit 是來源數值的金額單位；先換算元，再依絕對金額選擇顯示單位。
+type CurrencyUnit float64
+
+const (
+	CurrencyYuan     CurrencyUnit = 1
+	CurrencyThousand CurrencyUnit = 1000
+	CurrencyMillion  CurrencyUnit = 1000000
+)
+
+// FormatCurrencyWithUnit 將元、千元或百萬元來源統一顯示為元、萬或億，保留負號。
+// 無值或非有限數回「無」；摘要的四捨五入不改變結構化輸出的精度。
+func FormatCurrencyWithUnit(value *float64, unit CurrencyUnit) string {
+	if value == nil || (unit != CurrencyYuan && unit != CurrencyThousand && unit != CurrencyMillion) {
+		return "無"
+	}
+	amount := *value * float64(unit)
+	if math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return "無"
+	}
+	// 萬、億保留兩位小數；依四捨五入後的值決定單位，避免出現「10000 萬」。
+	rounded := math.Round(amount)
+	suffix := " 元"
+	if math.Abs(rounded) >= 1e4 {
+		rounded = math.Round(amount/1e2) / 100
+		suffix = " 萬"
+	}
+	if suffix == " 萬" && math.Abs(rounded) >= 1e4 {
+		rounded = math.Round(amount/1e6) / 100
+		suffix = " 億"
+	}
+	if rounded == 0 {
+		rounded = 0
+	} // 避免負零。
+	return formatFloat(rounded) + suffix
+}
 
 // datePattern 用來檢查日期字串的「格式」是否為四位數字-二位數字-二位
 // 數字,例如 "2026-07-13"。這只驗證格式,不驗證日期是否真實存在(例如

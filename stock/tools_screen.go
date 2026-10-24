@@ -372,20 +372,14 @@ func streakDisplay(days *int) string {
 	return streakText(int64(*days))
 }
 
-// millionText 把百萬元金額顯示成「X 百萬元」;nil 回「無」。
+// millionText 將百萬元來源交給共用金額格式器。
 func millionText(million *float64) string {
-	if million == nil {
-		return "無"
-	}
-	return displayFloat(million) + " 百萬元"
+	return FormatCurrencyWithUnit(million, CurrencyMillion)
 }
 
-// thousandsToHundredMillion 把千元金額換算成「X 億元」;nil 回「無」。
+// thousandsToHundredMillion 將千元來源交給共用金額格式器。
 func thousandsToHundredMillion(thousands *float64) string {
-	if thousands == nil {
-		return "無"
-	}
-	return fmt.Sprintf("%.2f 億元", *thousands/100_000)
+	return FormatCurrencyWithUnit(thousands, CurrencyThousand)
 }
 
 // fScoreText 以「分數/可判定項數」表示 F 分數;無資料回「無」。

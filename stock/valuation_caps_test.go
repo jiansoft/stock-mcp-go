@@ -115,7 +115,7 @@ func TestPortfolioNegativeFreeCashFlowWarning(t *testing.T) {
 	summary.WarningSymbols = 1
 	summary.Holdings = append(summary.Holdings, holding)
 	text := portfolioSummaryText(summary)
-	if !strings.Contains(text, "營業虧損、自由現金流為負;") || !strings.Contains(text, "近四季自由現金流 -1.23 億元") {
+	if !strings.Contains(text, "營業虧損、自由現金流為負;") || !strings.Contains(text, "近四季自由現金流 -1.23 億") {
 		t.Fatalf("摘要缺少自由現金流警示:%s", text)
 	}
 }

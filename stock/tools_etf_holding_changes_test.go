@@ -183,9 +183,9 @@ func TestPortfolioEtfExposureTool(t *testing.T) {
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
 	for _, want := range []string{
-		"持股總市值 3.6 億,其中 ETF 2.6 億;ETF 前十大以外無法拆解 1.3 億。",
+		"持股總市值 3.6 億,其中 ETF 2.6 億;ETF 前十大以外無法拆解 1.31 億。",
 		"持有 ETF:0050 元大台灣50 2 億(前十大 62%,2026-09-30)、00679B 元大美債20年 1000 萬(沒有前十大持股,無法拆解)。",
-		"合計曝險前 2 大(共 3 檔):2330 台積電 2.1 億(58.89%;直接 1 億,經由 0050 1.1 億);現金 100 萬(0.28%;直接 0 元,經由 0056 100 萬)。",
+		"合計曝險前 2 大(共 3 檔):2330 台積電 2.12 億(58.89%;直接 1 億,經由 0050 1.12 億);現金 100 萬(0.28%;直接 0 元,經由 0056 100 萬)。",
 		"沒有收盤價、未列入:2887Z1。",
 		"免責聲明",
 	} {
@@ -231,11 +231,11 @@ func TestEtfHoldingToolsAreRegisteredReadOnly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("列出工具:%v", err)
 		}
-		if tool.Name == "get_etf_holding_changes" || tool.Name == "get_portfolio_etf_exposure" {
+		if tool.Name == "get_etf_holding_changes" || tool.Name == "get_etf_holding_history" || tool.Name == "get_portfolio_etf_exposure" {
 			found[tool.Name] = tool.Annotations != nil && tool.Annotations.ReadOnlyHint
 		}
 	}
-	if !found["get_etf_holding_changes"] || !found["get_portfolio_etf_exposure"] {
+	if !found["get_etf_holding_changes"] || !found["get_etf_holding_history"] || !found["get_portfolio_etf_exposure"] {
 		t.Fatalf("應註冊兩個唯讀工具:%v", found)
 	}
 }

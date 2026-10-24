@@ -45,6 +45,21 @@ stock-mcp-go
 
 ## MCP tools
 
+`analyze_stock_deep_dive` combines the profile and nine historical analysis sections in one call.
+It checks that the symbol exists, uses at most four concurrent requests and a 25-second overall deadline,
+and retains available sections with safe warnings when another section fails.
+
+`get_etf_holding_history` returns the full top-ten holdings for 1–24 recorded periods, alongside
+the existing change summary tool. `get_etf_proxy_tracking` reports annualized return-difference volatility
+and cumulative return differences against **0050 as an ETF proxy**. It requires 120 matching return intervals;
+missing data stays null, and these values are not tracking errors against the fund's actual target index.
+The Rust deployment must include `etc/sql/etf_tracking_error.sql` and run the ETF performance calculation first.
+
+Monetary summaries use one formatter with explicit source units (TWD, thousand TWD or million TWD),
+displaying 元／萬／億 with signs preserved. Per-share prices retain their original precision;
+structured data retains the source units and values. Tool descriptions are shorter, while input schemas
+continue to describe ranges, units and validation rules.
+
 | Tool | Availability | Purpose |
 | --- | --- | --- |
 | `search_stock` | API | Search by stock symbol or Chinese/English name |

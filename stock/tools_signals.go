@@ -310,10 +310,10 @@ func signalsSummary(e *SignalsEnvelope) string {
 			if industry == "" {
 				industry = "未分類"
 			}
-			b.printf("\n- %s %s(%s)%s:收盤 %s 元、漲跌 %s、成交值 %s 億元;%s",
+			b.printf("\n- %s %s(%s)%s:收盤 %s 元、漲跌 %s、成交值 %s;%s",
 				item.StockSymbol, item.Name, industry, signalLabel(item.Indicator, item.Kind),
 				displayFloat(item.ClosingPrice), displayPercent(item.ChangePercent),
-				displayFloat(capToHundredMillion(item.TradeValue)), item.Description)
+				FormatCurrencyWithUnit(item.TradeValue, CurrencyYuan), item.Description)
 		}
 		if rest := e.Total - len(e.Items); rest > 0 {
 			b.printf("\n另有 %d 筆未列出,可提高 limit 或加上 kind、indicator、industry 篩選。", rest)

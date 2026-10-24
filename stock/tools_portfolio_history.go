@@ -143,7 +143,7 @@ func portfolioHistoryText(h *PortfolioHistory, months int) string {
 		b.printf("(年化 %s)", displayPercent(h.AnnualizedReturnPercent))
 	}
 	b.printf(";同期加權指數 %s,超額報酬 %s 個百分點。", displayPercent(h.BenchmarkReturnPercent), displayFloat(h.ExcessReturnPercent))
-	b.printf("\n市值 %s → %s 元,期間投入 %s 元、賣出 %s 元。", displayFloat(h.StartValue), displayFloat(h.EndValue), displayFloat(h.Buys), displayFloat(h.Sells))
+	b.printf("\n市值 %s → %s,期間投入 %s、賣出 %s。", FormatCurrencyWithUnit(h.StartValue, CurrencyYuan), FormatCurrencyWithUnit(h.EndValue, CurrencyYuan), FormatCurrencyWithUnit(h.Buys, CurrencyYuan), FormatCurrencyWithUnit(h.Sells, CurrencyYuan))
 	if h.MaxDrawdownPeak != nil {
 		b.printf("最大回撤 %s(%s 高點 → %s 低點)。", displayPercent(h.MaxDrawdownPercent), *h.MaxDrawdownPeak, displayString(h.MaxDrawdownTrough))
 	} else {

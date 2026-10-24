@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
 	"strings"
 
@@ -170,11 +169,11 @@ func (ts *industryFlowToolset) industryFlow(ctx context.Context, _ *mcp.CallTool
 
 // signedHundredMillion 把元換算成億元文字(四捨五入到小數 2 位,正數加正號)。
 func signedHundredMillion(amount float64) string {
-	value := math.Round(amount/1e6) / 100
-	if value > 0 {
-		return "+" + formatFloat(value)
+	value := FormatCurrencyWithUnit(&amount, CurrencyYuan)
+	if amount > 0 && value != "無" && !strings.HasPrefix(value, "0 ") {
+		return "+" + value
 	}
-	return formatFloat(value)
+	return value
 }
 
 // flowStocks 把個股列成「代號 名稱 金額億」並以頓號串接;沒有個股回「無」。
@@ -184,7 +183,7 @@ func flowStocks(stocks []IndustryFlowStock) string {
 	}
 	parts := make([]string, 0, len(stocks))
 	for _, stock := range stocks {
-		parts = append(parts, fmt.Sprintf("%s %s %s 億", stock.StockSymbol, stock.Name, signedHundredMillion(stock.NetAmount)))
+		parts = append(parts, fmt.Sprintf("%s %s %s", stock.StockSymbol, stock.Name, signedHundredMillion(stock.NetAmount)))
 	}
 	return strings.Join(parts, "、")
 }
@@ -196,13 +195,13 @@ func industryFlowSummary(e *IndustryFlowEnvelope) string {
 	if e.Order == "asc" {
 		direction = "淨流出最多在前"
 	}
-	b.printf("%s產業資金流向(%s 至 %s 共 %d 個交易日,%s 市場,%s):金額為每日淨股數×當日收盤價加總的估計值;全體合計 %s 億元。",
+	b.printf("%s產業資金流向(%s 至 %s 共 %d 個交易日,%s 市場,%s):金額為每日淨股數×當日收盤價加總的估計值;全體合計 %s。",
 		investorLabels[e.Investor], e.From, e.DataAsOf, e.Days, e.Market, direction, signedHundredMillion(e.TotalNetAmount))
 	if len(e.Items) == 0 {
 		b.printf("\n沒有產業資料。")
 	}
 	for _, item := range e.Items {
-		b.printf("\n- 第 %d 名 %s:淨額 %s 億元(占產業成交金額 %s);%d 檔中買超 %d、賣超 %d;買超最多:%s;賣超最多:%s",
+		b.printf("\n- 第 %d 名 %s:淨額 %s(占產業成交金額 %s);%d 檔中買超 %d、賣超 %d;買超最多:%s;賣超最多:%s",
 			item.Rank, item.Industry, signedHundredMillion(item.NetAmount), displayPercent(item.TradeValueRatio),
 			item.Stocks, item.BuyStocks, item.SellStocks, flowStocks(item.TopBuyers), flowStocks(item.TopSellers))
 	}

@@ -242,12 +242,13 @@ func financialReportSummary(e *FinancialReportEnvelope) string {
 	return b.String()
 }
 
-// hundredMillion 把千元金額換成「億元」文字(1 億元 = 100,000 千元);無資料回「無」。
+// hundredMillion 沿用舊入口名稱，以共用格式器顯示來源為千元的金額。
 func hundredMillion(thousands *int64) string {
 	if thousands == nil {
 		return "無"
 	}
-	return fmt.Sprintf("%.2f 億元", float64(*thousands)/100_000)
+	value := float64(*thousands)
+	return FormatCurrencyWithUnit(&value, CurrencyThousand)
 }
 
 // percentOf 回傳 part ÷ whole 的百分比文字;任一缺值或分母為 0 時回「無」。

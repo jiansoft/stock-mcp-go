@@ -82,6 +82,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		logf = func(string, ...any) {}
 	}
 	ts := &toolset{q: q, logf: logf}
+	addDeepDiveTool(server, q, logf)
+	addEtfTrackingTool(server, q, logf)
 
 	// mcp.AddTool 是 go-sdk 提供的泛型函式(Go 1.18 起支援的語言特性):
 	// 它的完整簽名類似 AddTool[In, Out any](s *Server, t *Tool, h ToolHandlerFor[In, Out])。
@@ -111,9 +113,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	}, ts.latestDailyQuote)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "get_price_history",
-		Description: "查詢指定股票代號的歷史日線資料,可選填日期範圍與筆數上限。adjusted=true 時每筆附上依除權息、減資、分割還原的開高低收" +
-			"與累計還原因子(以回傳區間最新一筆為基準),適合比較長期漲跌、計算含息報酬或判斷除權息前後的價位。",
+		Name:        "get_price_history",
+		Description: "查詢歷史日線；adjusted=true 附除權息、減資、分割還原價格，適合長期比較。",
 		InputSchema: priceHistorySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.priceHistory)
@@ -185,12 +186,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if screener, ok := q.(Screener); ok {
 		sts := &screenToolset{screener: screener, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "screen_stocks",
-			Description: "依固定白名單條件篩選股票:市場、產業、估值區間、營收年增率、" +
-				"營收動能(連續年增月數下限、近 3 個月累計年增率下限)、最新月營收下限(排除低基期)、EPS、ROE、殖利率," +
-				"財務體質(Piotroski F 分數下限、最新一季毛利率下限與負債比上限、近四季自由現金流為正)、" +
-				"相對強度分數下限,以及外資、投信連續買超天數下限(每檔附連續買賣超天數)。" +
-				"可依上述指標排序(含連續年增月數、近 3 月累計年增率、F 分數、毛利率、負債比、相對強度)。只描述符合條件的歷史資料,不替使用者做投資決策。",
+			Name:        "screen_stocks",
+			Description: "依估值、營收動能（連續年增、最新月營收下限）、EPS、ROE、殖利率、F 分數、毛利率、負債比、自由現金流、RS 與法人連買篩選上市櫃股票；可排序，非投資建議。",
 			InputSchema: screenStocksSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.screenStocks)
@@ -233,10 +230,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if chips, ok := q.(ChipQuerier); ok {
 		cts := &chipToolset{chips: chips, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_chip_data",
-			Description: "查詢指定股票的籌碼面:近 N 個交易日三大法人買賣超(股)與融資融券餘額(張)、外資與投信連續買賣超天數、" +
-				"最近 8 週千張大戶持股比例、最新月份董監持股與設質比例,以及券商分點主力進出(每日主力買賣超與最近一天的分點;只有持股才有)。" +
-				"資料為盤後彙整,非即時。",
+			Name:        "get_chip_data",
+			Description: "查詢個股三大法人買賣超（股）、融資融券（張）、連買賣天數、大戶、董監與券商分點籌碼。",
 			InputSchema: chipSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cts.stockChip)
@@ -246,10 +241,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if reports, ok := q.(FinancialReportQuerier); ok {
 		rts := &financialReportToolset{reports: reports, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_financial_reports",
-			Description: "查詢指定股票的三大財務報表:損益表(營收、毛利、營業利益、淨利、EPS)、資產負債表(資產、負債、權益、每股淨值)" +
-				"與現金流量表(營業/投資/融資/自由現金流)。可選單季或年度,依期間新到舊。金額單位為新台幣千元,每股數值單位為元;" +
-				"與 get_financial_statement_history(比率與每股數據)互補。",
+			Name:        "get_financial_reports",
+			Description: "查詢個股損益表、資產負債表與現金流量表；可選季報或年報。",
 			InputSchema: financialReportSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, rts.financialReports)
@@ -258,10 +251,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if health, ok := q.(FinancialHealthQuerier); ok {
 		hts := &financialHealthToolset{health: health, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_financial_health",
-			Description: "以 Piotroski F 分數評估指定股票的年度財務體質:比較評分年度與前一年度的 9 項指標" +
-				"(獲利能力 4 項、財務槓桿與流動性 3 項、經營效率 2 項),每項通過得 1 分,並附本期數值與比較基準。" +
-				"資料不足或不適用(例如金融業沒有流動負債分類)的指標不計分,evaluated 為可判定項數。",
+			Name:        "get_financial_health",
+			Description: "查詢 Piotroski F 分數與九項年度財務體質指標、比較年度及缺漏資料。",
 			InputSchema: financialHealthSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.financialHealth)
@@ -270,9 +261,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if fill, ok := q.(DividendFillQuerier); ok {
 		dts := &dividendFillToolset{fill: fill, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_dividend_fill",
-			Description: "查詢指定股票最近幾次除權息的填息結果:除權息前一日收盤為填息價,除權息日起第幾個交易日收盤回到填息價" +
-				"(當日填息算第 1 天);尚未填息者列出已過交易日數與距填息價的差距。另附已填息次數、平均與中位數填息天數。",
+			Name:        "get_dividend_fill",
+			Description: "查詢個股歷次除權息填息進度、是否填息、交易天數及歷史統計。",
 			InputSchema: dividendFillSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, dts.dividendFill)
@@ -281,10 +271,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if band, ok := q.(ValuationBandQuerier); ok {
 		vts := &valuationBandToolset{band: band, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_valuation_band",
-			Description: "查詢指定股票本益比與股價淨值比在近幾年(預設 5 年)的歷史區間:目前值位於第幾百分位、" +
-				"最低/P25/中位數/P75/最高,以及估值倍數回到各分位時對應的股價。適合回答「現在估值在歷史上算高還是低」。" +
-				"虧損(本益比 ≤ 0)的日子不算樣本;ETF 沒有本益比。",
+			Name:        "get_valuation_band",
+			Description: "查詢 PE／PB 歷史百分位與分位數對應股價；不是目標價。",
 			InputSchema: valuationBandSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, vts.valuationBand)
@@ -293,10 +281,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if peers, ok := q.(PeersQuerier); ok {
 		pts := &peersToolset{peers: peers, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_stock_peers",
-			Description: "查詢指定股票與同產業個股(上市櫃、未下市、不含 ETF)的比較:市值、本益比、股價淨值比、殖利率、" +
-				"Piotroski F 分數、單季毛利率、最新月營收年增率,以及各指標的產業中位數與目標股名次(第幾名/有效樣本數)。" +
-				"適合回答「跟同業比起來估值貴不貴、體質好不好」。本益比、股價淨值比越低名次越前,其餘指標越高名次越前。",
+			Name:        "get_stock_peers",
+			Description: "比較同產業個股市值、估值、營收、獲利及財務體質；不含 ETF。",
 			InputSchema: peersSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, pts.stockPeers)
@@ -305,10 +291,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if technicals, ok := q.(TechnicalsQuerier); ok {
 		tts := &technicalsToolset{technicals: technicals, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_technical_indicators",
-			Description: "查詢指定股票截止日之前最近 N 個交易日(預設 20)的技術指標:5/10/20/60/120/240 日均線與乖離率、" +
-				"RSI(6/12/14)、KD(9,3,3)、MACD(12,26,9),以及最新一日的均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
-				"RSI 與 K 值超買超賣訊號。適合回答「技術面目前偏多還是偏空、有沒有交叉訊號」。價格已還原權值,除權息跳空不會造成假訊號。",
+			Name:        "get_technical_indicators",
+			Description: "查詢個股還原日線技術指標：均線、乖離、KD、MACD、RSI、布林通道與訊號。",
 			InputSchema: technicalsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, tts.technicalIndicators)
@@ -317,11 +301,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if signals, ok := q.(SignalsQuerier); ok {
 		sts := &signalsToolset{signals: signals, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_signal_stocks",
-			Description: "查詢某交易日(預設最新)出現技術訊號的上市櫃股票:均線/KD/MACD 黃金或死亡交叉、收盤站上或跌破月季年線、" +
-				"RSI(14) 與 K 值超買超賣、52 週新高新低,以及相對強度(RS)分數站上或跌破 80/50 分;可依市場、訊號種類、訊號來源與產業篩選," +
-				"依成交值由大到小排序,並附各訊號家數。" +
-				"適合回答「今天哪些股票創 52 週新高」「哪些半導體股 KD 黃金交叉」「哪些股票跌破季線」。訊號以還原權值的價格計算。",
+			Name:        "get_signal_stocks",
+			Description: "列出指定交易日出現均線、KD、MACD、RS 或價量訊號的上市櫃股票。",
 			InputSchema: signalsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.signalStocks)
@@ -330,19 +311,14 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if history, ok := q.(SignalHistoryQuerier); ok {
 		hts := &signalHistoryToolset{history: history, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_signal_performance",
-			Description: "統計一段期間(預設近一年,最長 3,653 天;超過 1,096 天時需指定 indicator;訊號從 2019 年起)內各技術訊號出現後 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、" +
-				"中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例,並附大盤基準;可依市場、訊號種類、訊號來源與產業篩選," +
-				"也可只看訊號當天相對強度(RS)分數在指定區間(例如 RS ≥ 80 的強勢股創新高),或外資/投信已連續買超 N 天的訊號" +
-				"(例如投信連買 3 天以上時的 52 週新高)。group_by=year 時另附各年度的統計與大盤基準,用來看訊號在多頭、空頭年份是否都有效。" +
-				"適合回答「52 週新高之後通常怎麼走」「KD 黃金交叉在半導體股準不準」「哪種訊號歷史上最有效」「這個訊號是不是只在某幾年有用」。過去表現不代表未來結果。",
+			Name:        "get_signal_performance",
+			Description: "統計技術訊號之後各持有期間的含息報酬、勝率及大盤比較；歷史表現非預測。",
 			InputSchema: signalPerformanceSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.signalPerformance)
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_stock_signal_history",
-			Description: "查詢指定股票一段期間(預設 180 天,最長 730 天)出現過的技術訊號,由新到舊,每筆附當日收盤、漲跌幅," +
-				"以及訊號之後 5/20/60/120/240 個交易日的還原報酬(未滿天期為未滿)。適合回答「這檔股票最近出現過哪些訊號」「上次跌破季線後走勢如何」。",
+			Name:        "get_stock_signal_history",
+			Description: "列出個股歷史技術訊號、當日價格及訊號後各期間含息報酬。",
 			InputSchema: stockSignalHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.stockSignalHistory)
@@ -351,13 +327,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if tq, ok := q.(StockTimelineQuerier); ok {
 		tts := &stockTimelineToolset{tq: tq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_stock_timeline",
-			Description: "查詢指定股票一段期間(預設 90 天,最長 730 天)的事件時間軸,由新到舊:除息/除權與股利發放、減資/分割、月營收(年增率、月增率)、" +
-				"月營收創歷史新高、季報(EPS、ROE)、三率三升/三降(毛利率、營業利益率、稅後淨利率都高於或都低於去年同季,金融保險業不列)、" +
-				"技術訊號(均線/KD/MACD/RSI、相對強度穿越 80/50 分、52 週新高新低)、外資/投信連續買賣超達 5/10/20 天、" +
-				"董監持股或質押比例單月變化達 1%;另列之後 60 天內已公告的除權息、發放與減資(標示尚未發生),附各種類筆數。" +
-				"適合回答「這檔股票最近發生了什麼」「下次除息是什麼時候」「最近營收和法人動向如何」;可用 kinds 只看某幾類(技術訊號通常最多)。" +
-				"月營收與季報的日期是法定公布期限。法說會不在時間軸內。",
+			Name:        "get_stock_timeline",
+			Description: "查詢個股除權息、股利、減資分割、營收、財報與技術訊號時間軸。",
 			InputSchema: stockTimelineSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, tts.stockTimeline)
@@ -366,11 +337,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if rs, ok := q.(RelativeStrengthQuerier); ok {
 		rts := &relativeStrengthToolset{rs: rs, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_relative_strength_ranking",
-			Description: "查詢上市櫃股票的相對強度(RS)排行:加權報酬(0.4×近 60 日+0.3×近 120 日+0.3×近 240 日,還原權值含息)" +
-				"在上市櫃普通股(不含 ETF、特別股)中的百分位分數 1–99(99 最強)與名次,附近 20/60/120/240 日報酬;可依市場、產業篩選或只查單一股票," +
-				"order=asc 列出最弱的。適合回答「目前最強勢的股票有哪些」「半導體哪幾檔最強」「2330 的相對強度幾分」。" +
-				"上市未滿 240 個交易日的股票不計分。過去表現不代表未來結果。",
+			Name:        "get_relative_strength_ranking",
+			Description: "查詢上市櫃普通股 RS 排行（60／120／240 日還原報酬加權百分位）；99 最強。",
 			InputSchema: relativeStrengthSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, rts.relativeStrength)
@@ -379,10 +347,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if rs, ok := q.(RelativeStrengthHistoryQuerier); ok {
 		hts := &relativeStrengthHistoryToolset{rs: rs, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_relative_strength_history",
-			Description: "查詢指定股票近 N 個交易日(預設 60,最多 120)的相對強度(RS)走勢:每天以上市櫃普通股(不含 ETF、特別股)計分(與 get_relative_strength_ranking 同一算法)的分數、名次," +
-				"以及期間最高/最低分、分數變化與穿越 50、80 分的轉折。適合回答「這檔股票是在變強還是變弱」「什麼時候轉強的」。" +
-				"上市未滿 240 個交易日的股票沒有分數。過去表現不代表未來結果。",
+			Name:        "get_relative_strength_history",
+			Description: "查詢個股 RS 分數、排名及同日母體規模的歷史走勢；不含 ETF、特別股。",
 			InputSchema: relativeStrengthHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.relativeStrengthHistory)
@@ -391,10 +357,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if is, ok := q.(IndustryStrengthQuerier); ok {
 		ists := &industryStrengthToolset{is: is, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_industry_strength",
-			Description: "查詢各產業的相對強度(RS):成分股 RS 分數(與 get_relative_strength_ranking 相同,以上市櫃普通股(不含 ETF、特別股)計算)的中位數、" +
-				"RS ≥ 80 的強勢占比與 ≤ 20 的弱勢占比、平均加權報酬、RS 前三名的領先股,以及與約 20 個交易日前中位數的變化;依中位數排名。" +
-				"適合回答「現在哪些產業最強勢」「資金輪動到哪裡」「哪些產業轉強或轉弱」。過去表現不代表未來結果。",
+			Name:        "get_industry_strength",
+			Description: "查詢產業 RS 中位數、強勢股比例及領先個股，辨識產業輪動。",
 			InputSchema: industryStrengthSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ists.industryStrength)
@@ -403,11 +367,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if fq, ok := q.(InstitutionalFlowQuerier); ok {
 		fts := &institutionalFlowToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_institutional_flow_ranking",
-			Description: "查詢三大法人(外資、投信、自營商或合計)在最近 N 個交易日(預設 1,最多 60)的買超或賣超排行:" +
-				"累計淨買賣張數、估計淨買賣金額(每日淨股數×當日收盤價)、占期間成交量比例、買賣超天數與截至資料日的連續買賣超天數;" +
-				"可依市場、產業篩選。適合回答「外資今天買最多的是哪些股票」「投信這週在買什麼」「哪些股票被法人連續賣超」。" +
-				"籌碼資料每晚 21:50 入庫,在那之前最新資料是前一個交易日。",
+			Name:        "get_institutional_flow_ranking",
+			Description: "查詢法人買賣超排行、連續買賣天數與成交占比；區分股數及金額。",
 			InputSchema: institutionalFlowSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.institutionalFlow)
@@ -416,12 +377,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if sq, ok := q.(InstitutionalStreakQuerier); ok {
 		sts := &institutionalStreakToolset{sq: sq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_institutional_streak_performance",
-			Description: "統計一段期間(預設近一年,最長 3,653 天)內法人(外資、投信、自營商或合計)連續買超或賣超滿 N 天(預設 3,1 至 60)之後" +
-				" 5/20/60/120/240 個交易日的表現:還原報酬(含息)的平均、中位數、勝率,以及相對同日同市場平均的超額報酬與勝過大盤的比例," +
-				"並附大盤基準;可依市場、產業篩選。每檔股票連續滿 N 天的那一天算一次事件,延續的天數不重複計算。" +
-				"適合回答「投信連買 3 天之後通常會漲嗎」「外資連賣 5 天後是不是該避開」「跟著法人買在半導體有沒有超額報酬」。" +
-				"group_by=year 時另附各年度的統計與大盤基準。籌碼資料從 2019 年起,之前的事件不列入。過去表現不代表未來結果。",
+			Name:        "get_institutional_streak_performance",
+			Description: "統計法人連續買超或賣超滿 N 天之後的含息報酬、勝率與大盤比較。",
 			InputSchema: institutionalStreakSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.institutionalStreakPerformance)
@@ -430,19 +387,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if bq, ok := q.(ScreenBacktestQuerier); ok {
 		bts := &screenBacktestToolset{bq: bq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_screen_backtest",
-			Description: "回測條件選股策略(預設近三年,最長 3,653 天):每隔 hold_days 個交易日(5/20/60/120/240,預設 20)換股一次," +
-				"從上市櫃普通股挑出符合條件的股票,依相對強度(RS)分數由高到低取前 limit 檔(預設 20)等權持有到下一次換股;" +
-				"條件可用換股當天的 RS 分數區間、外資/投信已連續買超天數、換股前持有天數內出現過的技術訊號、市場與產業,都不設就是「RS 最強的 N 檔」。" +
-				"keep_rank 可設換股緩衝(上一期持股仍在前 N 名就續抱,降低換手);market_filter_ma 可設大盤濾網(加權指數低於 N 日均線就空手);hold_min_rs_score 可設續抱條件(上一期持股 RS 仍達門檻就續抱,不受法人連買中斷影響);max_per_industry 可設產業上限(同產業最多 N 檔,降低集中);min_avg_trade_value 可設流動性門檻(近 20 日平均成交金額低於 N 百萬元不買);" +
-				"rank_by 可改依近 20 日平均成交金額、法人連續買超天數、最新月營收年增率或最近一季營業利益率排序;etf_weight 可設 0050 核心部位(固定 N% 持有 0050、其餘跑策略,看搭配大盤能否勝過純 0050);" +
-				"weighting 可改依平均成交金額(或其平方根)加權持股,接近 0050 的市值加權;max_weight 可設單檔權重上限(超出的分給其他持股,檔數不足時放現金);exclude_industry 可排除產業(例如金融保險業)。" +
-				"回傳每期報酬與持股、累積與年化報酬、最大回撤、勝率、年化波動率與夏普值,並與同市場全部母體的平均、以及實際買得到的 0050 比較,另附依換股年度的彙總(看多頭、空頭年份是否穩定);" +
-				"另依換手率扣除手續費(fee_discount 可設折扣)與證交稅(含續抱股票調回目標權重與 0050 核心部位調回固定比例的買賣),回傳扣成本後的累積、年化報酬與最大回撤;" +
-				"目前持股會標出新買進、續抱與這次賣出的股票。" +
-				"只用當天就知道的資料(不用財報條件),期間內下市的股票算到最後一筆收盤。" +
-				"適合回答「每月買 RS 前 20 名能贏大盤嗎」「52 週新高又有投信連買的股票持有一個月表現如何」「這個選股條件在 2022 空頭時撐得住嗎」。" +
-				"相對強度從 2019 年起、籌碼從 2019 年起;過去表現不代表未來結果。",
+			Name:        "get_screen_backtest",
+			Description: "回測多因子選股策略：定期換股、交易成本、持股權重、停損停利與市場濾網；附逐期及年度績效。歷史非預測。",
 			InputSchema: screenBacktestSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, bts.screenBacktest)
@@ -451,12 +397,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if oq, ok := q.(ScreenBacktestOffsetsQuerier); ok {
 		ots := &screenBacktestOffsetsToolset{oq: oq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_screen_backtest_offsets",
-			Description: "檢查條件選股回測的穩健度:參數與 get_screen_backtest 相同(不收 rebalance_offset),把換股日偏移(起日之後先跳過幾個交易日才第一次換股)" +
-				"0 到 hold_days-1 都跑一遍(超過 20 種時平均抽 20 種),回傳每個偏移的彙總,以及扣成本後年化報酬、夏普值、最大回撤、年化波動率與同期 0050 的分布(最低、四分位、中位數、平均、最高)" +
-				"和年化報酬、夏普值勝過 0050、最大回撤比 0050 淺的偏移比例,另附依年度的分布(各年扣成本後報酬與同期 0050 的中位數、勝過 0050 的偏移比例)。單次回測只代表一組換股日,結果可能只是碰巧;中位數才代表這組條件。" +
-				"適合回答「這個策略的好成績是不是運氣」「換個日子換股還贏 0050 嗎」;評估或比較選股策略時應優先看這個工具的中位數;split 可設樣本內外分割日,分別看前後兩段的分布(檢查是否過度配適)。" +
-				"一次要跑多組回測,比 get_screen_backtest 慢。過去表現不代表未來結果。",
+			Name:        "get_screen_backtest_offsets",
+			Description: "回測穩健度：比較不同換股日起點的績效分布，可切樣本內外；成本規則同單次回測。",
 			InputSchema: screenBacktestOffsetsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ots.screenBacktestOffsets)
@@ -465,12 +407,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if fq, ok := q.(ScreenBacktestFrontierQuerier); ok {
 		fts := &screenBacktestFrontierToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_screen_backtest_frontier",
-			Description: "找條件選股策略搭配 0050 的最佳比例:參數與 get_screen_backtest 相同(不收 rebalance_offset 與 etf_weight)," +
-				"把 0050 核心部位設為 0%、10%、…、100% 各算一次,每個比例都跑全部換股日偏移(與 get_screen_backtest_offsets 相同),回傳各比例扣成本後年化報酬、夏普值、最大回撤、波動率的分布" +
-				"與勝過同期 0050 的偏移比例,並標出夏普值中位數、年化報酬中位數最高的比例。0% 是純策略,100% 等於只持有 0050。" +
-				"適合回答「這個策略配多少 0050 最好」「加入 0050 能不能降低回撤又不犧牲報酬」;split 可設樣本內外分割日,看只用前段挑出的比例在後段是否仍然好。每期調回固定比例的買賣也計入成本。" +
-				"一次要跑多組回測,比 get_screen_backtest 慢。過去表現不代表未來結果。",
+			Name:        "get_screen_backtest_frontier",
+			Description: "回測策略與 0050 核心部位的配置效率前緣，比較報酬、夏普與回撤；支援樣本內外分割。",
 			InputSchema: screenBacktestFrontierSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.screenBacktestFrontier)
@@ -479,11 +417,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if aq, ok := q.(ScreenBacktestAttributionQuerier); ok {
 		ats := &screenBacktestAttributionToolset{aq: aq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_screen_backtest_attribution",
-			Description: "拆解條件選股策略為什麼贏或輸大盤:參數與 get_screen_backtest 相同(不收 etf_weight,只看策略部位),以 Brinson-Fachler 把策略相對「類 0050 基準」" +
-				"(每個換股日近 20 個交易日平均成交金額最高的 50 檔、依成交金額加權,近似 0050 的市值加權)的超額報酬拆成產業配置、選股與交互三項," +
-				"回傳整段、依年度(每年影響最大的 5 個產業)與各產業的效果及平均權重,並附同期 0050 報酬。" +
-				"適合回答「這個策略 2024 年為什麼輸 0050」「是少配了半導體還是選錯股」「哪個產業拖累最多」。效果為各期相加(百分點)、未扣成本。過去表現不代表未來結果。",
+			Name:        "get_screen_backtest_attribution",
+			Description: "以 Brinson-Fachler 拆解策略超額報酬的產業配置、選股與交互效果；基準為類 0050 組合，未扣成本。",
 			InputSchema: screenBacktestAttributionSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ats.screenBacktestAttribution)
@@ -492,11 +427,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if wq, ok := q.(ScreenBacktestWalkForwardQuerier); ok {
 		wts := &screenBacktestWalkForwardToolset{wq: wq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_screen_backtest_walk_forward",
-			Description: "用滾動前推(walk-forward)檢查條件選股策略是否過度配適:參數與 get_screen_backtest 相同,另收 train_years(1 至 5,預設 3)。" +
-				"每年年初只用之前 train_years 年的期數,在 36 組參數(0050 核心部位 0/30/50/70% × 單檔上限 不設/10/20% × 換股緩衝 limit 的 1/1.5/2 倍)中挑扣成本後夏普值最高的一組套用到這一年," +
-				"回傳逐年挑出的參數與報酬、串起樣本外年份的彙總,並與「不調參數」(請求本身的 etf_weight、max_weight、keep_rank)及 0050 比較;各換股日偏移都跑一次並回傳分布。" +
-				"適合回答「事後挑出的最佳參數當時真的挑得出來嗎」「每年重新調參數能贏 0050 嗎」。一次要跑多組回測,比 get_screen_backtest_offsets 慢。過去表現不代表未來結果。",
+			Name:        "get_screen_backtest_walk_forward",
+			Description: "滾動前推回測：每年僅用先前訓練資料挑參數，再評估樣本外績效，與固定參數及 0050 比較；運算較慢。",
 			InputSchema: screenBacktestWalkForwardSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, wts.screenBacktestWalkForward)
@@ -505,10 +437,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if pq, ok := q.(StrategyPresetsQuerier); ok {
 		pts := &strategyPresetsToolset{pq: pq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "list_strategy_presets",
-			Description: "列出存好的具名策略(條件選股回測的整組條件):名稱、說明、條件與是否每個交易日 22:10 發換股通知。" +
-				"回測類工具(get_screen_backtest、_offsets、_frontier、_attribution、_walk_forward)可用 preset=名稱 引用,另外指定的參數會覆蓋存的值。" +
-				"適合回答「我設了哪些策略」「最佳組合的條件是什麼」。",
+			Name:        "list_strategy_presets",
+			Description: "列出具名策略的條件、說明與換股通知設定，供回測或實盤追蹤使用。",
 			InputSchema: strategyPresetsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, pts.strategyPresets)
@@ -517,11 +447,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if tq, ok := q.(StrategyTrackQuerier); ok {
 		sts := &strategyTrackToolset{tq: tq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_strategy_track",
-			Description: "查詢具名策略的實盤追蹤:每個換股日 22:10 發換股通知時記錄當天的持股與權重,之後逐期(換股日 → 下次換股日,最後一期到最新交易日)" +
-				"計算持股還原報酬、策略部位與混合 0050 核心部位後的組合報酬,連乘為累積報酬並與同期持有 0050 比較(未扣交易成本)。" +
-				"紀錄只寫一次,不受之後重跑回測或修改策略條件影響,所以看到的是「照著通知做」的實際結果。" +
-				"適合回答「最佳組合上線後實際表現如何」「這期持股目前賺多少」「實盤有沒有贏 0050」。過去表現不代表未來結果。",
+			Name:        "get_strategy_track",
+			Description: "查詢具名策略實盤記錄的逐期持股、權重與績效；與事後回測分開。",
 			InputSchema: strategyTrackSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, sts.strategyTrack)
@@ -530,11 +457,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if fq, ok := q.(IndustryFlowQuerier); ok {
 		its := &industryFlowToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_industry_flow",
-			Description: "查詢三大法人(外資、投信、自營商或合計)在最近 N 個交易日(預設 5,最多 60)於各產業的資金流向:" +
-				"產業合計估計淨買賣金額(個股每日淨股數×當日收盤價加總)、占產業成交金額比例、買超與賣超家數、買超與賣超金額最大的各 3 檔;" +
-				"依淨額排名,order=asc 先列淨流出最多的產業。適合回答「外資這週把錢放到哪些產業」「投信在加碼還是減碼半導體」。" +
-				"ETF 為獨立產業列。籌碼資料每晚 21:50 入庫。",
+			Name:        "get_industry_flow",
+			Description: "查詢三大法人各產業買賣超金額、股數與集中方向。",
 			InputSchema: industryFlowSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, its.industryFlow)
@@ -543,10 +467,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if mq, ok := q.(MarginRankingQuerier); ok {
 		mts := &marginRankingToolset{mq: mq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_margin_ranking",
-			Description: "查詢融資融券排行:最近 N 個交易日(預設 1,最多 60)融資增加或減少、融券增加或減少最多,或券資比最高" +
-				"(融資至少 100 張)的上市櫃股票,附融資與融券餘額(張)、增減、融資增減百分比、券資比與收盤價;可依市場、產業篩選。" +
-				"適合回答「哪些股票融資大增」「散戶在追哪些股票」「哪些股票券資比高、可能有軋空」。融資融券資料每晚 21:50 入庫。",
+			Name:        "get_margin_ranking",
+			Description: "查詢融資融券增減或券資比排行；可依市場及天數篩選。",
 			InputSchema: marginRankingSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, mts.marginRanking)
@@ -555,10 +477,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if rq, ok := q.(MarketRegimeQuerier); ok {
 		rts := &marketRegimeToolset{rq: rq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_market_regime",
-			Description: "查詢加權指數(TAIEX)的趨勢狀態:收盤相對 5/20/60/120/240 日均線的位置與均線方向、" +
-				"均線多空排列、收盤連續站在 60 日均線同一側的天數、52 週高低點距離、近 5/20/60/240 日漲跌幅與近 60 個交易日站上或跌破 20/60/120/240 日均線的日子;可指定歷史日期。" +
-				"適合回答「現在大盤是多頭還是空頭」「大盤離高點多遠」「站上季線多久了」「最近什麼時候跌破季線」,也可搭配 get_screen_backtest 的 market_filter_ma。",
+			Name:        "get_market_regime",
+			Description: "查詢 TAIEX 趨勢狀態、均線位置方向、波動與回撤；不代表未來行情。",
 			InputSchema: marketRegimeSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, rts.marketRegime)
@@ -567,10 +487,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if vq, ok := q.(MarketValuationQuerier); ok {
 		vts := &marketValuationToolset{vq: vq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_market_valuation",
-			Description: "查詢台股整體估值水位:上市櫃股票官方本益比與股價淨值比的每日中位數(只計大於 0,不含虧損股與 ETF)," +
-				"回看 1–10 年(預設 5 年)的分布(最低、四分位、中位數、最高)、最新一天落在第幾百分位,以及每月月底的走勢;可只看上市或上櫃、可指定歷史日期。" +
-				"適合回答「現在台股貴不貴」「本益比在近五年的什麼位置」「淨值比比去年高還是低」;搭配 get_market_regime 看趨勢、get_screen_backtest 的 max_pe 看估值條件的歷史效果。",
+			Name:        "get_market_valuation",
+			Description: "查詢上市櫃官方 PE／PB 每日中位數及歷史百分位；不含虧損股與 ETF。",
 			InputSchema: marketValuationSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, vts.marketValuation)
@@ -579,10 +497,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_industry_performance",
-			Description: "查詢各產業(上市櫃普通股,不含 ETF)在指定交易日或近 N 個交易日的表現:市值加權漲跌幅、漲跌幅中位數、" +
-				"漲跌家數、成交值占比、本益比與股價淨值比中位數,以及產業內領漲、領跌個股;依市值加權漲跌幅由高到低排序。" +
-				"適合回答「今天(或這週、這個月)哪些產業最強、資金往哪裡去」。days 大於 1 時以期初收盤價計算,未還原除權息。",
+			Name:        "get_industry_performance",
+			Description: "查詢產業市值加權報酬、中位數、上漲比例及領漲跌個股；不含 ETF。",
 			InputSchema: industriesSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, its.industryPerformance)
@@ -591,12 +507,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if portfolio, ok := q.(PortfolioQuerier); ok {
 		pts := &portfolioToolset{portfolio: portfolio, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_portfolio_summary",
-			Description: "查詢使用者目前持股的組合總覽(個人持股資料):總市值、成本、未實現損益、目前持股累計已領股利、" +
-				"產業分布,以及市值加權殖利率與 Piotroski F 分數;並依市值列出各持股的權重、損益、殖利率、F 分數、" +
-				"相對強度(RS)分數、外資/投信連續買賣超天數、最新月營收年增率、最近一季三率(金融保險業不計),以及基本面警示" +
-				"(營收連續 3 個月以上年減、三率三降、營業虧損),摘要另列有警示的持股。" +
-				"member_id 預設 0 為全部會員合計。",
+			Name:        "get_portfolio_summary",
+			Description: "查詢個人持股市值、成本、損益、已領股利、產業配置與財務體質警示。",
 			InputSchema: portfolioSummarySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, pts.portfolioSummary)
@@ -605,9 +517,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if history, ok := q.(PortfolioHistoryQuerier); ok {
 		hts := &portfolioHistoryToolset{history: history, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_portfolio_history",
-			Description: "查詢使用者持股近幾個月(預設 12)的績效(個人持股資料):時間加權報酬(扣除買賣金額、只看股價、不含現金股利)、" +
-				"年化報酬、最大回撤與高低點日期、各月報酬,並與同期加權指數比較。member_id 預設 0 為全部會員合計。",
+			Name:        "get_portfolio_history",
+			Description: "查詢個人持股歷史時間加權績效、風險及基準比較；股價報酬不含現金股利。",
 			InputSchema: portfolioHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.portfolioHistory)
@@ -616,11 +527,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if hq, ok := q.(HoldingChipQuerier); ok {
 		cts := &holdingChipToolset{hq: hq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_holding_chip",
-			Description: "查詢使用者持股在某交易日(預設最新)的籌碼日報(個人持股資料):當天收盤時仍持有的普通股(不含 ETF)" +
-				"三大法人買賣超與佔成交量比重、外資/投信連續買賣超天數、融資融券餘額與增減、主力買賣超與前幾名買賣超分點," +
-				"並標出達到每日 Telegram 通知門檻的原因(外資或投信大量買賣超、連續買賣超、融資或融券大幅增減、主力大量進出)。" +
-				"適合回答「今天我的持股有沒有法人大買大賣」「哪幾檔被主力倒貨」「上週五持股籌碼如何」;個股更長期的籌碼請用 get_chip_data。",
+			Name:        "get_holding_chip",
+			Description: "查詢個人持股指定交易日的法人、融資融券與主力籌碼日報。",
 			InputSchema: holdingChipSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cts.holdingChip)
@@ -629,10 +537,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if fq, ok := q.(HoldingDividendFillQuerier); ok {
 		fts := &holdingDividendFillToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_holding_dividend_fill",
-			Description: "查詢使用者目前持股(含 ETF)近 N 天(預設 365,30–730)每次除權息的填息狀態(個人持股資料):" +
-				"填息價(除權息前一日收盤)、最新收盤、是否已填息、第幾個交易日填息,尚未填息的列出距離填息價的缺口並依缺口由大到小排在前面," +
-				"另附整體填息統計。適合回答「我的持股哪些還沒填息」「今年配息的股票填息了嗎」;單一股票的歷次填息請用 get_dividend_fill。",
+			Name:        "get_holding_dividend_fill",
+			Description: "查詢目前持股（含 ETF）近期各次除權息進度與歷史填息天數統計。",
 			InputSchema: holdingDividendFillSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.holdingDividendFill)
@@ -641,27 +547,20 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if eq, ok := q.(EtfQuerier); ok {
 		ets := &etfToolset{eq: eq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "screen_etfs",
-			Description: "篩選並排序台灣上市櫃 ETF(每天收盤後更新):可依分類(市值型、高股息、主動式、債券、槓桿、反向、期貨商品、海外股票、主題)、" +
-				"投資地區、配息頻率、市場與關鍵字篩選,依成交值、資產規模、折溢價、近 12 個月殖利率、淨申購、含息報酬或受益人數排序;" +
-				"每檔附收盤、預估淨值與折溢價、規模、淨申購、配息與下次除息、含息報酬、受益人數。" +
-				"適合回答「月配息的債券 ETF 哪幾檔折價最多」「今年報酬最好的高股息 ETF」「哪些 ETF 資金流入最多」;單檔細節請用 get_etf_detail。",
+			Name:        "screen_etfs",
+			Description: "依分類、地區、題材、配息、市場或名稱篩選 ETF，並依規模、折溢價、殖利率或報酬排序。",
 			InputSchema: screenEtfsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ets.screenEtfs)
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_etf_detail",
-			Description: "查詢單檔台灣 ETF 的完整資料:分類、發行投信、追蹤指數、經理費與保管費,收盤、預估淨值、折溢價與近 20 筆平均,規模、淨申購、受益人數," +
-				"近 12 個月配息與下次除息,市價含息報酬與淨值含息報酬(1 週至 5 年,1 年以上年化)、近 1 年波動、最大回撤、beta、夏普值," +
-				"前十大持股、行業比重、資產分佈,以及近期每日淨值與折溢價。",
+			Name:        "get_etf_detail",
+			Description: "查詢 ETF 費率、規模、追蹤指數、折溢價、含息績效、風險、持股配置與近期淨值。",
 			InputSchema: etfDetailSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ets.etfDetail)
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "compare_etfs",
-			Description: "並排比較 2 至 4 檔台灣 ETF:經理費與保管費、規模、折溢價(含近 20 筆平均)、殖利率與配息頻率、" +
-				"近 1 年市價與淨值含息報酬、3 年年化報酬、波動、最大回撤、夏普值,以及兩兩之間前十大持股的重疊權重(共同持股取較小比例加總)。" +
-				"適合回答「0050 和 006208 差在哪」「這幾檔高股息 ETF 持股重疊多少」。",
+			Name:        "compare_etfs",
+			Description: "比較 2–4 檔 ETF 的費率、規模、折溢價、配息、績效、風險與前十大持股重疊；重疊只涵蓋前十大。",
 			InputSchema: compareEtfsSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ets.compareEtfs)
@@ -669,10 +568,10 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if hq, ok := q.(EtfHoldingHistoryQuerier); ok {
 		hts := &etfHoldingChangesToolset{hq: hq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{Name: "get_etf_holding_history", Description: "直接列出 ETF 最近 1–24 期各期前十大成分股與權重；期別依實際採集日期，並非固定季度。", InputSchema: etfHoldingChangesSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, hts.etfHoldingHistory)
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_etf_holding_changes",
-			Description: "查詢單檔台灣 ETF 近幾期(預設 6,約每月一期)的前十大持股,並逐期列出與前一期相比的新進、剔除與權重變化。" +
-				"適合回答「0056 這次換股換了什麼」「00878 最近加碼哪些成分股」;只涵蓋前十大持股,目前的完整前十大與配置也可用 get_etf_detail。",
+			Name:        "get_etf_holding_changes",
+			Description: "查詢 ETF 最近 1–24 期前十大持股的新進、剔除與權重變化；直接列各期持股請用 get_etf_holding_history。",
 			InputSchema: etfHoldingChangesSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.etfHoldingChanges)
@@ -681,10 +580,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if eq, ok := q.(PortfolioEtfExposureQuerier); ok {
 		ets := &portfolioEtfExposureToolset{eq: eq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_portfolio_etf_exposure",
-			Description: "查詢使用者持股的穿透曝險(個人持股資料):把持有 ETF 的市值依最新一期前十大持股權重拆到成分股,與直接持股合併," +
-				"列出合計曝險最大的成分股(直接持有、經由哪些 ETF、占總市值比例),以及每檔 ETF 可拆解的比例;前十大以外無法拆解的金額另計。" +
-				"適合回答「加上 ETF 之後我實際持有多少台積電」「我的持股是不是太集中」。member_id 預設 0 為全部會員合計。",
+			Name:        "get_portfolio_etf_exposure",
+			Description: "查詢個人持股 ETF 前十大成分股穿透曝險，合併直接持股；附未涵蓋金額，非完整持股穿透。",
 			InputSchema: portfolioEtfExposureSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ets.portfolioEtfExposure)
@@ -693,10 +590,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_dividend_forecast",
-			Description: "以使用者目前持股預估未來幾個月(預設 12)每月會收到的現金股利(個人持股資料):已公告的配息直接列入," +
-				"過去 12 個月的配息往後推一年估算;回傳每月合計、各筆明細(股數、每股股利、發放日、依據)與預估殖利率。" +
-				"只含現金股利,不扣二代健保與稅。member_id 預設 0 為全部會員合計。",
+			Name:        "get_dividend_forecast",
+			Description: "預估個人持股未來每月現金股利；區分已公告與歷史推估，推估非保證。",
 			InputSchema: dividendForecastSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.dividendForecast)
@@ -705,9 +600,8 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
-			Name: "get_cagr_ranking",
-			Description: "查詢全市場年化報酬率(CAGR)排行:以固定金額回測 M3～Y10 期間的報酬,可選報酬口徑(只看股價、含股利、股利再投入)、" +
-				"市場與產業。適合回答「近五年報酬最高的股票」這類問題。樣本只含目前仍上市櫃的股票,有存活者偏誤。",
+			Name:        "get_cagr_ranking",
+			Description: "查詢全市場多期間 CAGR 排行；可選股價、含股利或股利再投入口徑。",
 			InputSchema: cagrRankingSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cgs.cagrRanking)

@@ -7,7 +7,6 @@ package stock
 import (
 	"context"
 	"fmt"
-	"math"
 	"net/url"
 	"strings"
 
@@ -135,10 +134,7 @@ func (ts *portfolioEtfExposureToolset) portfolioEtfExposure(ctx context.Context,
 
 // moneyText 顯示金額:不到 1 萬以元顯示(零股與小額 ETF 部位常不到 1 萬,用 yiText 會變成「0 萬」),其餘同 yiText。
 func moneyText(v float64) string {
-	if math.Abs(v) < 1e4 {
-		return formatFloat(math.Round(v)) + " 元"
-	}
-	return yiText(&v)
+	return FormatCurrencyWithUnit(&v, CurrencyYuan)
 }
 
 // portfolioEtfExposureSummary 組出給模型閱讀的摘要:總市值與 ETF 拆解程度,再列合計曝險前幾大的成分股。
