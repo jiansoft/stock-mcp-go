@@ -34,17 +34,16 @@ func FormatCurrencyWithUnit(value *float64, unit CurrencyUnit) string {
 	if math.IsNaN(amount) || math.IsInf(amount, 0) {
 		return "無"
 	}
-	var rounded float64
+	// 萬、億保留兩位小數；依四捨五入後的值決定單位，避免出現「10000 萬」。
+	rounded := math.Round(amount)
 	suffix := " 元"
-	switch {
-	case math.Abs(amount) >= 1e8:
-		rounded = math.Round(amount/1e7) / 10
-		suffix = " 億"
-	case math.Abs(amount) >= 1e4:
-		rounded = math.Round(amount / 1e4)
+	if math.Abs(rounded) >= 1e4 {
+		rounded = math.Round(amount/1e2) / 100
 		suffix = " 萬"
-	default:
-		rounded = math.Round(amount)
+	}
+	if suffix == " 萬" && math.Abs(rounded) >= 1e4 {
+		rounded = math.Round(amount/1e6) / 100
+		suffix = " 億"
 	}
 	if rounded == 0 {
 		rounded = 0

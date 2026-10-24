@@ -14,7 +14,11 @@ func TestCurrencyUnits(t *testing.T) {
 	}{
 		{999, CurrencyYuan, "999 元"}, {-999, CurrencyYuan, "-999 元"},
 		{10, CurrencyThousand, "1 萬"}, {100, CurrencyMillion, "1 億"},
-		{-123450000, CurrencyYuan, "-1.2 億"}, {math.NaN(), CurrencyYuan, "無"},
+		{-123450000, CurrencyYuan, "-1.23 億"}, {math.NaN(), CurrencyYuan, "無"},
+		{16500, CurrencyYuan, "1.65 萬"}, {14999, CurrencyYuan, "1.5 萬"},
+		{259325000000, CurrencyYuan, "2593.25 億"},
+		{9999.6, CurrencyYuan, "1 萬"}, {99999999, CurrencyYuan, "1 億"},
+		{99995000, CurrencyYuan, "9999.5 萬"},
 		{math.Inf(1), CurrencyYuan, "無"}, {1, CurrencyUnit(0), "無"},
 		{-0.1, CurrencyYuan, "0 元"},
 	}
