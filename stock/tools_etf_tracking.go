@@ -63,6 +63,19 @@ func addEtfTrackingTool(server *mcp.Server, q Querier, logf func(string, ...any)
 				Disclaimer string `json:"disclaimer"`
 				*EtfProxyTracking
 			}{"etf_proxy_tracking", false, AnalysisDisclaimer, data}
-			return textResult(fmt.Sprintf("%s 相對 %s 代理基準報酬差異：有效樣本 %d，年化報酬差波動 %s，配對區間累積報酬差 %s 個百分點。%s %s", symbol, data.BenchmarkSymbol, data.Samples, displayPercent(data.TrackingErrorPercent), displayFloat(data.TrackingDifferencePercent), data.Note, AnalysisDisclaimer)), out, nil
+			return textResult(etfProxyTrackingSummary(symbol, data)), out, nil
 		})
+}
+
+// etfProxyTrackingSummary 組出摘要；樣本不足（Rust 尚未計算或未達 120 組）時明說，不拼出「無 個百分點」。
+func etfProxyTrackingSummary(symbol string, data *EtfProxyTracking) string {
+	head := fmt.Sprintf("%s 相對 %s 代理基準報酬差異（資料日 %s）：", symbol, data.BenchmarkSymbol, displayString(data.DataAsOf))
+	if data.TrackingErrorPercent == nil && data.TrackingDifferencePercent == nil {
+		return head + fmt.Sprintf("尚無足夠樣本（有效樣本 %d，需至少 120 組同區間日報酬）。%s %s", data.Samples, data.Note, AnalysisDisclaimer)
+	}
+	difference := "無"
+	if data.TrackingDifferencePercent != nil {
+		difference = displayFloat(data.TrackingDifferencePercent) + " 個百分點"
+	}
+	return head + fmt.Sprintf("有效樣本 %d，年化報酬差波動 %s，配對區間累積報酬差 %s。%s %s", data.Samples, displayPercent(data.TrackingErrorPercent), difference, data.Note, AnalysisDisclaimer)
 }

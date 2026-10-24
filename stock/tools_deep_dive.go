@@ -19,6 +19,8 @@ type StockDeepDive struct {
 	Disclaimer  string                     `json:"disclaimer"`
 	Sections    map[string]json.RawMessage `json:"sections"`
 	Warnings    map[string]string          `json:"warnings"`
+	// failures 保留各區塊的實際錯誤供呼叫端記錄 log，不輸出給模型，避免洩漏內部細節。
+	failures map[string]error
 }
 
 // DeepDiveQuerier 提供個股資料聚合，僅具備此能力時才註冊複合工具。
@@ -43,7 +45,7 @@ func (c *APIClient) AnalyzeStockDeepDive(ctx context.Context, symbol string) (*S
 		return nil, err
 	}
 	result := &StockDeepDive{DataKind: "stock_deep_dive", StockSymbol: symbol, Disclaimer: AnalysisDisclaimer,
-		Sections: map[string]json.RawMessage{"profile": raw}, Warnings: map[string]string{}}
+		Sections: map[string]json.RawMessage{"profile": raw}, Warnings: map[string]string{}, failures: map[string]error{}}
 	sections := map[string]string{
 		"valuation_band": "valuation-band?years=5", "chip": "chip?days=5",
 		"financial_statements": "financial-statements?period_type=quarterly&limit=8",
@@ -60,7 +62,7 @@ func (c *APIClient) AnalyzeStockDeepDive(ctx context.Context, symbol string) (*S
 			case slots <- struct{}{}:
 			case <-ctx.Done():
 				mu.Lock()
-				result.Warnings[name] = "查詢已取消或逾時"
+				result.Warnings[name] = deepDiveCancelled
 				mu.Unlock()
 				return
 			}
@@ -69,16 +71,30 @@ func (c *APIClient) AnalyzeStockDeepDive(ctx context.Context, symbol string) (*S
 			found, err := c.getFound(ctx, "/api/v1/stocks/"+url.PathEscape(symbol)+"/"+suffix, &body)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil || !found {
+			switch {
+			case err != nil && ctx.Err() != nil:
+				result.Warnings[name] = deepDiveCancelled
+				result.failures[name] = err
+			case err != nil:
 				result.Warnings[name] = "此區塊目前無法取得"
-				return
+				result.failures[name] = err
+			case !found:
+				result.Warnings[name] = "此區塊查無資料"
+			default:
+				result.Sections[name] = body
 			}
-			result.Sections[name] = body
 		})
 	}
 	wg.Wait()
+	// 整體逾時或被取消且沒有任何分析區塊成功（只剩基本資料）時，回報錯誤而不是看似成功的空結果。
+	if err := ctx.Err(); err != nil && len(result.Sections) == 1 {
+		return nil, err
+	}
 	return result, nil
 }
+
+// deepDiveCancelled 是整體逾時或查詢被取消時的區塊警示，等待中與已送出的請求共用同一句。
+const deepDiveCancelled = "查詢已取消或逾時"
 
 // addDeepDiveTool 註冊唯讀聚合工具，避免模型逐一呼叫各分析工具。
 func addDeepDiveTool(server *mcp.Server, q Querier, logf func(string, ...any)) {
@@ -96,12 +112,19 @@ func addDeepDiveTool(server *mcp.Server, q Querier, logf func(string, ...any)) {
 			if errors.Is(err, ErrStockNotFound) {
 				return nil, nil, fmt.Errorf("查無股票 %s", symbol)
 			}
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				logf("深度分析 %s 逾時或已取消:%v", symbol, err)
+				return nil, nil, fmt.Errorf("查詢逾時或已取消，請稍後再試")
+			}
 			if err != nil {
 				logf("深度分析查詢失敗:%v", err)
 				return nil, nil, fmt.Errorf("%s", errInternal)
 			}
 			if result == nil {
 				return nil, nil, fmt.Errorf("%s", errInternal)
+			}
+			for name, failure := range result.failures {
+				logf("深度分析 %s 區塊 %s 失敗:%v", symbol, name, failure)
 			}
 			return textResult(fmt.Sprintf("%s 深度分析：取得 %d 個資料區塊，%d 個區塊未能取得。各區塊的資料日與原始單位保留於結構化資料。%s", symbol, len(result.Sections), len(result.Warnings), AnalysisDisclaimer)), result, nil
 		})
