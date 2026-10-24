@@ -70,8 +70,38 @@ func TestEtfProxyTrackingToolContract(t *testing.T) {
 			t.Fatal("leaked secret")
 		}
 	}
-	result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_etf_proxy_tracking", Arguments: map[string]any{"symbol": "../"}})
-	if err != nil || !result.IsError {
-		t.Fatal("accepted invalid symbol")
+	for _, symbol := range []string{"../", " "} {
+		result, err = session.CallTool(t.Context(), &mcp.CallToolParams{Name: "get_etf_proxy_tracking", Arguments: map[string]any{"symbol": symbol}})
+		if err != nil || !result.IsError {
+			t.Fatalf("accepted invalid symbol %q: %v", symbol, err)
+		}
+	}
+}
+
+func TestHoldingHistoryAliasEmptyPeriods(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		periods []EtfHoldingPeriodItem
+		want    string
+	}{
+		{"沒有歷史", nil, "沒有歷史紀錄"},
+		{"當期沒有持股", []EtfHoldingPeriodItem{{AsOf: "2026-10-01", Holdings: []EtfHoldingItem{}}}, "2026-10-01:沒有持股紀錄"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &fakeEtfHoldingQuerier{history: &EtfHoldingHistoryEnvelope{StockSymbol: "0056", Periods: tc.periods}}
+			tool := &etfHoldingChangesToolset{hq: reader, logf: func(string, ...any) {}}
+			result, output, err := tool.etfHoldingHistory(t.Context(), nil, EtfHoldingChangesInput{Symbol: "0056"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := result.Content[0].(*mcp.TextContent).Text
+			if !strings.Contains(text, tc.want) || !strings.Contains(text, AnalysisDisclaimer) {
+				t.Fatalf("空資料摘要不符:%s", text)
+			}
+			out := output.(EtfHoldingChangesOutput)
+			if out.DataKind != "etf_holding_history" || len(out.Periods) != len(tc.periods) {
+				t.Fatalf("空資料契約不符:%+v", out)
+			}
+		})
 	}
 }
