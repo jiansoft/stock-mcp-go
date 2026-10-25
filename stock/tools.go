@@ -587,6 +587,27 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, ets.portfolioEtfExposure)
 	}
 
+	if pr, ok := q.(PortfolioRebalanceQuerier); ok {
+		prts := &portfolioRebalanceToolset{pr: pr, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_portfolio_rebalance",
+			Description: "試算持股再平衡建議：依設定之目標配置與目前持股試算建議調整股數、預估金額與現金流。僅供參考，絕不下單交易。",
+			InputSchema: portfolioRebalanceSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, prts.getPortfolioRebalance)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "set_portfolio_targets",
+			Description: "設定投資組合目標配置比例：支援個股、產業或 ETF 穿透維度，各項比例之和不得超過 100%。僅作為個人試算基準，非自動交易委託。",
+			InputSchema: setPortfolioTargetsSchema(),
+		}, prts.setPortfolioTargets)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_portfolio_targets",
+			Description: "查詢已設定之投資組合目標配置比例與現金保留比例。",
+			InputSchema: getPortfolioTargetsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, prts.getPortfolioTargets)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

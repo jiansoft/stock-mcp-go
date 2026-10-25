@@ -59,9 +59,13 @@ type BacktestSummary struct {
 	AnnualizedReturn          *float64 `json:"annualized_return"`
 	AnnualizedAfterCosts      *float64 `json:"annualized_return_after_costs"`
 	BenchmarkAnnualizedReturn *float64 `json:"benchmark_annualized_return"`
-	MaxDrawdown               *float64 `json:"max_drawdown"`
-	MaxDrawdownAfterCosts     *float64 `json:"max_drawdown_after_costs"`
-	BenchmarkMaxDrawdown      *float64 `json:"benchmark_max_drawdown"`
+	MaxDrawdown                    *float64 `json:"max_drawdown"`
+	MaxDrawdownAfterCosts          *float64 `json:"max_drawdown_after_costs"`
+	PeriodEndMaxDrawdown           *float64 `json:"period_end_max_drawdown,omitempty"`
+	PeriodEndMaxDrawdownAfterCosts *float64 `json:"period_end_max_drawdown_after_costs,omitempty"`
+	DailyMaxDrawdown               *float64 `json:"daily_max_drawdown,omitempty"`
+	DailyMaxDrawdownAfterCosts     *float64 `json:"daily_max_drawdown_after_costs,omitempty"`
+	BenchmarkMaxDrawdown           *float64 `json:"benchmark_max_drawdown"`
 	WinRate                   *float64 `json:"win_rate"`
 	BeatMarketRate            *float64 `json:"beat_market_rate"`
 	AvgPeriodReturn           *float64 `json:"avg_period_return"`

@@ -171,3 +171,30 @@ func TestChipMainFlowText(t *testing.T) {
 		t.Fatalf("摘要缺少主力累計:%s", summary)
 	}
 }
+
+
+// TestChipStreakInvariantWithDifferentDays 驗證 B05:連續天數獨立於 days 參數,無論查詢 days=5 或 days=60,streak 皆保持一致。
+func TestChipStreakInvariantWithDifferentDays(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"stock_symbol":"2330","data_as_of":"2026-10-16","daily":[],"streak":{"foreign_days":-8,"trust_days":13},"holder_distribution":[],"insider":null,"broker_flow":null}`))
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	chip5, err := client.StockChip(t.Context(), "2330", 5)
+	if err != nil {
+		t.Fatalf("StockChip(days=5) failed: %v", err)
+	}
+	chip60, err := client.StockChip(t.Context(), "2330", 60)
+	if err != nil {
+		t.Fatalf("StockChip(days=60) failed: %v", err)
+	}
+
+	if chip5.Streak != chip60.Streak {
+		t.Fatalf("days=5 與 days=60 之 Streak 不一致: %+v vs %+v", chip5.Streak, chip60.Streak)
+	}
+	if chip5.Streak.ForeignDays != -8 || chip5.Streak.TrustDays != 13 {
+		t.Fatalf("Streak 數值不符預期: %+v", chip5.Streak)
+	}
+}
