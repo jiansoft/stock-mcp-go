@@ -4,6 +4,8 @@ package stock
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -484,5 +486,114 @@ func TestTargetsPrecisionAndReplacement(t *testing.T) {
 	}
 	if _, _, err := tools.setPortfolioTargets(t.Context(), nil, SetTargetsInput{Dimension: "stock", Targets: []PortfolioTargetItem{}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRebalanceToolErrors 驗證參數邊界與上游失敗均不會回傳假成功。
+func TestRebalanceToolErrors(t *testing.T) {
+	fake := &fakeRebalanceQuerier{rebalanceResult: sampleRebalanceStock(), targetsResult: &PortfolioTargets{Dimension: "stock"}}
+	ts := portfolioRebalanceToolset{pr: fake, logf: func(string, ...any) {}}
+	for _, input := range []RebalanceInput{{MemberID: -1}, {Dimension: "bad"}, {LotSize: 2}, {TolerancePercent: ptr(-1.0)}, {TolerancePercent: ptr(math.NaN())}, {AvailableCash: -1}, {AvailableCash: math.Inf(1)}, {FeeDiscount: ptr(2.0)}, {FeeDiscount: ptr(math.NaN())}} {
+		if _, _, err := ts.getPortfolioRebalance(t.Context(), nil, input); err == nil {
+			t.Fatalf("accepted %+v", input)
+		}
+	}
+	for _, input := range []SetTargetsInput{{MemberID: -1, Dimension: "stock"}, {Dimension: "bad"}, {Dimension: "stock", Targets: []PortfolioTargetItem{{TargetKey: "A", TargetPercent: math.NaN()}}}, {Dimension: "stock", Targets: []PortfolioTargetItem{{TargetKey: "A", TargetPercent: 101}}}} {
+		if _, _, err := ts.setPortfolioTargets(t.Context(), nil, input); err == nil {
+			t.Fatalf("accepted %+v", input)
+		}
+	}
+	for _, input := range []GetTargetsInput{{MemberID: -1}, {Dimension: "bad"}} {
+		if _, _, err := ts.getPortfolioTargets(t.Context(), nil, input); err == nil {
+			t.Fatal(input)
+		}
+	}
+	if _, out, err := ts.getPortfolioTargets(t.Context(), nil, GetTargetsInput{}); err != nil || out.(PortfolioTargetsOutput).DataKind != "portfolio_targets" {
+		t.Fatalf("get targets: %v %v", out, err)
+	}
+	if _, _, err := ts.getPortfolioTargets(t.Context(), nil, GetTargetsInput{Dimension: "industry", MemberID: 12}); err != nil {
+		t.Fatal(err)
+	}
+	fake.err = errors.New("upstream unavailable")
+	if _, _, err := ts.getPortfolioRebalance(t.Context(), nil, RebalanceInput{}); err == nil {
+		t.Fatal("lost upstream error")
+	}
+	if _, _, err := ts.setPortfolioTargets(t.Context(), nil, SetTargetsInput{Dimension: "stock"}); err == nil {
+		t.Fatal("lost upstream error")
+	}
+	if _, _, err := ts.getPortfolioTargets(t.Context(), nil, GetTargetsInput{}); err == nil {
+		t.Fatal("lost upstream error")
+	}
+}
+
+// TestRebalanceFormatStates 驗證空持股、零股、ETF 與產業無候選標的的顯示。
+func TestRebalanceFormatStates(t *testing.T) {
+	r := sampleRebalanceStock()
+	r.StockItems = nil
+	r.LotSize = 1
+	if !strings.Contains(formatRebalanceText(r), "目前無持股") {
+		t.Fatal("missing empty holdings")
+	}
+	r.StockItems = []StockRebalanceItem{{Symbol: "A", Action: "hold"}}
+	if !strings.Contains(formatRebalanceText(r), "維持") {
+		t.Fatal("missing hold")
+	}
+	r.Dimension = "industry"
+	r.IndustryItems = []IndustryRebalanceItem{{Industry: "其他"}}
+	if !strings.Contains(formatRebalanceText(r), "無現有持股") {
+		t.Fatal("missing candidate state")
+	}
+	r.Dimension = "etf_look_through"
+	r.EtfItems = []EtfLookThroughRebalanceItem{{StockSymbol: "A", Name: "測試", DirectValue: 10, IndirectValue: 20, TotalValue: 30}}
+	if !strings.Contains(formatRebalanceText(r), "ETF穿透曝險與偏離") {
+		t.Fatal("missing ETF state")
+	}
+}
+
+// TestRebalanceClientFailures 驗證 HTTP 與 JSON 錯誤、空陣列正規化與 PUT 錯誤分類。
+func TestRebalanceClientFailures(t *testing.T) {
+	status, body := 200, `{}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status); _, _ = w.Write([]byte(body)) }))
+	defer server.Close()
+	c := NewAPIClient(server.URL, "key", time.Second)
+	opt := RebalanceOptions{MemberID: 3, Dimension: "stock", LotSize: 1}
+	if r, err := c.PortfolioRebalance(t.Context(), opt); err != nil || r.StockItems == nil || r.IndustryItems == nil || r.EtfItems == nil {
+		t.Fatalf("arrays: %v %v", r, err)
+	}
+	if r, err := c.SetPortfolioTargets(t.Context(), SetTargetsOptions{}); err != nil || r.Targets == nil {
+		t.Fatal(r, err)
+	}
+	if r, err := c.GetPortfolioTargets(t.Context(), 0, ""); err != nil || r.Targets == nil {
+		t.Fatal(r, err)
+	}
+	status = 404
+	if _, err := c.PortfolioRebalance(t.Context(), opt); err == nil {
+		t.Fatal("missing no-target error")
+	}
+	status = 502
+	if _, err := c.PortfolioRebalance(t.Context(), opt); err == nil {
+		t.Fatal("missing upstream error")
+	}
+	if _, err := c.GetPortfolioTargets(t.Context(), 1, "stock"); err == nil {
+		t.Fatal("missing get error")
+	}
+	if _, err := c.SetPortfolioTargets(t.Context(), SetTargetsOptions{}); err == nil {
+		t.Fatal("missing put status error")
+	}
+	status = 200
+	body = `not json`
+	if _, err := c.SetPortfolioTargets(t.Context(), SetTargetsOptions{}); err == nil {
+		t.Fatal("missing put parse error")
+	}
+	if err := c.put(t.Context(), "/x", map[string]float64{"bad": math.NaN()}, nil); err == nil {
+		t.Fatal("missing marshal error")
+	}
+	bad := NewAPIClient("http://[::1", "key", time.Second)
+	if err := bad.put(t.Context(), "/x", nil, nil); err == nil {
+		t.Fatal("missing URL error")
+	}
+	server.Close()
+	if err := c.put(t.Context(), "/x", nil, nil); err == nil {
+		t.Fatal("missing connection error")
 	}
 }
