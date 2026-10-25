@@ -12,6 +12,8 @@ import (
 
 // BacktestWalkForwardYear 是滾動前推的一年:用前幾年挑出的參數與這一年的結果。
 type BacktestWalkForwardYear struct {
+	// ExcludedTrainingPeriods 是訓練窗口排除的跨界期數。
+	ExcludedTrainingPeriods  *int     `json:"excluded_training_periods,omitempty"`
 	Year                     int      `json:"year"`
 	EtfWeight                int      `json:"etf_weight"`
 	MaxWeight                *int     `json:"max_weight"`

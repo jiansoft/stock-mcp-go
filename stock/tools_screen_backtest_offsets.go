@@ -23,8 +23,10 @@ type BacktestStat struct {
 
 // BacktestOffsetResult 是一個換股日偏移的回測彙總。
 type BacktestOffsetResult struct {
-	RebalanceOffset int             `json:"rebalance_offset"`
-	Summary         BacktestSummary `json:"summary"`
+	// ExcludedCrossBoundaryPeriods 是後端回報因跨分割日排除的期數；舊版 API 缺席時保留 nil。
+	ExcludedCrossBoundaryPeriods *int            `json:"excluded_cross_boundary_periods,omitempty"`
+	RebalanceOffset              int             `json:"rebalance_offset"`
+	Summary                      BacktestSummary `json:"summary"`
 }
 
 // BacktestOffsetDistribution 是各偏移績效的分布;沒有任何偏移有該項數值時為 nil。

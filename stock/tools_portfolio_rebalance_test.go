@@ -597,3 +597,25 @@ func TestRebalanceClientFailures(t *testing.T) {
 		t.Fatal("missing connection error")
 	}
 }
+
+// TestBacktestBoundaryMetadata 驗證 API 的跨界排除數量不會在 MCP 結構化輸出遺失。
+func TestBacktestBoundaryMetadata(t *testing.T) {
+	var offset BacktestOffsetResult
+	if err := json.Unmarshal([]byte(`{"rebalance_offset":0,"excluded_cross_boundary_periods":2}`), &offset); err != nil {
+		t.Fatal(err)
+	}
+	if offset.ExcludedCrossBoundaryPeriods == nil || *offset.ExcludedCrossBoundaryPeriods != 2 {
+		t.Fatal(offset)
+	}
+	var year BacktestWalkForwardYear
+	if err := json.Unmarshal([]byte(`{"year":2024,"excluded_training_periods":1}`), &year); err != nil {
+		t.Fatal(err)
+	}
+	if year.ExcludedTrainingPeriods == nil || *year.ExcludedTrainingPeriods != 1 {
+		t.Fatal(year)
+	}
+	encoded, err := json.Marshal(year)
+	if err != nil || !strings.Contains(string(encoded), `"excluded_training_periods":1`) {
+		t.Fatal(string(encoded), err)
+	}
+}
