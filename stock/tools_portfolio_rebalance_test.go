@@ -619,3 +619,50 @@ func TestBacktestBoundaryMetadata(t *testing.T) {
 		t.Fatal(string(encoded), err)
 	}
 }
+
+// TestRebalanceMCPRoundTrip 以真實 SDK transport 驗證註冊、參數與結構化輸出契約。
+func TestRebalanceMCPRoundTrip(t *testing.T) {
+	fake := &fakeRebalanceQuerier{rebalanceResult: sampleRebalanceStock(), targetsResult: &PortfolioTargets{Dimension: "all", CashPercentByDimension: map[string]float64{"stock": 40}}}
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	AddTools(server, fake, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
+	a, b := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(t.Context(), a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cs, err := client.Connect(t.Context(), b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	seen := map[string]bool{}
+	for tool, err := range cs.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[tool.Name] = true
+	}
+	for _, name := range []string{"get_portfolio_rebalance", "set_portfolio_targets", "get_portfolio_targets"} {
+		if !seen[name] {
+			t.Fatal("unregistered", name)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"get_portfolio_rebalance", map[string]any{"tolerance_percent": 0, "fee_discount": 0}},
+		{"set_portfolio_targets", map[string]any{"dimension": "stock", "targets": []any{}}},
+		{"get_portfolio_targets", map[string]any{}},
+	} {
+		result, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		if err != nil || result.IsError || result.StructuredContent == nil {
+			t.Fatalf("%s: %+v %v", tc.name, result, err)
+		}
+	}
+	if fake.lastRebalance.TolerancePercent != 0 || fake.lastRebalance.FeeDiscount != 0 {
+		t.Fatal("MCP changed explicit zero", fake.lastRebalance)
+	}
+}
