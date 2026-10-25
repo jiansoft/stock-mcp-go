@@ -7,7 +7,9 @@ package stock
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -70,7 +72,18 @@ type RebalanceCashSummary struct {
 }
 
 // PortfolioRebalance 是持股再平衡完整試算結果。
+// RebalanceEtfCoverage 是 ETF 前十大成分的揭露範圍。
+type RebalanceEtfCoverage struct {
+	Symbol               string  `json:"symbol"`
+	CoveredWeightPercent float64 `json:"covered_weight_percent"`
+	UncoveredValue       float64 `json:"uncovered_value"`
+	AsOf                 *string `json:"as_of"`
+}
+
 type PortfolioRebalance struct {
+	EtfCoverage         []RebalanceEtfCoverage        `json:"etf_coverage"`
+	UncoveredValue      float64                       `json:"uncovered_value"`
+	Warnings            []string                      `json:"warnings"`
 	MemberID            int64                         `json:"member_id"`
 	Dimension           string                        `json:"dimension"`
 	TotalEquityValue    float64                       `json:"total_equity_value"`
@@ -87,17 +100,19 @@ type PortfolioRebalance struct {
 
 // PortfolioTargetItem 是目標配置項目。
 type PortfolioTargetItem struct {
+	Dimension     string  `json:"dimension,omitempty"`
 	TargetKey     string  `json:"target_key"`
 	TargetPercent float64 `json:"target_percent"`
 }
 
 // PortfolioTargets 是目標配置設定結果。
 type PortfolioTargets struct {
-	MemberID          int64                 `json:"member_id"`
-	Dimension         string                `json:"dimension"`
-	Targets           []PortfolioTargetItem `json:"targets"`
-	TargetCashPercent float64               `json:"target_cash_percent"`
-	Disclaimer        string                `json:"disclaimer"`
+	MemberID               int64                 `json:"member_id"`
+	Dimension              string                `json:"dimension"`
+	Targets                []PortfolioTargetItem `json:"targets"`
+	TargetCashPercent      *float64              `json:"target_cash_percent"`
+	Disclaimer             string                `json:"disclaimer"`
+	CashPercentByDimension map[string]float64    `json:"cash_percent_by_dimension"`
 }
 
 // RebalanceOptions 是呼叫 GET /api/v1/portfolio/rebalance 的選項。
@@ -135,7 +150,7 @@ func (c *APIClient) PortfolioRebalance(ctx context.Context, opt RebalanceOptions
 	if opt.MemberID > 0 {
 		values.Set("member_id", fmt.Sprint(opt.MemberID))
 	}
-	if opt.FeeDiscount > 0 {
+	if opt.FeeDiscount >= 0 {
 		values.Set("fee_discount", fmt.Sprint(opt.FeeDiscount))
 	}
 	var body PortfolioRebalance
@@ -197,12 +212,12 @@ func (c *APIClient) GetPortfolioTargets(ctx context.Context, memberID int64, dim
 
 // RebalanceInput 是 get_portfolio_rebalance 的輸入參數。
 type RebalanceInput struct {
-	MemberID         int64   `json:"member_id"`
-	Dimension        string  `json:"dimension"`
-	LotSize          int     `json:"lot_size"`
-	TolerancePercent float64 `json:"tolerance_percent"`
-	AvailableCash    float64 `json:"available_cash"`
-	FeeDiscount      float64 `json:"fee_discount"`
+	MemberID         int64    `json:"member_id"`
+	Dimension        string   `json:"dimension"`
+	LotSize          int      `json:"lot_size"`
+	TolerancePercent *float64 `json:"tolerance_percent"`
+	AvailableCash    float64  `json:"available_cash"`
+	FeeDiscount      *float64 `json:"fee_discount"`
 }
 
 // SetTargetsInput 是 set_portfolio_targets 的輸入參數。
@@ -359,21 +374,21 @@ func (ts *portfolioRebalanceToolset) getPortfolioRebalance(ctx context.Context, 
 	if lotSize != 1 && lotSize != 1000 {
 		return nil, nil, fmt.Errorf("參數 lot_size 必須為 1 或 1000")
 	}
-	tolerance := in.TolerancePercent
-	if tolerance == 0 {
-		tolerance = 2.0
+	tolerance := 2.0
+	if in.TolerancePercent != nil {
+		tolerance = *in.TolerancePercent
 	}
-	if tolerance < 0 {
+	if math.IsNaN(tolerance) || math.IsInf(tolerance, 0) || tolerance < 0 || tolerance > 100 {
 		return nil, nil, fmt.Errorf("參數 tolerance_percent 不可為負數")
 	}
-	if in.AvailableCash < 0 {
+	if math.IsNaN(in.AvailableCash) || math.IsInf(in.AvailableCash, 0) || in.AvailableCash < 0 {
 		return nil, nil, fmt.Errorf("參數 available_cash 不可為負數")
 	}
-	feeDiscount := in.FeeDiscount
-	if feeDiscount == 0 {
-		feeDiscount = 1.0
+	feeDiscount := 1.0
+	if in.FeeDiscount != nil {
+		feeDiscount = *in.FeeDiscount
 	}
-	if feeDiscount < 0 || feeDiscount > 1.0 {
+	if math.IsNaN(feeDiscount) || math.IsInf(feeDiscount, 0) || feeDiscount < 0 || feeDiscount > 1.0 {
 		return nil, nil, fmt.Errorf("參數 fee_discount 必須介於 0.0 至 1.0")
 	}
 
@@ -408,21 +423,24 @@ func (ts *portfolioRebalanceToolset) setPortfolioTargets(ctx context.Context, _ 
 	if dim != "stock" && dim != "industry" && dim != "etf_look_through" {
 		return nil, nil, fmt.Errorf("參數 dimension 必須為 stock, industry, 或 etf_look_through")
 	}
-	if len(in.Targets) == 0 {
-		return nil, nil, fmt.Errorf("targets 清單不可為空")
-	}
-	var sum float64
+
+	var sum int64
+	seen := map[string]bool{}
 	for _, t := range in.Targets {
-		if t.TargetKey == "" {
-			return nil, nil, fmt.Errorf("target_key 不可為空字串")
+		if strings.TrimSpace(t.TargetKey) == "" || len([]rune(t.TargetKey)) > 64 || seen[t.TargetKey] {
+			return nil, nil, fmt.Errorf("target_key 不可空白、重複或超過 64 字元")
 		}
-		if t.TargetPercent < 0 || t.TargetPercent > 100.0 {
+		if math.IsNaN(t.TargetPercent) || math.IsInf(t.TargetPercent, 0) || t.TargetPercent < 0 || t.TargetPercent > 100.0 {
 			return nil, nil, fmt.Errorf("目標比例 (%s: %.2f%%) 必須介於 0%% 至 100%%", t.TargetKey, t.TargetPercent)
 		}
-		sum += t.TargetPercent
+		seen[t.TargetKey] = true
+		if math.Abs(t.TargetPercent*100-math.Round(t.TargetPercent*100)) > 1e-7 {
+			return nil, nil, fmt.Errorf("目標比例最多兩位小數")
+		}
+		sum += int64(math.Round(t.TargetPercent * 100))
 	}
-	if sum > 100.0001 {
-		return nil, nil, fmt.Errorf("目標配置比例總和 (%.2f%%) 不得超過 100%%", sum)
+	if sum > 10000 {
+		return nil, nil, fmt.Errorf("目標配置比例總和不得超過 100%%")
 	}
 
 	opt := SetTargetsOptions{
@@ -554,6 +572,12 @@ func formatRebalanceText(r *PortfolioRebalance) string {
 		b.printf("\n- 試算後預估剩餘現金: %s", FormatCurrencyWithUnit(&r.CashSummary.RemainingCash, CurrencyYuan))
 	}
 
+	for _, coverage := range r.EtfCoverage {
+		b.printf("\nETF %s 成分涵蓋率 %.2f%%，未涵蓋市值 %s", coverage.Symbol, coverage.CoveredWeightPercent, FormatCurrencyWithUnit(&coverage.UncoveredValue, CurrencyYuan))
+	}
+	for _, warning := range r.Warnings {
+		b.printf("\n注意：%s", warning)
+	}
 	b.printf("\n\n免責聲明: %s", RebalanceDisclaimer)
 	return b.String()
 }
@@ -570,10 +594,20 @@ func formatTargetsText(t *PortfolioTargets, isSet bool) string {
 		b.printf("\n目前尚未設定任何標的目標比例。")
 	} else {
 		for _, item := range t.Targets {
-			b.printf("\n- %s: %.2f%%", item.TargetKey, item.TargetPercent)
+			b.printf("\n- %s %s: %.2f%%", item.Dimension, item.TargetKey, item.TargetPercent)
 		}
 	}
-	b.printf("\n目標現金/未分配比例: %.2f%%", t.TargetCashPercent)
+	if t.TargetCashPercent != nil {
+		b.printf("\n目標現金/未分配比例: %.2f%%", *t.TargetCashPercent)
+	}
+	keys := make([]string, 0, len(t.CashPercentByDimension))
+	for dimension := range t.CashPercentByDimension {
+		keys = append(keys, dimension)
+	}
+	slices.Sort(keys)
+	for _, dimension := range keys {
+		b.printf("\n%s 維度現金/未分配比例: %.2f%%", dimension, t.CashPercentByDimension[dimension])
+	}
 	b.printf("\n\n免責聲明: %s", TargetDisclaimer)
 	return b.String()
 }

@@ -172,7 +172,6 @@ func TestChipMainFlowText(t *testing.T) {
 	}
 }
 
-
 // TestChipStreakInvariantWithDifferentDays 驗證 B05:連續天數獨立於 days 參數,無論查詢 days=5 或 days=60,streak 皆保持一致。
 func TestChipStreakInvariantWithDifferentDays(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

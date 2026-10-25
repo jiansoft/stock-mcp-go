@@ -114,7 +114,7 @@ func TestGetPortfolioRebalance_StockDimension(t *testing.T) {
 	res, out, err := ts.getPortfolioRebalance(context.Background(), nil, RebalanceInput{
 		Dimension:        "stock",
 		LotSize:          1000,
-		TolerancePercent: 2.0,
+		TolerancePercent: ptr(2.0),
 		AvailableCash:    1000000.0,
 	})
 	if err != nil {
@@ -298,7 +298,7 @@ func TestSetPortfolioTargets_Success(t *testing.T) {
 			{TargetKey: "2330", TargetPercent: 60.0},
 			{TargetKey: "2317", TargetPercent: 30.0},
 		},
-		TargetCashPercent: 10.0,
+		TargetCashPercent: ptr(10.0),
 		Disclaimer:        TargetDisclaimer,
 	}
 
@@ -358,7 +358,7 @@ func TestAPIClient_PortfolioRebalance_And_Targets(t *testing.T) {
 				MemberID:          0,
 				Dimension:         payload.Dimension,
 				Targets:           payload.Targets,
-				TargetCashPercent: 10.0,
+				TargetCashPercent: ptr(10.0),
 				Disclaimer:        TargetDisclaimer,
 			}
 			_ = json.NewEncoder(w).Encode(res)
@@ -368,7 +368,7 @@ func TestAPIClient_PortfolioRebalance_And_Targets(t *testing.T) {
 				MemberID:          0,
 				Dimension:         "stock",
 				Targets:           []PortfolioTargetItem{{TargetKey: "2330", TargetPercent: 100.0}},
-				TargetCashPercent: 0.0,
+				TargetCashPercent: ptr(0.0),
 				Disclaimer:        TargetDisclaimer,
 			}
 			_ = json.NewEncoder(w).Encode(res)
@@ -413,5 +413,76 @@ func TestAPIClient_PortfolioRebalance_And_Targets(t *testing.T) {
 	}
 	if len(getRes.Targets) != 1 || getRes.Targets[0].TargetKey != "2330" {
 		t.Errorf("GetPortfolioTargets 回傳內容錯誤: %+v", getRes)
+	}
+}
+
+// TestRebalanceExplicitZero 驗證 JSON 明確傳入零時與省略參數有不同語意。
+func TestRebalanceExplicitZero(t *testing.T) {
+	for _, tc := range []struct {
+		body                string
+		tolerance, discount float64
+	}{
+		{`{}`, 2, 1}, {`{"tolerance_percent":0,"fee_discount":0}`, 0, 0},
+	} {
+		var input RebalanceInput
+		if err := json.Unmarshal([]byte(tc.body), &input); err != nil {
+			t.Fatal(err)
+		}
+		fake := &fakeRebalanceQuerier{rebalanceResult: sampleRebalanceStock()}
+		tools := portfolioRebalanceToolset{pr: fake, logf: func(string, ...any) {}}
+		if _, _, err := tools.getPortfolioRebalance(t.Context(), nil, input); err != nil {
+			t.Fatal(err)
+		}
+		if fake.lastRebalance.TolerancePercent != tc.tolerance || fake.lastRebalance.FeeDiscount != tc.discount {
+			t.Fatalf("presence lost: %+v", fake.lastRebalance)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("fee_discount") != "0" || r.URL.Query().Get("tolerance_percent") != "0" {
+			t.Errorf("zero query lost: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dimension":"stock"}`))
+	}))
+	defer server.Close()
+	if _, err := NewAPIClient(server.URL, "key", time.Second).PortfolioRebalance(t.Context(), RebalanceOptions{LotSize: 1, Dimension: "stock"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTargetsDimensionsAndCoverage 驗證各維度現金與 ETF 限制會留在文字與結構資料。
+func TestTargetsDimensionsAndCoverage(t *testing.T) {
+	var targets PortfolioTargets
+	if err := json.Unmarshal([]byte(`{"dimension":"all","target_cash_percent":null,"cash_percent_by_dimension":{"stock":40,"industry":20},"targets":[{"dimension":"stock","target_key":"2330","target_percent":60}]}`), &targets); err != nil {
+		t.Fatal(err)
+	}
+	text := formatTargetsText(&targets, false)
+	for _, want := range []string{"stock 2330", "stock 維度現金/未分配比例: 40.00%", "industry 維度現金/未分配比例: 20.00%"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %s: %s", want, text)
+		}
+	}
+	r := sampleRebalanceStock()
+	r.EtfCoverage = []RebalanceEtfCoverage{{Symbol: "0050", CoveredWeightPercent: 60, UncoveredValue: 4000}}
+	r.Warnings = []string{"僅前十大成分"}
+	text = formatRebalanceText(r)
+	if !strings.Contains(text, "涵蓋率 60.00%") || !strings.Contains(text, "僅前十大成分") {
+		t.Fatal(text)
+	}
+}
+
+// TestTargetsPrecisionAndReplacement 驗證入庫精度、重複鍵及全現金設定。
+func TestTargetsPrecisionAndReplacement(t *testing.T) {
+	fake := &fakeRebalanceQuerier{targetsResult: &PortfolioTargets{Dimension: "stock"}}
+	tools := portfolioRebalanceToolset{pr: fake, logf: func(string, ...any) {}}
+	for _, items := range [][]PortfolioTargetItem{
+		{{TargetKey: "A", TargetPercent: 33.335}}, {{TargetKey: "A", TargetPercent: 10}, {TargetKey: "A", TargetPercent: 10}}, {{TargetKey: " ", TargetPercent: 1}},
+	} {
+		if _, _, err := tools.setPortfolioTargets(t.Context(), nil, SetTargetsInput{Dimension: "stock", Targets: items}); err == nil {
+			t.Fatalf("accepted invalid input: %+v", items)
+		}
+	}
+	if _, _, err := tools.setPortfolioTargets(t.Context(), nil, SetTargetsInput{Dimension: "stock", Targets: []PortfolioTargetItem{}}); err != nil {
+		t.Fatal(err)
 	}
 }
