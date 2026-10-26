@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 51 個唯讀工具
+- 由 `stock_rust` Data API 提供 85 個工具（除 `set_portfolio_targets` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -99,12 +99,18 @@ stock-mcp-go
 | `screen_etfs` | API | 篩選與排序台灣上市櫃 ETF（每天收盤後更新）：分類、投資地區、配息頻率、市場、關鍵字；可依成交值、規模、折溢價、近 12 個月殖利率、淨申購、含息報酬、受益人數排序；每檔附收盤、預估淨值與折溢價、規模、淨申購、配息與下次除息 |
 | `get_etf_detail` | API | 單檔 ETF 完整資料：分類、投信、追蹤指數、費率，收盤、預估淨值與折溢價（含近 20 筆平均）、規模、淨申購、受益人數、配息，市價與淨值含息報酬（1 週至 5 年）、近 1 年風險指標、前十大持股、行業比重、資產分佈與近期每日折溢價 |
 | `compare_etfs` | API | 並排比較 2 至 4 檔 ETF：經理費與保管費、規模、折溢價（含近 20 筆平均）、殖利率與配息頻率、近 1 年市價與淨值含息報酬、3 年年化報酬、波動、最大回撤、夏普值，以及兩兩前十大持股重疊權重 |
+| `get_etf_holding_history` | API | 列出 ETF 最近 1–24 期各期前十大成分股與權重；期別依實際採集日期，非固定季度 |
+| `get_etf_proxy_tracking` | API | ETF 相對 0050 的近一年報酬差異與年化波動（至少 120 組樣本；為代理基準，非相對實際指數的追蹤誤差） |
+| `analyze_stock_deep_dive` | API | 一次查詢個股完整分析：報價與基本面、五年估值區間、五日籌碼、營收、三率、三大財報、財務體質、技術與股利；缺資料會列警示 |
 | `get_etf_holding_changes` | API | 單檔 ETF 最近幾期（預設 6、約每月一期）的前十大持股，每期列出與前一期相比的新進、剔除與權重變化 |
 | `get_portfolio_etf_exposure` | API | 個人持股穿透曝險：持有 ETF 依最新一期前十大持股權重拆到成分股，與直接持股合併，列出合計曝險最大的成分股（直接、經由哪些 ETF、占總市值比例）與每檔 ETF 可拆解的比例 |
+| `get_portfolio_rebalance` | API | 依已設定的目標權重（個股／產業／ETF 穿透）試算持股再平衡：偏離、建議股數與金額、手續費與證交稅、現金流；僅供參考，不下單 |
+| `get_portfolio_targets` | API | 查詢各維度已設定的目標權重與保留現金比例 |
+| `set_portfolio_targets` | API | **寫入工具**：儲存單一維度的目標權重（總和不得超過 100%）；僅作再平衡試算基準，不是委託單 |
 | `get_holding_chip` | API | 某交易日（預設最新）的個人持股籌碼日報：當日收盤仍持有的普通股（排除 ETF），逐檔列出外資／投信／自營商淨買賣超與占成交量比例、外資／投信連續買賣超天數、融資融券餘額與日變動、主力淨進出及買賣超分點與近五個主力交易日合計；達到每日 Telegram 通知門檻的持股標示原因 |
 | `get_dividend_forecast` | API | 目前持股未來 1～24 個月預期現金股利：已公告配息與依去年模式推估、每月總額、逐筆明細與預期殖利率 |
 
-所有工具都是唯讀。回應欄位因工具而異：報價輸出包含 `data_as_of`，其他工具可能以結果物件內的日期或區間表達時間基準。允許空值的缺失指標維持 `null`；空集合與合計為 0 也可能是有效結果。`get_dividend_forecast` 會以逐筆 `basis` 與 `announced_total`／`estimated_total` 區分已公告與推估股利，推估值不代表已公告配息。
+除 `set_portfolio_targets`（僅儲存個人目標權重）外，所有工具都是唯讀。回應欄位因工具而異：報價輸出包含 `data_as_of`，其他工具可能以結果物件內的日期或區間表達時間基準。允許空值的缺失指標維持 `null`；空集合與合計為 0 也可能是有效結果。`get_dividend_forecast` 會以逐筆 `basis` 與 `announced_total`／`estimated_total` 區分已公告與推估股利，推估值不代表已公告配息。
 
 ## 系統需求
 
