@@ -47,6 +47,8 @@ type BacktestPeriod struct {
 
 // BacktestSummary 是整段回測的彙總;沒有任何一期時數值為 nil。
 type BacktestSummary struct {
+	// EtfMissingPeriods 保留舊版未提供欄位的相容性。
+	EtfMissingPeriods              *int64   `json:"etf_missing_periods,omitempty"`
 	Periods                        int      `json:"periods"`
 	InvestedPeriods                int      `json:"invested_periods"`
 	MarketFilteredPeriods          int      `json:"market_filtered_periods"`
@@ -1057,6 +1059,10 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 				displayPercent(p.AvgReturn), cost, displayPercent(p.BenchmarkReturn), etf, strings.Join(p.Symbols, "、"))
 		}
 	}
+	if e.Summary.EtfMissingPeriods != nil {
+		b.printf("\n0050 缺值期數 %d；仍缺報酬時該部位以零報酬估算。", *e.Summary.EtfMissingPeriods)
+	}
+	b.printf("\n0050 停牌時參考進場日前最多 30 天收盤，開收比缺值取 1，維持原定出場日；此為估算，並非停牌日可實際成交。")
 	writeBacktestCurrent(&b, e.Current)
 	b.printf("\n只用當天已知的資料選股,期間內下市的股票算到最後一筆收盤。過去表現不代表未來結果。免責聲明:%s",
 		AnalysisDisclaimer)
