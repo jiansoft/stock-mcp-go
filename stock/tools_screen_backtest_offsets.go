@@ -67,15 +67,17 @@ type ScreenBacktestOffsetsEnvelope struct {
 	MaxWeight   *int     `json:"max_weight"`
 	FeeDiscount *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
-	ExecutionModel *string                     `json:"execution_model"`
-	SlippageBps    *int                        `json:"slippage_bps"`
-	EtfBenchmark   *string                     `json:"etf_benchmark"`
-	Distribution   BacktestOffsetDistribution  `json:"distribution"`
-	Years          []BacktestOffsetYear        `json:"years"`
-	Split          *string                     `json:"split"`
-	BeforeSplit    *BacktestOffsetDistribution `json:"before_split"`
-	AfterSplit     *BacktestOffsetDistribution `json:"after_split"`
-	Offsets        []BacktestOffsetResult      `json:"offsets"`
+	ExecutionModel *string `json:"execution_model"`
+	// DrawdownBasis 是最大回撤口徑;多組回測為 period_end(換股期末)。舊版 API 沒有時為 nil。
+	DrawdownBasis *string                     `json:"drawdown_basis"`
+	SlippageBps   *int                        `json:"slippage_bps"`
+	EtfBenchmark  *string                     `json:"etf_benchmark"`
+	Distribution  BacktestOffsetDistribution  `json:"distribution"`
+	Years         []BacktestOffsetYear        `json:"years"`
+	Split         *string                     `json:"split"`
+	BeforeSplit   *BacktestOffsetDistribution `json:"before_split"`
+	AfterSplit    *BacktestOffsetDistribution `json:"after_split"`
+	Offsets       []BacktestOffsetResult      `json:"offsets"`
 }
 
 // ScreenBacktestOffsetsQuerier 是 get_screen_backtest_offsets 對資料來源的需求介面;只有 *APIClient 實作。
@@ -249,6 +251,25 @@ func stringOrNil(value string) *string {
 	return &value
 }
 
+// drawdownBasisText 是最大回撤口徑的括號說明;未提供口徑時為空字串。
+func drawdownBasisText(basis *string) string {
+	if basis != nil && *basis == "period_end" {
+		return "(換股期末口徑)"
+	}
+	return ""
+}
+
+// excludedCrossBoundary 加總各偏移因跨越分割日而排除的期數;舊版 API 沒有欄位時算 0。
+func excludedCrossBoundary(results []BacktestOffsetResult) int {
+	total := 0
+	for _, result := range results {
+		if result.ExcludedCrossBoundaryPeriods != nil {
+			total += *result.ExcludedCrossBoundaryPeriods
+		}
+	}
+	return total
+}
+
 // splitDistributionText 以中位數描述樣本內或樣本外的分布;nil 回「無資料」。
 func splitDistributionText(d *BacktestOffsetDistribution) string {
 	if d == nil {
@@ -284,7 +305,7 @@ func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBa
 	d := e.Distribution
 	b.printf("\n- 年化報酬:%s", backtestStatText(d.AnnualizedReturnAfterCosts, displayPercent))
 	b.printf("\n- 夏普值:%s", backtestStatText(d.SharpeRatio, displayFloat))
-	b.printf("\n- 最大回撤:%s", backtestStatText(d.MaxDrawdownAfterCosts, displayPercent))
+	b.printf("\n- 最大回撤%s:%s", drawdownBasisText(e.DrawdownBasis), backtestStatText(d.MaxDrawdownAfterCosts, displayPercent))
 	if d.Volatility != nil {
 		b.printf("\n- 年化波動率(未扣成本):%s", backtestStatText(d.Volatility, displayPercent))
 	}
@@ -300,6 +321,9 @@ func screenBacktestOffsetsSummary(e *ScreenBacktestOffsetsEnvelope, opt ScreenBa
 		b.printf("、最大回撤比 0050 淺的比例 %s", displayRate(d.BeatEtfDrawdownRate))
 	}
 	b.printf("。")
+	if excluded := excludedCrossBoundary(e.Offsets); e.Split != nil && excluded > 0 {
+		b.printf("\n跨越分割日、不計入樣本內外的期數:各偏移合計 %d 期。", excluded)
+	}
 	if e.Split != nil {
 		for _, half := range []struct {
 			label string

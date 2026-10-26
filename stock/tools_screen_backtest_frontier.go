@@ -30,7 +30,9 @@ type ScreenBacktestFrontierEnvelope struct {
 	MaxWeight   *int     `json:"max_weight"`
 	FeeDiscount *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
-	ExecutionModel   *string `json:"execution_model"`
+	ExecutionModel *string `json:"execution_model"`
+	// DrawdownBasis 是最大回撤口徑;多組回測為 period_end(換股期末)。舊版 API 沒有時為 nil。
+	DrawdownBasis    *string `json:"drawdown_basis"`
 	SlippageBps      *int    `json:"slippage_bps"`
 	EtfBenchmark     *string `json:"etf_benchmark"`
 	Offsets          int     `json:"offsets"`
