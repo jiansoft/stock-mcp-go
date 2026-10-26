@@ -51,6 +51,10 @@ func TestBacktestExecutionText(t *testing.T) {
 	if text := executionText(ScreenBacktestOptions{SlippageBps: 5}); text != "滑價 5 bps" {
 		t.Fatalf("只有滑價:%s", text)
 	}
+	base.StopLoss = 10
+	if text := backtestOptionsText(base); !strings.Contains(text, "next_open 下一個有開盤的交易日賣出") {
+		t.Fatalf("應說明 next_open 停損出場規則:%s", text)
+	}
 }
 
 // TestBacktestExecutionSchema 驗證四支回測工具的 schema 都帶有成交假設參數。

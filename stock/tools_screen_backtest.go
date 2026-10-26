@@ -1167,7 +1167,7 @@ func stopText(stopLoss, trailingStop *int) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "期間" + strings.Join(parts, "、") + "(每天以還原收盤檢查,觸發當天收盤賣出、到下次換股前放現金)"
+	return "期間" + strings.Join(parts, "、") + "(每天以還原收盤檢查,close 觸發當天收盤賣出、next_open 下一個有開盤的交易日賣出,到下次換股前放現金)"
 }
 
 // signedPercent 是帶正負號的百分比(兩位小數)。
