@@ -3,6 +3,7 @@ package stock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -169,5 +170,49 @@ func TestChipMainFlowText(t *testing.T) {
 	e.Daily = daily
 	if summary := chipSummary(e); !strings.Contains(summary, "主力累計 -649 張") {
 		t.Fatalf("摘要缺少主力累計:%s", summary)
+	}
+}
+
+// TestChipStreakInvariantWithDifferentDays 驗證 B05:連續天數獨立於 days 參數,無論查詢 days=5 或 days=60,streak 皆保持一致。
+func TestChipStreakInvariantWithDifferentDays(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 同一份完整歷史保留 20 日連續天數；明細依 days 實際裁切。
+		limit := 20
+		switch r.URL.Query().Get("days") {
+		case "5":
+			limit = 5
+		case "60":
+		default:
+			t.Errorf("days 未傳遞: %s", r.URL)
+			w.WriteHeader(422)
+			return
+		}
+		daily := make([]ChipDay, limit)
+		for i := range daily {
+			daily[i] = ChipDay{Date: time.Date(2026, 10, 23-i, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), ForeignNet: i64(100), TrustNet: i64(-100)}
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"stock_symbol": "2330", "data_as_of": "2026-10-23", "daily": daily, "streak": map[string]int{"foreign_days": 20, "trust_days": -20}, "holder_distribution": []any{}, "insider": nil, "broker_flow": nil})
+	}))
+	defer server.Close()
+	client := NewAPIClient(server.URL, "secret", time.Second)
+
+	chip5, err := client.StockChip(t.Context(), "2330", 5)
+	if err != nil {
+		t.Fatalf("StockChip(days=5) failed: %v", err)
+	}
+	chip60, err := client.StockChip(t.Context(), "2330", 60)
+	if err != nil {
+		t.Fatalf("StockChip(days=60) failed: %v", err)
+	}
+
+	if len(chip5.Daily) != 5 || len(chip60.Daily) != 20 {
+		t.Fatalf("明細未依 days 裁切: %d/%d", len(chip5.Daily), len(chip60.Daily))
+	}
+	if chip5.Streak != chip60.Streak {
+		t.Fatalf("days=5 與 days=60 之 Streak 不一致: %+v vs %+v", chip5.Streak, chip60.Streak)
+	}
+	if chip5.Streak.ForeignDays != 20 || chip5.Streak.TrustDays != -20 {
+		t.Fatalf("Streak 數值不符預期: %+v", chip5.Streak)
 	}
 }

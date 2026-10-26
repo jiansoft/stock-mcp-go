@@ -3,6 +3,7 @@
 package stock
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -501,6 +502,35 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 		return false, fmt.Errorf("解析資料 API 回應:%w", err)
 	}
 	return true, nil
+}
+
+// put 執行帶有 JSON request body 的 PUT 請求。
+func (c *APIClient) put(ctx context.Context, path string, input any, output any) error {
+	bodyBytes, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("序列化資料 API 請求:%w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("建立資料 API 請求:%w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("呼叫資料 API:%w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return &apiStatusError{status: resp.StatusCode}
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIResponseBytes)).Decode(output); err != nil {
+		return fmt.Errorf("解析資料 API 回應:%w", err)
+	}
+	return nil
 }
 
 // apiStatusError 是 Data API 回傳的非成功狀態(404 以外);保留狀態碼讓工具層區分
