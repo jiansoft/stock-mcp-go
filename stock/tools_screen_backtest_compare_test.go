@@ -67,13 +67,15 @@ func TestCompareToolValidatesAndEncodesScenarios(t *testing.T) {
 		{Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {Label: "沒改東西"}}},
 		{Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {SlippageBps: ptr(201)}}},
 		{Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {ExecutionPrice: "vwap"}}},
-		{ScreenBacktestInput: ScreenBacktestInput{StopLoss: 10}, Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {ExecutionPrice: "next_open"}}},
 		{Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {SlippageBps: ptr(2), Label: strings.Repeat("長", 41)}}},
 		{ScreenBacktestInput: ScreenBacktestInput{HoldDays: 7}, Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {SlippageBps: ptr(2)}}},
 	} {
 		if _, _, err := ts.screenBacktestCompare(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
 		}
+	}
+	if _, _, err := ts.screenBacktestCompare(t.Context(), nil, ScreenBacktestCompareInput{ScreenBacktestInput: ScreenBacktestInput{StopLoss: 10}, Scenarios: []BacktestScenarioInput{{SlippageBps: ptr(1)}, {ExecutionPrice: "next_open"}}}); err != nil {
+		t.Fatalf("次日開盤停損應能比較: %v", err)
 	}
 	ts.cq = &fakeCompareQuerier{err: errors.New("boom")}
 	if _, _, err := ts.screenBacktestCompare(t.Context(), nil, in); err == nil || err.Error() != errInternal {
