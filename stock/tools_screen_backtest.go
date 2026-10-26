@@ -545,7 +545,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Type:        "string",
 				Enum:        []any{"close", "next_open"},
 				Default:     []byte(`"close"`),
-				Description: "成交價模型(選填):close 為換股日收盤買賣(理想模型,預設);next_open 為換股日收盤後才確定選股、次一交易日開盤買進並在持有期滿後的次一交易日開盤賣出(較貼近實際可成交),開盤價缺漏時沿用收盤。next_open 不可搭配 stop_loss／trailing_stop,也不提供日頻最大回撤",
+				Description: "成交價模型(選填):close 為換股日收盤買賣(理想模型,預設);next_open 為換股日收盤後才確定選股、次一交易日開盤買進並在持有期滿後的次一交易日開盤賣出(較貼近實際可成交),開盤價缺漏時沿用收盤。next_open 不可搭配 stop_loss／trailing_stop,日頻最大回撤以進場日開盤為起點、出場日開盤結算",
 			},
 			"slippage_bps": {
 				Type:        "integer",
