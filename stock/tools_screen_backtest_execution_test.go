@@ -26,13 +26,12 @@ func TestBacktestExecutionOptions(t *testing.T) {
 	}
 	for _, bad := range []ScreenBacktestInput{
 		{ExecutionPrice: "vwap"}, {ExecutionPrice: "NEXT_OPEN"}, {SlippageBps: 201}, {SlippageBps: -1},
-		{ExecutionPrice: "next_open", StopLoss: 10}, {ExecutionPrice: "next_open", TrailingStop: 10},
 	} {
 		if _, _, err := ts.screenBacktest(t.Context(), nil, bad); err == nil {
 			t.Errorf("%#v 應回錯誤", bad)
 		}
 	}
-	for _, ok := range []ScreenBacktestInput{{ExecutionPrice: "close", StopLoss: 10}, {SlippageBps: 200}} {
+	for _, ok := range []ScreenBacktestInput{{ExecutionPrice: "next_open", StopLoss: 10}, {ExecutionPrice: "next_open", TrailingStop: 10}, {ExecutionPrice: "close", StopLoss: 10}, {SlippageBps: 200}} {
 		if _, _, err := ts.screenBacktest(t.Context(), nil, ok); err != nil {
 			t.Errorf("%#v 不應回錯誤:%v", ok, err)
 		}

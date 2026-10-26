@@ -457,7 +457,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Type:        "integer",
 				Minimum:     ptr(1.0),
 				Maximum:     ptr(50.0),
-				Description: "停損(選填,1 至 50%):持有期間每天以還原收盤檢查,收盤相對買進價跌幅達這個比例就當天收盤賣出、到下次換股前放現金(賣出付手續費與證交稅,下次仍入選視為重新買進);只檢查已滿持有天數的期數,目前持股不檢查",
+				Description: "停損(選填,1 至 50%):持有期間每天以還原收盤檢查,收盤相對買進價跌幅達這個比例就觸發停損；close 當天收盤賣出，next_open 下一個有開盤的交易日賣出（到達原定出場日則沿用期末出場，不跨期停損），到下次換股前放現金(賣出付手續費與證交稅,下次仍入選視為重新買進);只檢查已滿持有天數的期數,目前持股不檢查",
 			},
 			"trailing_stop": {
 				Type:        "integer",
@@ -547,7 +547,7 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Type:        "string",
 				Enum:        []any{"close", "next_open"},
 				Default:     []byte(`"close"`),
-				Description: "成交價模型(選填):close 為換股日收盤買賣(理想模型,預設);next_open 為換股日收盤後才確定選股、次一交易日開盤買進並在持有期滿後的次一交易日開盤賣出(較貼近實際可成交),開盤價缺漏時沿用收盤。next_open 不可搭配 stop_loss／trailing_stop,日頻最大回撤以進場日開盤為起點、出場日開盤結算",
+				Description: "成交價模型(選填):close 為換股日收盤買賣(理想模型,預設);next_open 為換股日收盤後才確定選股、次一交易日開盤買進並在持有期滿後的次一交易日開盤賣出(較貼近實際可成交),開盤價缺漏時沿用收盤。next_open 的停損與移動停利以收盤觸發，次一有開盤的交易日賣出；若已到原定出場日則沿用期末出場，不跨期停損。日頻最大回撤以進場日開盤為起點、出場日開盤結算",
 			},
 			"slippage_bps": {
 				Type:        "integer",
@@ -716,7 +716,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.FeeDiscount != nil && (*in.FeeDiscount < 0 || *in.FeeDiscount > 1) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
-	if err := validateExecution(in.ExecutionPrice, in.SlippageBps, in.StopLoss, in.TrailingStop); err != nil {
+	if err := validateExecution(in.ExecutionPrice, in.SlippageBps); err != nil {
 		return ScreenBacktestOptions{}, err
 	}
 	fundamentals := BacktestFundamentals{
@@ -742,14 +742,11 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	}, nil
 }
 
-// validateExecution 檢查成交價模型與滑價;next_open 不支援期間停損(Data API 同樣回 422)。
-func validateExecution(executionPrice string, slippageBps, stopLoss, trailingStop int) error {
+// validateExecution 檢查成交價模型與滑價；兩種成交模型均支援收盤觸發停損。
+func validateExecution(executionPrice string, slippageBps int) error {
 	switch executionPrice {
 	case "", "close":
 	case "next_open":
-		if stopLoss > 0 || trailingStop > 0 {
-			return fmt.Errorf("參數 execution_price=next_open 不可搭配 stop_loss／trailing_stop")
-		}
 	default:
 		return fmt.Errorf("參數 execution_price 必須為 close 或 next_open")
 	}
