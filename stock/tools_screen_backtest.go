@@ -186,25 +186,28 @@ type ScreenBacktestEnvelope struct {
 	MinEPS                 *float64 `json:"min_eps"`
 	MinROEPercent          *float64 `json:"min_roe_percent"`
 	// MinGrossMarginPercent 等是 Yahoo 單季財報的三率與負債比門檻;未篩選為 nil,三率三升未篩選為 false。
-	MinGrossMarginPercent     *float64              `json:"min_gross_margin_percent"`
-	MinOperatingMarginPercent *float64              `json:"min_operating_margin_percent"`
-	MarginsYoYUp              bool                  `json:"margins_yoy_up"`
-	MaxDebtRatioPercent       *float64              `json:"max_debt_ratio_percent"`
-	RevenueRecord             bool                  `json:"revenue_record"`
-	MinMonthlyRevenue         *float64              `json:"min_monthly_revenue"`
-	PositiveFreeCashFlow      bool                  `json:"positive_free_cash_flow"`
-	MaxPE                     *float64              `json:"max_pe"`
-	MaxPB                     *float64              `json:"max_pb"`
-	Indicator                 *string               `json:"indicator"`
-	Kind                      *string               `json:"kind"`
-	FeeDiscount               *float64              `json:"fee_discount"`
-	Adjusted                  bool                  `json:"adjusted"`
-	EtfBenchmark              *string               `json:"etf_benchmark"`
-	Summary                   BacktestSummary       `json:"summary"`
-	Years                     []BacktestYear        `json:"years"`
-	Contributors              *BacktestContributors `json:"contributors"`
-	Current                   *BacktestCurrent      `json:"current"`
-	Periods                   []BacktestPeriod      `json:"periods"`
+	MinGrossMarginPercent     *float64 `json:"min_gross_margin_percent"`
+	MinOperatingMarginPercent *float64 `json:"min_operating_margin_percent"`
+	MarginsYoYUp              bool     `json:"margins_yoy_up"`
+	MaxDebtRatioPercent       *float64 `json:"max_debt_ratio_percent"`
+	RevenueRecord             bool     `json:"revenue_record"`
+	MinMonthlyRevenue         *float64 `json:"min_monthly_revenue"`
+	PositiveFreeCashFlow      bool     `json:"positive_free_cash_flow"`
+	MaxPE                     *float64 `json:"max_pe"`
+	MaxPB                     *float64 `json:"max_pb"`
+	Indicator                 *string  `json:"indicator"`
+	Kind                      *string  `json:"kind"`
+	FeeDiscount               *float64 `json:"fee_discount"`
+	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
+	ExecutionModel *string               `json:"execution_model"`
+	SlippageBps    *int                  `json:"slippage_bps"`
+	Adjusted       bool                  `json:"adjusted"`
+	EtfBenchmark   *string               `json:"etf_benchmark"`
+	Summary        BacktestSummary       `json:"summary"`
+	Years          []BacktestYear        `json:"years"`
+	Contributors   *BacktestContributors `json:"contributors"`
+	Current        *BacktestCurrent      `json:"current"`
+	Periods        []BacktestPeriod      `json:"periods"`
 }
 
 // ScreenBacktestOptions 是回測的查詢條件;空字串與 0 代表不篩選,FeeDiscount 為 nil 時用 API 預設(不打折)。
@@ -241,6 +244,9 @@ type ScreenBacktestOptions struct {
 	Indicator          string
 	Kind               string
 	FeeDiscount        *float64
+	// ExecutionPrice 是成交價模型(空字串為 API 預設 close);SlippageBps 是買賣各計的滑價(基點,0 不帶)。
+	ExecutionPrice string
+	SlippageBps    int
 	// Fundamentals 是月營收與季報門檻。
 	Fundamentals BacktestFundamentals
 }
@@ -283,6 +289,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 	for key, value := range map[string]string{
 		"preset": opt.Preset, "market": opt.Market, "from": opt.From, "to": opt.To, "industry": opt.Industry, "indicator": opt.Indicator, "kind": opt.Kind,
 		"rank_by": opt.RankBy, "weighting": opt.Weighting, "exclude_industry": opt.ExcludeIndustry, "split": opt.Split,
+		"execution_price": opt.ExecutionPrice,
 	} {
 		if value != "" {
 			values.Set(key, value)
@@ -296,7 +303,7 @@ func (opt ScreenBacktestOptions) query() url.Values {
 		"market_filter_pe_percentile": opt.MarketPEPercentile,
 		"rebalance_offset":            opt.RebalanceOffset, "min_avg_trade_value": opt.MinAvgTradeValue,
 		"etf_weight": opt.EtfWeight, "max_weight": opt.MaxWeight, "stop_loss": opt.StopLoss, "trailing_stop": opt.TrailingStop,
-		"hold_days": opt.HoldDays, "limit": opt.Limit,
+		"hold_days": opt.HoldDays, "limit": opt.Limit, "slippage_bps": opt.SlippageBps,
 	} {
 		if value > 0 {
 			values.Set(key, fmt.Sprint(value))
@@ -348,6 +355,10 @@ type ScreenBacktestInput struct {
 	Kind               string `json:"kind,omitempty"`
 	// FeeDiscount 用指標區分「沒給」與 0(免手續費)。
 	FeeDiscount *float64 `json:"fee_discount,omitempty"`
+	// ExecutionPrice 是成交價模型:close(換股日收盤,預設)或 next_open(次一交易日開盤)。
+	ExecutionPrice string `json:"execution_price,omitempty"`
+	// SlippageBps 是買進、賣出各計的滑價(基點,0 至 200)。
+	SlippageBps int `json:"slippage_bps,omitempty"`
 	// 基本面門檻用指標區分「沒給」與 0(例如營收年增 ≥ 0%)。
 	MinRevenueYoYPercent   *float64 `json:"min_revenue_yoy_percent,omitempty"`
 	MinRevenueYoYStreak    int      `json:"min_revenue_yoy_streak,omitempty"`
@@ -530,6 +541,19 @@ func screenBacktestSchema() *jsonschema.Schema {
 				Default:     []byte("1"),
 				Description: "手續費折扣(選填,0 至 1,預設 1 為不打折;例如 0.28 為 2.8 折)。扣成本後的報酬以手續費 0.1425% 乘上折扣、賣出另加證交稅 0.3% 計算",
 			},
+			"execution_price": {
+				Type:        "string",
+				Enum:        []any{"close", "next_open"},
+				Default:     []byte(`"close"`),
+				Description: "成交價模型(選填):close 為換股日收盤買賣(理想模型,預設);next_open 為換股日收盤後才確定選股、次一交易日開盤買進並在持有期滿後的次一交易日開盤賣出(較貼近實際可成交),開盤價缺漏時沿用收盤。next_open 不可搭配 stop_loss／trailing_stop,也不提供日頻最大回撤",
+			},
+			"slippage_bps": {
+				Type:        "integer",
+				Minimum:     ptr(0.0),
+				Maximum:     ptr(200.0),
+				Default:     []byte("0"),
+				Description: "滑價(選填,基點,0 至 200,預設 0):每次買進、賣出各再扣成交金額的 slippage_bps / 10000(例如 20 代表單邊 0.20%),一併計入扣成本後報酬",
+			},
 		},
 	}
 	for name, property := range backtestFundamentalSchemas() {
@@ -690,6 +714,9 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 	if in.FeeDiscount != nil && (*in.FeeDiscount < 0 || *in.FeeDiscount > 1) {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 fee_discount 必須介於 0 到 1 之間")
 	}
+	if err := validateExecution(in.ExecutionPrice, in.SlippageBps, in.StopLoss, in.TrailingStop); err != nil {
+		return ScreenBacktestOptions{}, err
+	}
 	fundamentals := BacktestFundamentals{
 		MinRevenueYoYPercent: in.MinRevenueYoYPercent, MinRevenueYoYStreak: in.MinRevenueYoYStreak,
 		MinRevenueYoY3mPercent: in.MinRevenueYoY3mPercent, MinEPS: in.MinEPS, MinROEPercent: in.MinROEPercent,
@@ -709,7 +736,37 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinRSScore: in.MinRSScore, MaxRSScore: in.MaxRSScore,
 		MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		Indicator: indicator, Kind: kind, FeeDiscount: in.FeeDiscount,
+		ExecutionPrice: in.ExecutionPrice, SlippageBps: in.SlippageBps,
 	}, nil
+}
+
+// validateExecution 檢查成交價模型與滑價;next_open 不支援期間停損(Data API 同樣回 422)。
+func validateExecution(executionPrice string, slippageBps, stopLoss, trailingStop int) error {
+	switch executionPrice {
+	case "", "close":
+	case "next_open":
+		if stopLoss > 0 || trailingStop > 0 {
+			return fmt.Errorf("參數 execution_price=next_open 不可搭配 stop_loss／trailing_stop")
+		}
+	default:
+		return fmt.Errorf("參數 execution_price 必須為 close 或 next_open")
+	}
+	if slippageBps < 0 || slippageBps > 200 {
+		return fmt.Errorf("參數 slippage_bps 必須介於 0 到 200 之間")
+	}
+	return nil
+}
+
+// executionText 是成交假設的摘要文字;收盤且無滑價時為空字串。
+func executionText(opt ScreenBacktestOptions) string {
+	var parts []string
+	if opt.ExecutionPrice == "next_open" {
+		parts = append(parts, "次日開盤成交")
+	}
+	if opt.SlippageBps > 0 {
+		parts = append(parts, fmt.Sprintf("滑價 %d bps", opt.SlippageBps))
+	}
+	return strings.Join(parts, "、")
 }
 
 // validateBacktestSplit 檢查樣本內外分割日的格式,並在起訖有指定時確認晚於起日、不晚於迄日;空字串為不分割。

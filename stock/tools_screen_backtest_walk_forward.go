@@ -27,16 +27,19 @@ type BacktestWalkForwardYear struct {
 
 // ScreenBacktestWalkForwardEnvelope 是 screen/backtest/walk-forward endpoint 的完整回應。
 type ScreenBacktestWalkForwardEnvelope struct {
-	From            string                     `json:"from"`
-	To              string                     `json:"to"`
-	Market          string                     `json:"market"`
-	HoldDays        int                        `json:"hold_days"`
-	Limit           int                        `json:"limit"`
-	RankBy          *string                    `json:"rank_by"`
-	Weighting       *string                    `json:"weighting"`
-	StopLoss        *int                       `json:"stop_loss"`
-	TrailingStop    *int                       `json:"trailing_stop"`
-	FeeDiscount     *float64                   `json:"fee_discount"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Market       string   `json:"market"`
+	HoldDays     int      `json:"hold_days"`
+	Limit        int      `json:"limit"`
+	RankBy       *string  `json:"rank_by"`
+	Weighting    *string  `json:"weighting"`
+	StopLoss     *int     `json:"stop_loss"`
+	TrailingStop *int     `json:"trailing_stop"`
+	FeeDiscount  *float64 `json:"fee_discount"`
+	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
+	ExecutionModel  *string                    `json:"execution_model"`
+	SlippageBps     *int                       `json:"slippage_bps"`
 	EtfBenchmark    *string                    `json:"etf_benchmark"`
 	TrainYears      int                        `json:"train_years"`
 	Candidates      int                        `json:"candidates"`

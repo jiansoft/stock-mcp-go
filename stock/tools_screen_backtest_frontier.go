@@ -20,19 +20,22 @@ type BacktestFrontierPoint struct {
 
 // ScreenBacktestFrontierEnvelope 是 screen/backtest/frontier endpoint 的完整回應。
 type ScreenBacktestFrontierEnvelope struct {
-	From             string   `json:"from"`
-	To               string   `json:"to"`
-	Market           string   `json:"market"`
-	HoldDays         int      `json:"hold_days"`
-	Limit            int      `json:"limit"`
-	RankBy           *string  `json:"rank_by"`
-	Weighting        *string  `json:"weighting"`
-	MaxWeight        *int     `json:"max_weight"`
-	FeeDiscount      *float64 `json:"fee_discount"`
-	EtfBenchmark     *string  `json:"etf_benchmark"`
-	Offsets          int      `json:"offsets"`
-	BestSharpeWeight *int     `json:"best_sharpe_weight"`
-	BestReturnWeight *int     `json:"best_return_weight"`
+	From        string   `json:"from"`
+	To          string   `json:"to"`
+	Market      string   `json:"market"`
+	HoldDays    int      `json:"hold_days"`
+	Limit       int      `json:"limit"`
+	RankBy      *string  `json:"rank_by"`
+	Weighting   *string  `json:"weighting"`
+	MaxWeight   *int     `json:"max_weight"`
+	FeeDiscount *float64 `json:"fee_discount"`
+	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
+	ExecutionModel   *string `json:"execution_model"`
+	SlippageBps      *int    `json:"slippage_bps"`
+	EtfBenchmark     *string `json:"etf_benchmark"`
+	Offsets          int     `json:"offsets"`
+	BestSharpeWeight *int    `json:"best_sharpe_weight"`
+	BestReturnWeight *int    `json:"best_return_weight"`
 	// Split 與 BestSharpeWeightBeforeSplit 只有指定 split 時才有。
 	Split                       *string                 `json:"split"`
 	BestSharpeWeightBeforeSplit *int                    `json:"best_sharpe_weight_before_split"`
