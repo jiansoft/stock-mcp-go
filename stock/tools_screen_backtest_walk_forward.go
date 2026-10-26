@@ -38,7 +38,9 @@ type ScreenBacktestWalkForwardEnvelope struct {
 	TrailingStop *int     `json:"trailing_stop"`
 	FeeDiscount  *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
-	ExecutionModel  *string                    `json:"execution_model"`
+	ExecutionModel *string `json:"execution_model"`
+	// DrawdownBasis 是最大回撤口徑;多組回測為 period_end(換股期末)。舊版 API 沒有時為 nil。
+	DrawdownBasis   *string                    `json:"drawdown_basis"`
 	SlippageBps     *int                       `json:"slippage_bps"`
 	EtfBenchmark    *string                    `json:"etf_benchmark"`
 	TrainYears      int                        `json:"train_years"`
@@ -144,9 +146,13 @@ func screenBacktestWalkForwardSummary(e *ScreenBacktestWalkForwardEnvelope, opt 
 			if y.EtfReturn != nil {
 				etf = "、0050 " + displayPercent(y.EtfReturn)
 			}
-			b.printf("\n- %d 年:0050 %d%%、單檔上限 %s、緩衝前 %d 名(訓練夏普 %.2f)→ %d 期扣成本 %s(不調參數 %s%s)",
+			excluded := ""
+			if y.ExcludedTrainingPeriods != nil && *y.ExcludedTrainingPeriods > 0 {
+				excluded = fmt.Sprintf(";訓練排除 %d 期跨年持有", *y.ExcludedTrainingPeriods)
+			}
+			b.printf("\n- %d 年:0050 %d%%、單檔上限 %s、緩衝前 %d 名(訓練夏普 %.2f)→ %d 期扣成本 %s(不調參數 %s%s)%s",
 				y.Year, y.EtfWeight, weightText(y.MaxWeight), y.KeepRank, y.TrainSharpeRatio, y.Periods,
-				displayPercent(&y.ReturnAfterCosts), displayPercent(&y.BaselineReturnAfterCosts), etf)
+				displayPercent(&y.ReturnAfterCosts), displayPercent(&y.BaselineReturnAfterCosts), etf, excluded)
 		}
 		b.printf("\n串起樣本外年份:滾動調參數 %s。", summaryLine(e.Summary))
 		b.printf("\n同樣年份不調參數:%s。", summaryLine(e.Baseline))
