@@ -56,23 +56,26 @@ type BacktestOffsetYear struct {
 // ScreenBacktestOffsetsEnvelope 是 screen/backtest/offsets endpoint 的完整回應;舊版 API 沒有
 // rank_by、etf_weight、weighting 與 years。
 type ScreenBacktestOffsetsEnvelope struct {
-	From         string                      `json:"from"`
-	To           string                      `json:"to"`
-	Market       string                      `json:"market"`
-	HoldDays     int                         `json:"hold_days"`
-	Limit        int                         `json:"limit"`
-	RankBy       *string                     `json:"rank_by"`
-	EtfWeight    *int                        `json:"etf_weight"`
-	Weighting    *string                     `json:"weighting"`
-	MaxWeight    *int                        `json:"max_weight"`
-	FeeDiscount  *float64                    `json:"fee_discount"`
-	EtfBenchmark *string                     `json:"etf_benchmark"`
-	Distribution BacktestOffsetDistribution  `json:"distribution"`
-	Years        []BacktestOffsetYear        `json:"years"`
-	Split        *string                     `json:"split"`
-	BeforeSplit  *BacktestOffsetDistribution `json:"before_split"`
-	AfterSplit   *BacktestOffsetDistribution `json:"after_split"`
-	Offsets      []BacktestOffsetResult      `json:"offsets"`
+	From        string   `json:"from"`
+	To          string   `json:"to"`
+	Market      string   `json:"market"`
+	HoldDays    int      `json:"hold_days"`
+	Limit       int      `json:"limit"`
+	RankBy      *string  `json:"rank_by"`
+	EtfWeight   *int     `json:"etf_weight"`
+	Weighting   *string  `json:"weighting"`
+	MaxWeight   *int     `json:"max_weight"`
+	FeeDiscount *float64 `json:"fee_discount"`
+	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
+	ExecutionModel *string                     `json:"execution_model"`
+	SlippageBps    *int                        `json:"slippage_bps"`
+	EtfBenchmark   *string                     `json:"etf_benchmark"`
+	Distribution   BacktestOffsetDistribution  `json:"distribution"`
+	Years          []BacktestOffsetYear        `json:"years"`
+	Split          *string                     `json:"split"`
+	BeforeSplit    *BacktestOffsetDistribution `json:"before_split"`
+	AfterSplit     *BacktestOffsetDistribution `json:"after_split"`
+	Offsets        []BacktestOffsetResult      `json:"offsets"`
 }
 
 // ScreenBacktestOffsetsQuerier 是 get_screen_backtest_offsets 對資料來源的需求介面;只有 *APIClient 實作。
@@ -220,6 +223,9 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	}
 	if stop := stopText(positiveOrNil(opt.StopLoss), positiveOrNil(opt.TrailingStop)); stop != "" {
 		rules = append(rules, stop)
+	}
+	if execution := executionText(opt); execution != "" {
+		rules = append(rules, execution)
 	}
 	if len(rules) > 0 {
 		text += ";" + strings.Join(rules, "、")
