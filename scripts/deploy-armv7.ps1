@@ -66,6 +66,8 @@ Set-StrictMode -Version Latest
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $BinaryName = 'stock-mcp_linux_armv7'
+# control.sh update 失敗（stop 逾時）後，再等舊程序結束的秒數。
+$RetryWaitSeconds = 120
 
 function Invoke-Checked
 {
@@ -250,7 +252,19 @@ Write-Host 'control.sh update...' -ForegroundColor Cyan
 Invoke-Remote "cd $RemoteBase && ./control.sh update"
 if ($LASTEXITCODE -ne 0)
 {
-    throw 'control.sh update 失敗'
+    # stop 逾時時舊程序仍在、新檔還在 /tmp 沒搬。舊程序之後若自己結束，服務就停著沒人啟動
+    # （2026-10-27 MCP 中斷約 80 秒）。這裡再等它結束，結束了就重跑一次 update 上新版。
+    Write-Host '  control.sh update 失敗，等待舊程序結束後重試一次...' -ForegroundColor Yellow
+    Invoke-Remote "for i in `$(seq 1 $RetryWaitSeconds); do pidof $BinaryName > /dev/null || exit 0; sleep 1; done; exit 1"
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "control.sh update 失敗，舊程序 $RetryWaitSeconds 秒後仍未結束；服務仍是舊版，請登入 Pi 查看後再重跑部署"
+    }
+    Invoke-Remote "cd $RemoteBase && ./control.sh update"
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw 'control.sh update 重試仍失敗，服務可能沒有在執行，請立即登入 Pi 查看'
+    }
 }
 Write-Host ''
 

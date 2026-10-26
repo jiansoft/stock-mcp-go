@@ -32,7 +32,10 @@ IMAGE_NAME="stock-mcp-image"
 CONTAINER_NAME="stock-mcp-container"
 LOG_BACKUP_DIR="./log_backup"
 # stop 送出結束訊號後最多等幾秒讓程序真的結束（graceful shutdown 需要時間）。
-STOP_TIMEOUT=30
+# 程式本身 10 秒內一定結束；但 Pi 3 swap 吃緊又遇上 SD 卡 I/O 卡住時，閒置程序被換出的
+# 記憶體要很久才換回來，訊號處理可能晚 30 秒以上（2026-10-27 部署時晚了 31 秒，舊的 30 秒
+# 上限因此判定失敗、沒有啟動新版，等舊程序自己結束後服務就停著）。可用環境變數覆寫。
+STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
 DEPLOY_DIR="/opt/stock_mcp"
 
 # Docker 運行參數
@@ -106,6 +109,9 @@ function stop() {
     fi
     sleep 1
     waited=$((waited + 1))
+    if [ $((waited % 10)) -eq 0 ]; then
+      echo ">>> 仍在等待 $BINARY_NAME 結束（已 $waited 秒，上限 $STOP_TIMEOUT 秒）"
+    fi
   done
   echo ">>> $BINARY_NAME 已停止（等待 $waited 秒）"
 }

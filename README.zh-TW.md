@@ -253,7 +253,7 @@ Compose 範例會把 `127.0.0.1:9004` 映射到容器 port `3000`，並用 `mcp-
 .\scripts\deploy-armv7.ps1 -StageOnly    # 只上傳到 /tmp 並比對 sha256
 ```
 
-腳本會檢查 ELF 架構、比對上傳後的 sha256，當遠端 `control.sh` 與倉庫版本不同時一併更新（上傳前統一為 LF 換行；`stop` 最多等待 30 秒讓舊程序結束，`start` 在新程序立即退出時回報失敗），再確認程序、埠、`/healthz`、`/readyz` 與啟動 log；失敗時印出回滾指令（`control.sh` 會把舊檔備份成 `<執行檔>.<時間戳>`）。預設目標為 `pi@192.168.111.138:/opt/stock_mcp`、port `9005`。
+腳本會檢查 ELF 架構、比對上傳後的 sha256，當遠端 `control.sh` 與倉庫版本不同時一併更新（上傳前統一為 LF 換行；`stop` 最多等待 90 秒讓舊程序結束（可用 `STOP_TIMEOUT` 覆寫）；`update` 仍失敗時，腳本會再等舊程序最多 120 秒，結束後重跑一次 `update`，避免服務停著沒人啟動；`start` 在新程序立即退出時回報失敗），再確認程序、埠、`/healthz`、`/readyz` 與啟動 log；失敗時印出回滾指令（`control.sh` 會把舊檔備份成 `<執行檔>.<時間戳>`）。預設目標為 `pi@192.168.111.138:/opt/stock_mcp`、port `9005`。
 
 ## 反向代理
 
