@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 85 個工具（除 `set_portfolio_targets` 外皆唯讀）
+- 由 `stock_rust` Data API 提供 86 個工具（除 `set_portfolio_targets` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -84,6 +84,7 @@ stock-mcp-go
 | `get_screen_backtest_frontier` | API | 尋找選股策略搭配 0050 的配置：參數同 `get_screen_backtest`（不含 `rebalance_offset`、`etf_weight`），以 0%、10%…100% 的 0050 核心比重各跑所有調倉位移，回傳各比重扣成本年化報酬／Sharpe／最大回撤／波動率分布、勝過 0050 比例，以及中位數 Sharpe／報酬最高的比重（0% 為純策略，100% 為純 0050）；`split` 加上每種比重的樣本內外分布，以及樣本內 Sharpe 最佳比重 |
 | `get_screen_backtest_attribution` | API | 解釋策略超額報酬來源：參數同 `get_screen_backtest`（不含 `etf_weight`，只分析策略部分），以近 20 日均成交值最高的 50 檔並依其加權建立類 0050 基準，依 Brinson-Fachler 分成產業配置、個股選擇與交互作用；列全期、逐年（前五產業）與逐產業結果，附同期 0050 報酬 |
 | `get_screen_backtest_walk_forward` | API | 滾動樣本外驗證：參數同 `get_screen_backtest`，另加 `train_years`（1～5，預設 3）；每年只用過去訓練期間，從 36 組參數（0050 核心 0／30／50／70% × 個股上限無／10／20% × keep_rank 為 limit 的 1／1.5／2 倍）選出扣成本 Sharpe 最佳組合，套用當年；回傳逐年選擇、串接的樣本外摘要、固定參數與 0050 對照，以及各調倉位移分布 |
+| `compare_screen_backtests` | API | 並排比較 2～4 個回測情境：共用選股條件，各情境可改 `execution_price`、`slippage_bps`、`fee_discount`、`etf_weight`、`max_weight`、`keep_rank` 或 `rebalance_offset`；回傳各情境彙總、依年度結果與相對第一個情境的年化差異。 |
 | `list_strategy_presets` | API | 列出 stock_rust 已存的具名策略：名稱、說明、回測查詢參數與是否由 22:10 調倉通知執行；回測工具可用 `preset` 引用 |
 | `get_strategy_track` | API | 具名策略實際追蹤：讀取每次 22:10 調倉通知當時記錄的持股，逐期列出各股、策略部分與混合 0050 組合的還原報酬，串接累積報酬並對照持有 0050（未扣成本）；每期從調倉到下次調倉，最新一期到最近交易日，記錄只寫一次，不受之後重跑回測或修改策略影響 |
 | `get_industry_flow` | API | 最近 N 個交易日（1～60）的產業法人資金流：各產業估計淨金額、占產業成交值比例、買超／賣超股票數與前三名買超／賣超股，用於觀察法人加減碼方向 |

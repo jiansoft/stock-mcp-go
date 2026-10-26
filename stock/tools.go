@@ -414,6 +414,16 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, fts.screenBacktestFrontier)
 	}
 
+	if cq, ok := q.(ScreenBacktestCompareQuerier); ok {
+		cts := &screenBacktestCompareToolset{cq: cq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "compare_screen_backtests",
+			Description: "並排比較 2～4 個回測情境（同一組條件只改成交價模型、滑價、手續費、0050 比例、單檔上限、緩衝或換股日偏移），看成交假設對績效的影響。",
+			InputSchema: screenBacktestCompareSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, cts.screenBacktestCompare)
+	}
+
 	if aq, ok := q.(ScreenBacktestAttributionQuerier); ok {
 		ats := &screenBacktestAttributionToolset{aq: aq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
