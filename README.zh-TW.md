@@ -86,6 +86,7 @@ stock-mcp-go
 | `get_screen_backtest_walk_forward` | API | 滾動樣本外驗證：參數同 `get_screen_backtest`，另加 `train_years`（1～5，預設 3）；每年只用過去訓練期間，從 36 組參數（0050 核心 0／30／50／70% × 個股上限無／10／20% × keep_rank 為 limit 的 1／1.5／2 倍）選出扣成本 Sharpe 最佳組合，套用當年；回傳逐年選擇、串接的樣本外摘要、固定參數與 0050 對照，以及各調倉位移分布 |
 | `compare_screen_backtests` | API | 並排比較 2～4 個回測情境：共用選股條件，各情境可改 `execution_price`、`slippage_bps`、`fee_discount`、`etf_weight`、`max_weight`、`keep_rank` 或 `rebalance_offset`；回傳各情境彙總、依年度結果與相對第一個情境的年化差異。 |
 | `list_strategy_presets` | API | 列出 stock_rust 已存的具名策略：名稱、說明、回測查詢參數與是否由 22:10 調倉通知執行；回測工具可用 `preset` 引用 |
+| `get_strategy_edge` | API | 查詢策略相對 0050 的最近優勢檢查，每月第一個交易日更新；含檢查日、近期／全期偏移分布與 holds／weakened／unknown 判斷。即時重算請用 `get_screen_backtest_offsets`。僅供參考，不構成投資建議，亦不會自動下單。 |
 | `get_strategy_track` | API | 具名策略實際追蹤：讀取每次 22:10 調倉通知當時記錄的持股，逐期列出各股、策略部分與混合 0050 組合的還原報酬，串接累積報酬並對照持有 0050（未扣成本）；每期從調倉到下次調倉，最新一期到最近交易日，記錄只寫一次，不受之後重跑回測或修改策略影響 |
 | `get_industry_flow` | API | 最近 N 個交易日（1～60）的產業法人資金流：各產業估計淨金額、占產業成交值比例、買超／賣超股票數與前三名買超／賣超股，用於觀察法人加減碼方向 |
 | `get_margin_ranking` | API | 最近 N 個交易日（1～60）融資融券排行：融資或融券增減最多、券資比最高（融資至少 100 張），附餘額、增減與收盤價；可依市場與產業篩選 |
