@@ -454,6 +454,16 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, pts.strategyPresets)
 	}
 
+	if eq, ok := q.(StrategyEdgeQuerier); ok {
+		ets := &strategyEdgeToolset{q: eq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_strategy_edge",
+			Description: "查詢策略是否仍勝過 0050 的最近檢查快取，每月第一個交易日更新；要即時數字請用 get_screen_backtest_offsets。僅供參考，不構成投資建議，亦不會自動下單。",
+			InputSchema: strategyEdgeSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ets.strategyEdge)
+	}
+
 	if tq, ok := q.(StrategyTrackQuerier); ok {
 		sts := &strategyTrackToolset{tq: tq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

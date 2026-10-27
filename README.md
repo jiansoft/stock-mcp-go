@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 86 tools (all read-only except `set_portfolio_targets`) backed by the `stock_rust` Data API
+- 87 tools (all read-only except `set_portfolio_targets`) backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -101,6 +101,7 @@ continue to describe ranges, units and validation rules.
 | `get_screen_backtest_walk_forward` | API | Walk-forward check for overfitting: takes the same parameters as `get_screen_backtest` plus `train_years` (1–5, default 3); each year picks the best after-cost Sharpe ratio among 36 parameter sets (0050 core 0/30/50/70% × per-stock cap none/10/20% × keep_rank 1/1.5/2 × limit) using only the previous `train_years` years, applies it to that year, and returns the yearly picks, the chained out-of-sample summary versus the unchanged parameters and 0050, and the distribution across rebalance offsets. |
 | `compare_screen_backtests` | API | Compare 2–4 backtest scenarios side by side: shared screening conditions plus per-scenario overrides of `execution_price`, `slippage_bps`, `fee_discount`, `etf_weight`, `max_weight`, `keep_rank` or `rebalance_offset`; returns each scenario's summary and yearly results, with the annualized difference against the first scenario. |
 | `list_strategy_presets` | API | Lists the named strategies saved in stock_rust (name, description, backtest query and whether the 22:10 rebalance alert runs it); backtest tools reference them with `preset`. |
+| `get_strategy_edge` | API | Cached strategy edge checks versus 0050, updated on the first trading day of each month. Includes check dates, recent/full offset distributions and holds/weakened/unknown verdicts; use `get_screen_backtest_offsets` for fresh calculations. Reference only; no automatic orders. |
 | `get_strategy_track` | API | Live tracking of a named strategy: the holdings recorded when each 22:10 rebalance alert was sent, period by period (rebalance → next rebalance, the last one up to the latest trading day) with each holding's adjusted return, the strategy sleeve and the 0050-blended portfolio, chained into a cumulative return versus holding 0050 (before costs); records are written once, so later backtest reruns or preset edits never change them |
 | `get_industry_flow` | API | Institutional money flow by industry over the last N trading days (1–60): estimated net amount per industry, share of the industry's trade value, number of net-buy and net-sell stocks, and the top-3 buyers and sellers — shows where institutions are adding or cutting |
 | `get_margin_ranking` | API | Margin-trading ranking over the last N trading days (1–60): largest increases or decreases in margin purchases or short sales, or the highest short-to-margin ratio (margin of at least 100 lots), with balances, changes and closing price; filter by market and industry |
