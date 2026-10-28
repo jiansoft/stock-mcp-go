@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 65 tools (all read-only except `set_portfolio_targets`) backed by the `stock_rust` Data API
+- 67 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -125,10 +125,12 @@ continue to describe ranges, units and validation rules.
 | `get_portfolio_rebalance` | API | Rebalance suggestion for the personal holdings against saved target weights (by stock, industry or ETF look-through): deviation, suggested lots and amounts, fees, tax and cash flow. For reference only; never places orders |
 | `get_portfolio_targets` | API | Read the saved target weights and implied cash reserve per dimension |
 | `set_portfolio_targets` | API | **Write tool**: saves target weights (sum ≤ 100%) for one dimension; used only as the rebalance baseline, never an order |
+| `list_portfolio_target_revisions` | API | Previous target sets for one dimension (the whole set saved before each change, newest first, up to 20) with their cash reserve; use it to find a version to restore |
+| `restore_portfolio_target_revision` | API | **Write tool**: restores the targets to a saved version; the set being replaced is saved as a new version, so the restore can be undone |
 | `get_holding_chip` | API | Daily chip report for the personal holdings on a trading day (default latest): for each common stock still held at that close (ETFs excluded), net buy/sell by foreign investors, investment trusts and dealers with their share of volume, foreign/trust consecutive net-buy or net-sell days, margin and short balances with daily changes, and main-force (top brokers) net with the top buying and selling branches plus its sum over the last five main-force trading days; holdings that hit the daily Telegram alert thresholds are flagged with their reasons |
 | `get_dividend_forecast` | API | Expected cash dividends from current holdings over the next 1-24 months: announced payouts plus last year's pattern, monthly totals, per-payout details, and forward yield |
 
-Every tool is read-only except `set_portfolio_targets`, which only saves personal target weights. Response fields vary by tool: quote outputs include `data_as_of`, while other tools may use dates or ranges in their result objects instead. Nullable missing metrics remain `null`; empty collections and zero totals can be valid results. `get_dividend_forecast` explicitly separates announced and estimated dividends using each item's `basis` and the `announced_total` / `estimated_total` fields; estimates are not announced payouts.
+Every tool is read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`, which only save personal target weights. Response fields vary by tool: quote outputs include `data_as_of`, while other tools may use dates or ranges in their result objects instead. Nullable missing metrics remain `null`; empty collections and zero totals can be valid results. `get_dividend_forecast` explicitly separates announced and estimated dividends using each item's `basis` and the `announced_total` / `estimated_total` fields; estimates are not announced payouts.
 
 ## Requirements
 

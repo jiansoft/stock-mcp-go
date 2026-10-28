@@ -512,11 +512,21 @@ func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool
 
 // put 執行帶有 JSON request body 的 PUT 請求。
 func (c *APIClient) put(ctx context.Context, path string, input any, output any) error {
+	return c.sendJSON(ctx, http.MethodPut, path, input, output)
+}
+
+// post 執行帶有 JSON request body 的 POST 請求。
+func (c *APIClient) post(ctx context.Context, path string, input any, output any) error {
+	return c.sendJSON(ctx, http.MethodPost, path, input, output)
+}
+
+// sendJSON 送出帶 JSON body 的請求;非 200(含 404)一律回 [apiStatusError],由工具層解讀。
+func (c *APIClient) sendJSON(ctx context.Context, method, path string, input any, output any) error {
 	bodyBytes, err := json.Marshal(input)
 	if err != nil {
 		return fmt.Errorf("序列化資料 API 請求:%w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("建立資料 API 請求:%w", err)
 	}
