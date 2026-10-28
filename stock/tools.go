@@ -635,6 +635,21 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, prts.getPortfolioTargets)
 	}
 
+	if rq, ok := q.(PortfolioTargetRevisionQuerier); ok {
+		rts := &portfolioTargetRevisionToolset{rq: rq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "list_portfolio_target_revisions",
+			Description: "列出某維度目標配置的歷史版本(每次設定前的整組,最多 20 版),附各版現金比例;用來找出要還原的版本。",
+			InputSchema: listTargetRevisionsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, rts.listTargetRevisions)
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "restore_portfolio_target_revision",
+			Description: "把目標配置還原成某個歷史版本;還原前的設定會另存成一版,可再還原回去。僅作為個人試算基準,非自動交易委託。",
+			InputSchema: restoreTargetRevisionSchema(),
+		}, rts.restoreTargetRevision)
+	}
+
 	if forecast, ok := q.(DividendForecastQuerier); ok {
 		fts := &dividendForecastToolset{forecast: forecast, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
