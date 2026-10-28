@@ -231,10 +231,17 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		cts := &chipToolset{chips: chips, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "get_chip_data",
-			Description: "查詢個股三大法人買賣超（股）、融資融券（張）、連買賣天數、大戶、董監與券商分點籌碼。",
+			Description: "查詢個股三大法人買賣超（股）、融資融券（張）、連買賣天數、千張與 400 張以上大戶、董監與券商分點籌碼。",
 			InputSchema: chipSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cts.stockChip)
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "get_holder_levels",
+			Description: "查詢個股單週集保股權分散全部持股分級:1～15 級(1～999 股到 1,000,001 股以上)、差異數調整與合計的人數、股數與比例;" +
+				"可指定日期(取該日以前最近一週),預設最新一週。注意:分級資料自 2026-10-22 起逐週累積,更早的週請用 get_chip_data 的千張與 400 張摘要。",
+			InputSchema: holderLevelsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, cts.holderLevels)
 	}
 
 	// 三大報表工具同樣以型別斷言偵測能力:只有 *APIClient 實作 FinancialReportQuerier。

@@ -20,6 +20,16 @@ type fakeChipQuerier struct {
 	envelope *ChipEnvelope
 	err      error
 	gotDays  int
+	levels   *HolderLevelsEnvelope
+	gotDate  string
+}
+
+func (f *fakeChipQuerier) HolderLevels(_ context.Context, symbol, date string) (*HolderLevelsEnvelope, error) {
+	f.gotDate = date
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.levels, nil
 }
 
 func (f *fakeChipQuerier) StockChip(_ context.Context, symbol string, days int) (*ChipEnvelope, error) {
@@ -42,7 +52,7 @@ func sampleChip() *ChipEnvelope {
 			MarginBalance: i64(30_500), MarginChange: i64(365), ShortBalance: i64(49), ShortChange: i64(3),
 		}},
 		Streak:             ChipStreak{ForeignDays: -3, TrustDays: 2},
-		HolderDistribution: []HolderWeek{{Date: "2026-10-02", MajorHolders: 1485, MajorPercent: ptr(84.77), TotalHolders: 3_010_913}},
+		HolderDistribution: []HolderWeek{{Date: "2026-10-02", MajorHolders: 1485, MajorPercent: ptr(84.77), TotalHolders: 3_010_913, Holders400: i64(2626), Percent400: ptr(87.56)}},
 		Insider:            &InsiderSummary{Month: "2026-08", Insiders: 42, Shares: 1_712_981_294, Pledged: 3_328_000, PledgePercent: ptr(0.19)},
 	}
 }
@@ -90,7 +100,7 @@ func TestChipTool(t *testing.T) {
 		t.Fatalf("days 預設應為 20,收到 %d", f.gotDays)
 	}
 	summary := result.Content[0].(*mcp.TextContent).Text
-	for _, want := range []string{"外資 -1672 張", "投信 +154 張", "外資連續賣超 3 天", "投信連續買超 2 天", "融資餘額 30500 張(+365 張)", "千張大戶 2026-10-02 持股 84.77%", "董監 2026-08 設質比例 0.19%", "免責聲明"} {
+	for _, want := range []string{"外資 -1672 張", "投信 +154 張", "外資連續賣超 3 天", "投信連續買超 2 天", "融資餘額 30500 張(+365 張)", "千張大戶 2026-10-02 持股 84.77%(1485 人)、400 張以上 87.56%(2626 人)。", "董監 2026-08 設質比例 0.19%", "免責聲明"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("摘要缺少 %q:%s", want, summary)
 		}

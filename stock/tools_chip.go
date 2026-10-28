@@ -1,7 +1,7 @@
 // Package stock 的 get_chip_data 工具:查詢單一股票的籌碼面。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/{symbol}/chip,
-// 一次取得每日三大法人與融資融券、外資投信連續買賣超、千張大戶週資料、
+// 一次取得每日三大法人與融資融券、外資投信連續買賣超、千張大戶與 400 張以上週資料、
 // 董監持股設質與最近一天的券商分點主力進出。
 package stock
 
@@ -40,11 +40,14 @@ type ChipStreak struct {
 }
 
 // HolderWeek 是集保戶股權分散的單週摘要。
+// Holders400、Percent400 是 400 張以上的人數與持股比例;沒有分級資料的週為 nil。
 type HolderWeek struct {
 	Date         string   `json:"date"`
 	MajorHolders int64    `json:"major_holders"`
 	MajorPercent *float64 `json:"major_percent"`
 	TotalHolders int64    `json:"total_holders"`
+	Holders400   *int64   `json:"holders_400"`
+	Percent400   *float64 `json:"percent_400"`
 }
 
 // InsiderSummary 是最新月份董監事持股與設質的合計。
@@ -86,10 +89,11 @@ type ChipEnvelope struct {
 	BrokerFlow         *BrokerFlowDay  `json:"broker_flow"`
 }
 
-// ChipQuerier 是 get_chip_data 對資料來源的需求介面;只有 *APIClient 實作,
-// 只實作基本 Querier 的資料來源不會出現這個工具。
+// ChipQuerier 是 get_chip_data 與 get_holder_levels 對資料來源的需求介面;只有 *APIClient 實作,
+// 只實作基本 Querier 的資料來源不會出現這兩個工具。
 type ChipQuerier interface {
 	StockChip(ctx context.Context, symbol string, days int) (*ChipEnvelope, error)
+	HolderLevels(ctx context.Context, symbol, date string) (*HolderLevelsEnvelope, error)
 }
 
 // StockChip 查詢個股籌碼;404 只代表股票不存在,空陣列與 null 原樣保留。
@@ -190,7 +194,11 @@ func chipSummary(e *ChipEnvelope) string {
 	}
 	if len(e.HolderDistribution) > 0 {
 		h := e.HolderDistribution[0]
-		fmt.Fprintf(&b, "千張大戶 %s 持股 %s(%d 人)。", h.Date, displayPercent(h.MajorPercent), h.MajorHolders)
+		fmt.Fprintf(&b, "千張大戶 %s 持股 %s(%d 人)", h.Date, displayPercent(h.MajorPercent), h.MajorHolders)
+		if h.Percent400 != nil && h.Holders400 != nil {
+			fmt.Fprintf(&b, "、400 張以上 %s(%d 人)", displayPercent(h.Percent400), *h.Holders400)
+		}
+		b.WriteString("。")
 	}
 	if e.Insider != nil {
 		fmt.Fprintf(&b, "董監 %s 設質比例 %s。", e.Insider.Month, displayPercent(e.Insider.PledgePercent))
