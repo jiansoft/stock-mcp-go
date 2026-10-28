@@ -25,6 +25,10 @@ type BacktestFundamentals struct {
 	PositiveFreeCashFlow      bool
 	MaxPE                     *float64
 	MaxPB                     *float64
+	// MinMajorChange 是換股前已公布的集保千張大戶持股比例,最近一週相對 MajorChangeWeeks 週前的變化下限(百分點);
+	// nil 為不篩選,週數 0 代表沿用 Data API 預設的 4 週。
+	MinMajorChange   *float64
+	MajorChangeWeeks int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -92,6 +96,16 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1000.0),
 			Description: "換股當天的官方股價淨值比不超過這個值(倍,選填,0 至 1000);為 0(沒有資料)的股票不通過,其餘同 max_pe",
 		},
+		"min_major_change": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(100.0),
+			Description: "集保千張大戶持股比例的變化下限(百分點,選填,-100 至 100;例如 1 代表近 major_change_weeks 週增加至少 1 個百分點):" +
+				"取換股日之前已公布的最近一週(集保週五資料週六才公布,換股當天看不到),減去它往前第 major_change_weeks 週;任一週沒有該股資料的不通過。" +
+				"大戶資料 2023-07-14 起,from 必須晚於 2023-07-14 加 major_change_weeks 週;只用於新買進,續抱不看",
+		},
+		"major_change_weeks": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
+			Description: "min_major_change 的回看週數(集保資料週,選填,1 至 12,預設 4);沒有設 min_major_change 時不影響結果",
+		},
 	}
 }
 
@@ -112,6 +126,7 @@ func (f BacktestFundamentals) validate() error {
 		{"min_monthly_revenue", f.MinMonthlyRevenue, 0, 1e12},
 		{"max_pe", f.MaxPE, 0, 10000},
 		{"max_pb", f.MaxPB, 0, 1000},
+		{"min_major_change", f.MinMajorChange, -100, 100},
 	} {
 		if v := bound.value; v != nil && (math.IsNaN(*v) || *v < bound.min || *v > bound.max) {
 			return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", bound.name, formatFloat(bound.min), formatFloat(bound.max))
@@ -119,6 +134,9 @@ func (f BacktestFundamentals) validate() error {
 	}
 	if f.MinRevenueYoYStreak != 0 && (f.MinRevenueYoYStreak < 1 || f.MinRevenueYoYStreak > 12) {
 		return fmt.Errorf("參數 min_revenue_yoy_streak 必須介於 1 到 12 之間")
+	}
+	if f.MajorChangeWeeks != 0 && (f.MajorChangeWeeks < 1 || f.MajorChangeWeeks > 12) {
+		return fmt.Errorf("參數 major_change_weeks 必須介於 1 到 12 之間")
 	}
 	return nil
 }
@@ -130,7 +148,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_eps": f.MinEPS, "min_roe_percent": f.MinROEPercent,
 		"min_gross_margin_percent": f.MinGrossMarginPercent, "min_operating_margin_percent": f.MinOperatingMarginPercent,
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
-		"max_pe": f.MaxPE, "max_pb": f.MaxPB,
+		"max_pe": f.MaxPE, "max_pb": f.MaxPB, "min_major_change": f.MinMajorChange,
 	} {
 		if value != nil {
 			values.Set(key, formatFloat(*value))
@@ -138,6 +156,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinRevenueYoYStreak > 0 {
 		values.Set("min_revenue_yoy_streak", fmt.Sprint(f.MinRevenueYoYStreak))
+	}
+	if f.MajorChangeWeeks > 0 {
+		values.Set("major_change_weeks", fmt.Sprint(f.MajorChangeWeeks))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -172,6 +193,20 @@ func valuationCapTexts(maxPE, maxPB *float64) []string {
 		filters = append(filters, "換股當天股價淨值比 ≤ "+formatFloat(*maxPB)+" 倍")
 	}
 	return filters
+}
+
+// defaultMajorChangeWeeks 是 Data API 的 major_change_weeks 預設值。
+const defaultMajorChangeWeeks = 4
+
+// majorChangeTexts 描述千張大戶持股比例變化條件;minChange 為 nil 代表不篩選,週數 0 為預設 4 週。
+func majorChangeTexts(minChange *float64, weeks int) []string {
+	if minChange == nil {
+		return nil
+	}
+	if weeks <= 0 {
+		weeks = defaultMajorChangeWeeks
+	}
+	return []string{fmt.Sprintf("千張大戶持股比例近 %d 週變化 ≥ %s 個百分點(換股前已公布的週)", weeks, formatFloat(*minChange))}
 }
 
 // revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。

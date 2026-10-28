@@ -108,9 +108,12 @@ type ScreenOptions struct {
 	MinAvgTradeValue          *int
 	MaxPE                     *float64
 	MaxPB                     *float64
-	SortBy                    string
-	SortOrder                 string
-	Limit                     int
+	// MinMajorChange 是千張大戶持股比例變化下限(百分點);MajorChangeWeeks 為 0 時用 Data API 預設 4 週。
+	MinMajorChange   *float64
+	MajorChangeWeeks int
+	SortBy           string
+	SortOrder        string
+	Limit            int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。

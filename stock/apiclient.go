@@ -331,6 +331,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MaxPB != nil {
 		values.Set("max_pb", formatFloat(*opt.MaxPB))
 	}
+	if opt.MinMajorChange != nil {
+		values.Set("min_major_change", formatFloat(*opt.MinMajorChange))
+	}
+	if opt.MajorChangeWeeks > 0 {
+		values.Set("major_change_weeks", fmt.Sprint(opt.MajorChangeWeeks))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
