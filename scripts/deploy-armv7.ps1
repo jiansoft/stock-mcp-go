@@ -296,20 +296,22 @@ try
     # --- 5. 驗證 ----------------------------------------------------------------
     Write-Host '驗證中...' -ForegroundColor Cyan
     Start-Sleep -Seconds 3
+    # 先等健康檢查再看程序與監聽：pi 剛重啟其他服務時，本服務可能要半分鐘以上才開始監聽
+    # （2026-10-28 原本的 5 次、約 15 秒都是 000，一分鐘內實測已 200），先看監聽會誤判失敗。
     $verify = @"
+echo "--- health ---"
+for i in `$(seq 1 12); do
+  h="`$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:$Port/healthz || echo 000)"
+  r="`$(curl -s -m 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:$Port/readyz || echo 000)"
+  echo "attempt `$i healthz=`$h readyz=`$r"
+  if [ "`$h" = "200" ] && [ "`$r" = "200" ]; then break; fi
+  sleep 5
+done
 echo "--- proc ---"
 pid="`$(pidof $BinaryName)"
 if [ -n "`$pid" ]; then ps -p "`$pid" -o pid=,etimes=,args=; else echo NONE; fi
 echo "--- listen ---"
 ss -lntp 2>/dev/null | grep -E ':$Port\b' || echo NONE
-echo "--- health ---"
-for i in 1 2 3 4 5; do
-  h="`$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:$Port/healthz || echo 000)"
-  r="`$(curl -s -m 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:$Port/readyz || echo 000)"
-  echo "attempt `$i healthz=`$h readyz=`$r"
-  if [ "`$h" = "200" ] && [ "`$r" = "200" ]; then break; fi
-  sleep 3
-done
 echo "--- startup ---"
 # healthz/readyz 也會寫進 nohup.out，啟動訊息可能已被擠出 tail，改用 grep 找第一筆。
 grep -m1 '已啟動' "$RemoteBase/nohup.out" 2>/dev/null || echo NONE
