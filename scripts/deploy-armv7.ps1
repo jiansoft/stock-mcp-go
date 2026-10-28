@@ -133,6 +133,22 @@ function Invoke-Remote
     & ssh @SshArgs $Target ($Script -replace "`r", '')
 }
 
+# 部署標記：pi 上 stock_crawler 的主機健康檢查讀到最後異動 30 分鐘內的標記時，記憶體與 SD 卡超標只記 info、
+# 不發告警（部署本身會讓 swap 用滿、fsync 變慢）。每個單元一個檔案，放在 tmpfs，SD 卡卡住時也寫得進去；
+# 寫入失敗不影響部署，只是這次的超標會照常告警。
+$DeployMarkerDir = '/dev/shm/stock-deploying'
+$DeployUnit = 'stock-mcp'
+
+function Start-DeployMarker
+{
+    Invoke-Remote "mkdir -p $DeployMarkerDir && printf 'unit=%s\nstarted=%s\n' $DeployUnit `"`$(date -Iseconds)`" > $DeployMarkerDir/$DeployUnit" | Out-Null
+}
+
+function Complete-DeployMarker
+{
+    Invoke-Remote "printf 'finished=%s\n' `"`$(date -Iseconds)`" >> $DeployMarkerDir/$DeployUnit" | Out-Null
+}
+
 # --- 1. 建置 ----------------------------------------------------------------
 if ($Build)
 {
@@ -205,79 +221,82 @@ foreach ($marker in 'CONTROL_OK', 'ENV_OK')
 Write-Host "  REMOTE   $Target ($arch, $RemoteBase)"
 Write-Host ''
 
-# --- 3. 上傳 ----------------------------------------------------------------
-Write-Host '上傳執行檔...' -ForegroundColor Cyan
-Invoke-Checked scp @ScpArgs $Binary "${Target}:/tmp/$BinaryName"
-$remoteHash = (Invoke-Remote "sha256sum /tmp/$BinaryName | cut -d' ' -f1" | Select-Object -First 1).Trim()
-if ($remoteHash -ne $localHash)
+Start-DeployMarker
+try
 {
-    throw "上傳後 sha256 不符（遠端 $remoteHash），未執行 update"
-}
-Write-Host "  已上傳並通過 sha256 比對：${Target}:/tmp/$BinaryName"
-Write-Host ''
-
-if ($StageOnly)
-{
-    Write-Host '已上傳但未部署（-StageOnly）。要上線請執行：' -ForegroundColor Yellow
-    Write-Host "  ssh $Target `"cd $RemoteBase && ./control.sh update`"" -ForegroundColor Yellow
-    return
-}
-
-# --- 4. 部署 ----------------------------------------------------------------
-# repo 的 control.sh 是準：內容不同時先換掉遠端的版本，update 才會用到新的 stop／start 邏輯。
-# 一律去掉 CR 再上傳（Windows 工作目錄可能被轉成 CRLF，bash 讀到 CR 會出錯）。
-$controlScript = Join-Path ([System.IO.Path]::GetTempPath()) 'stock-mcp-control.sh'
-$controlBytes = [System.IO.File]::ReadAllBytes((Join-Path $RepoRoot 'control.sh'))
-[System.IO.File]::WriteAllBytes($controlScript, [byte[]]($controlBytes | Where-Object { $_ -ne 13 }))
-$controlHash = (Get-FileHash -LiteralPath $controlScript -Algorithm SHA256).Hash.ToLower()
-$remoteControlHash = (Invoke-Remote "sha256sum $RemoteBase/control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
-if ($remoteControlHash -ne $controlHash)
-{
-    Invoke-Checked scp @ScpArgs $controlScript "${Target}:/tmp/stock-mcp-control.sh"
-    $uploadedHash = (Invoke-Remote "sha256sum /tmp/stock-mcp-control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
-    if ($uploadedHash -ne $controlHash)
+    # --- 3. 上傳 ----------------------------------------------------------------
+    Write-Host '上傳執行檔...' -ForegroundColor Cyan
+    Invoke-Checked scp @ScpArgs $Binary "${Target}:/tmp/$BinaryName"
+    $remoteHash = (Invoke-Remote "sha256sum /tmp/$BinaryName | cut -d' ' -f1" | Select-Object -First 1).Trim()
+    if ($remoteHash -ne $localHash)
     {
-        throw "control.sh 上傳後 sha256 不符（遠端 $uploadedHash），未執行 update"
+        throw "上傳後 sha256 不符（遠端 $remoteHash），未執行 update"
     }
-    Invoke-Remote "install -m 755 /tmp/stock-mcp-control.sh $RemoteBase/control.sh && rm -f /tmp/stock-mcp-control.sh"
-    if ($LASTEXITCODE -ne 0)
-    {
-        throw 'control.sh 更新失敗'
-    }
-    Write-Host "  control.sh 與 repo 不同，已更新：${Target}:$RemoteBase/control.sh"
+    Write-Host "  已上傳並通過 sha256 比對：${Target}:/tmp/$BinaryName"
     Write-Host ''
-}
 
-Write-Host 'control.sh update...' -ForegroundColor Cyan
-Invoke-Remote "cd $RemoteBase && ./control.sh update"
-if ($LASTEXITCODE -ne 0)
-{
-    # stop 逾時時舊程序仍在、新檔還在 /tmp 沒搬。舊程序之後若自己結束，服務就停著沒人啟動
-    # （2026-10-27 MCP 中斷約 80 秒）。這裡再等它結束，結束了就重跑一次 update 上新版。
-    Write-Host '  control.sh update 失敗，等待舊程序結束後重試一次...' -ForegroundColor Yellow
-    Invoke-Remote "for i in `$(seq 1 $RetryWaitSeconds); do pidof $BinaryName > /dev/null || exit 0; sleep 1; done; exit 1"
-    if ($LASTEXITCODE -ne 0)
+    if ($StageOnly)
     {
-        throw "control.sh update 失敗，舊程序 $RetryWaitSeconds 秒後仍未結束；服務仍是舊版，請登入 Pi 查看後再重跑部署"
+        Write-Host '已上傳但未部署（-StageOnly）。要上線請執行：' -ForegroundColor Yellow
+        Write-Host "  ssh $Target `"cd $RemoteBase && ./control.sh update`"" -ForegroundColor Yellow
+        return
     }
+
+    # --- 4. 部署 ----------------------------------------------------------------
+    # repo 的 control.sh 是準：內容不同時先換掉遠端的版本，update 才會用到新的 stop／start 邏輯。
+    # 一律去掉 CR 再上傳（Windows 工作目錄可能被轉成 CRLF，bash 讀到 CR 會出錯）。
+    $controlScript = Join-Path ([System.IO.Path]::GetTempPath()) 'stock-mcp-control.sh'
+    $controlBytes = [System.IO.File]::ReadAllBytes((Join-Path $RepoRoot 'control.sh'))
+    [System.IO.File]::WriteAllBytes($controlScript, [byte[]]($controlBytes | Where-Object { $_ -ne 13 }))
+    $controlHash = (Get-FileHash -LiteralPath $controlScript -Algorithm SHA256).Hash.ToLower()
+    $remoteControlHash = (Invoke-Remote "sha256sum $RemoteBase/control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
+    if ($remoteControlHash -ne $controlHash)
+    {
+        Invoke-Checked scp @ScpArgs $controlScript "${Target}:/tmp/stock-mcp-control.sh"
+        $uploadedHash = (Invoke-Remote "sha256sum /tmp/stock-mcp-control.sh | cut -d' ' -f1" | Select-Object -First 1).Trim()
+        if ($uploadedHash -ne $controlHash)
+        {
+            throw "control.sh 上傳後 sha256 不符（遠端 $uploadedHash），未執行 update"
+        }
+        Invoke-Remote "install -m 755 /tmp/stock-mcp-control.sh $RemoteBase/control.sh && rm -f /tmp/stock-mcp-control.sh"
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw 'control.sh 更新失敗'
+        }
+        Write-Host "  control.sh 與 repo 不同，已更新：${Target}:$RemoteBase/control.sh"
+        Write-Host ''
+    }
+
+    Write-Host 'control.sh update...' -ForegroundColor Cyan
     Invoke-Remote "cd $RemoteBase && ./control.sh update"
     if ($LASTEXITCODE -ne 0)
     {
-        throw 'control.sh update 重試仍失敗，服務可能沒有在執行，請立即登入 Pi 查看'
+        # stop 逾時時舊程序仍在、新檔還在 /tmp 沒搬。舊程序之後若自己結束，服務就停著沒人啟動
+        # （2026-10-27 MCP 中斷約 80 秒）。這裡再等它結束，結束了就重跑一次 update 上新版。
+        Write-Host '  control.sh update 失敗，等待舊程序結束後重試一次...' -ForegroundColor Yellow
+        Invoke-Remote "for i in `$(seq 1 $RetryWaitSeconds); do pidof $BinaryName > /dev/null || exit 0; sleep 1; done; exit 1"
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw "control.sh update 失敗，舊程序 $RetryWaitSeconds 秒後仍未結束；服務仍是舊版，請登入 Pi 查看後再重跑部署"
+        }
+        Invoke-Remote "cd $RemoteBase && ./control.sh update"
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw 'control.sh update 重試仍失敗，服務可能沒有在執行，請立即登入 Pi 查看'
+        }
     }
-}
-Write-Host ''
+    Write-Host ''
 
-if ($SkipVerify)
-{
-    Write-Host '已略過驗證（-SkipVerify）。' -ForegroundColor Yellow
-    return
-}
+    if ($SkipVerify)
+    {
+        Write-Host '已略過驗證（-SkipVerify）。' -ForegroundColor Yellow
+        return
+    }
 
-# --- 5. 驗證 ----------------------------------------------------------------
-Write-Host '驗證中...' -ForegroundColor Cyan
-Start-Sleep -Seconds 3
-$verify = @"
+    # --- 5. 驗證 ----------------------------------------------------------------
+    Write-Host '驗證中...' -ForegroundColor Cyan
+    Start-Sleep -Seconds 3
+    $verify = @"
 echo "--- proc ---"
 pid="`$(pidof $BinaryName)"
 if [ -n "`$pid" ]; then ps -p "`$pid" -o pid=,etimes=,args=; else echo NONE; fi
@@ -295,24 +314,29 @@ echo "--- startup ---"
 # healthz/readyz 也會寫進 nohup.out，啟動訊息可能已被擠出 tail，改用 grep 找第一筆。
 grep -m1 '已啟動' "$RemoteBase/nohup.out" 2>/dev/null || echo NONE
 "@
-$result = Invoke-Remote $verify
-$result | ForEach-Object { Write-Host "  $_" }
+    $result = Invoke-Remote $verify
+    $result | ForEach-Object { Write-Host "  $_" }
 
-$text = $result -join "`n"
-$problems = @()
-if ($text -notmatch [regex]::Escape($BinaryName)) { $problems += '找不到執行中的程序' }
-if ($text -notmatch ":$Port") { $problems += "埠 $Port 沒有在監聽" }
-if ($text -notmatch 'healthz=200 readyz=200') { $problems += '/healthz 或 /readyz 沒有回 200（readyz 失敗多半是上游 Data API 或金鑰問題）' }
-if ($text -notmatch '已啟動') { $problems += 'stdout 沒有啟動訊息' }
+    $text = $result -join "`n"
+    $problems = @()
+    if ($text -notmatch [regex]::Escape($BinaryName)) { $problems += '找不到執行中的程序' }
+    if ($text -notmatch ":$Port") { $problems += "埠 $Port 沒有在監聽" }
+    if ($text -notmatch 'healthz=200 readyz=200') { $problems += '/healthz 或 /readyz 沒有回 200（readyz 失敗多半是上游 Data API 或金鑰問題）' }
+    if ($text -notmatch '已啟動') { $problems += 'stdout 沒有啟動訊息' }
 
-Write-Host ''
-if ($problems.Count -gt 0)
-{
-    Write-Host '驗證失敗：' -ForegroundColor Red
-    $problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
-    Write-Host '回滾：control.sh 會把舊檔備份成 <執行檔>.<時間戳>：' -ForegroundColor Yellow
-    Write-Host "  ssh $Target `"cd $RemoteBase && ls -t $BinaryName.* | head -1`"" -ForegroundColor Yellow
-    Write-Host "  ssh $Target `"cd $RemoteBase && ./control.sh stop && mv <上一行的備份檔> $BinaryName && chmod +x $BinaryName && ./control.sh start`"" -ForegroundColor Yellow
-    exit 1
+    Write-Host ''
+    if ($problems.Count -gt 0)
+    {
+        Write-Host '驗證失敗：' -ForegroundColor Red
+        $problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+        Write-Host '回滾：control.sh 會把舊檔備份成 <執行檔>.<時間戳>：' -ForegroundColor Yellow
+        Write-Host "  ssh $Target `"cd $RemoteBase && ls -t $BinaryName.* | head -1`"" -ForegroundColor Yellow
+        Write-Host "  ssh $Target `"cd $RemoteBase && ./control.sh stop && mv <上一行的備份檔> $BinaryName && chmod +x $BinaryName && ./control.sh start`"" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "部署成功：${Target}:$RemoteBase/$BinaryName（$commit）" -ForegroundColor Green
 }
-Write-Host "部署成功：${Target}:$RemoteBase/$BinaryName（$commit）" -ForegroundColor Green
+finally
+{
+    Complete-DeployMarker
+}
