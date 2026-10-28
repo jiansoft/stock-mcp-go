@@ -57,11 +57,14 @@ type ScreenStocksInput struct {
 	MinTrustStreak            *int     `json:"min_trust_streak,omitempty"`
 	MinAvgTradeValue          *int     `json:"min_avg_trade_value,omitempty"`
 	// MaxPE、MaxPB 是最新一筆日線(10 天內)的官方本益比、股價淨值比上限;虧損或沒有資料的股票不符合。
-	MaxPE     *float64 `json:"max_pe,omitempty"`
-	MaxPB     *float64 `json:"max_pb,omitempty"`
-	SortBy    string   `json:"sort_by,omitempty"`
-	SortOrder string   `json:"sort_order,omitempty"`
-	Limit     int      `json:"limit,omitempty"`
+	MaxPE *float64 `json:"max_pe,omitempty"`
+	MaxPB *float64 `json:"max_pb,omitempty"`
+	// MinMajorChange 是集保千張大戶持股比例,最近一週相對 MajorChangeWeeks 週前的變化下限(百分點);週數 0 為預設 4 週。
+	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
+	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
+	SortBy           string   `json:"sort_by,omitempty"`
+	SortOrder        string   `json:"sort_order,omitempty"`
+	Limit            int      `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -136,6 +139,13 @@ func screenStocksSchema() *jsonschema.Schema {
 			"max_pe": number(0, 10000,
 				"本益比上限(倍):取查詢日之前 10 天內最新一筆日線的官方本益比(證交所/櫃買中心),虧損或沒有資料的股票不符合"),
 			"max_pb": number(0, 1000, "股價淨值比上限(倍),資料規則同 max_pe"),
+			"min_major_change": number(-100, 100,
+				"集保千張大戶持股比例的變化下限(百分點,-100 至 100;例如 1 代表近 major_change_weeks 週增加至少 1 個百分點):"+
+					"取查詢日之前已公布的最近一週減去它往前第 major_change_weeks 週,沒有大戶資料的股票不列入"),
+			"major_change_weeks": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
+				Description: "min_major_change 的回看週數(集保資料週,1–12,預設 4);沒有設 min_major_change 時不影響結果",
+			},
 			"sort_by": {
 				Type:        "string",
 				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio"},
@@ -220,6 +230,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"min_operating_margin_percent", in.MinOperatingMarginPercent, -10000, 100},
 		{"max_pe", in.MaxPE, 0, 10000},
 		{"max_pb", in.MaxPB, 0, 1000},
+		{"min_major_change", in.MinMajorChange, -100, 100},
 	} {
 		if err := validateOptionalFloat(check.field, check.value, check.minimum, check.max); err != nil {
 			return nil, nil, err
@@ -243,6 +254,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MinAvgTradeValue != nil && (*in.MinAvgTradeValue < 1 || *in.MinAvgTradeValue > maxAvgTradeValueMillion) {
 		return nil, nil, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
+	if in.MajorChangeWeeks != 0 && (in.MajorChangeWeeks < 1 || in.MajorChangeWeeks > 12) {
+		return nil, nil, fmt.Errorf("參數 major_change_weeks 必須介於 1 到 12 之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
@@ -251,7 +265,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
-		in.MaxPE != nil || in.MaxPB != nil
+		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -289,7 +303,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MaxDebtRatioPercent: in.MaxDebtRatioPercent, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MinOperatingMarginPercent: in.MinOperatingMarginPercent, MarginsYoYUp: in.MarginsYoYUp, RevenueRecord: in.RevenueRecord,
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
-		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
+		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)

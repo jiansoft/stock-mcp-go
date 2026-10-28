@@ -197,9 +197,12 @@ type ScreenBacktestEnvelope struct {
 	PositiveFreeCashFlow      bool     `json:"positive_free_cash_flow"`
 	MaxPE                     *float64 `json:"max_pe"`
 	MaxPB                     *float64 `json:"max_pb"`
-	Indicator                 *string  `json:"indicator"`
-	Kind                      *string  `json:"kind"`
-	FeeDiscount               *float64 `json:"fee_discount"`
+	// MinMajorChange、MajorChangeWeeks 是千張大戶持股比例變化條件;舊版 API 沒有這兩欄時為 nil。
+	MinMajorChange   *float64 `json:"min_major_change"`
+	MajorChangeWeeks *int     `json:"major_change_weeks"`
+	Indicator        *string  `json:"indicator"`
+	Kind             *string  `json:"kind"`
+	FeeDiscount      *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
 	ExecutionModel *string               `json:"execution_model"`
 	SlippageBps    *int                  `json:"slippage_bps"`
@@ -380,6 +383,9 @@ type ScreenBacktestInput struct {
 	// MaxPE、MaxPB 是換股當天官方本益比與股價淨值比上限(倍)。
 	MaxPE *float64 `json:"max_pe,omitempty"`
 	MaxPB *float64 `json:"max_pb,omitempty"`
+	// MinMajorChange 是千張大戶持股比例近 MajorChangeWeeks 週變化的下限(百分點);週數 0 為預設 4 週。
+	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
+	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
@@ -726,6 +732,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MarginsYoYUp: in.MarginsYoYUp, MaxDebtRatioPercent: in.MaxDebtRatioPercent, RevenueRecord: in.RevenueRecord,
 		MinMonthlyRevenue: in.MinMonthlyRevenue, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MaxPE: in.MaxPE, MaxPB: in.MaxPB,
+		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks,
 	}
 	if err := fundamentals.validate(); err != nil {
 		return ScreenBacktestOptions{}, err
@@ -940,6 +947,13 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	filters = append(filters, revenueRecordTexts(e.RevenueRecord)...)
 	filters = append(filters, revenueScaleCashTexts(e.MinMonthlyRevenue, e.PositiveFreeCashFlow)...)
 	filters = append(filters, valuationCapTexts(e.MaxPE, e.MaxPB)...)
+	if e.MinMajorChange != nil {
+		weeks := 0
+		if e.MajorChangeWeeks != nil {
+			weeks = *e.MajorChangeWeeks
+		}
+		filters = append(filters, majorChangeTexts(e.MinMajorChange, weeks)...)
+	}
 	filters = append(filters, marginFilterTexts(e.MinGrossMarginPercent, e.MinOperatingMarginPercent,
 		e.MarginsYoYUp, e.MaxDebtRatioPercent)...)
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {

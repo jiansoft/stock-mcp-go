@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 )
 
 var readmeToolRow = regexp.MustCompile(`(?m)^\| \x60([a-z0-9_]+)\x60 \|`)
+
+// readmeToolCount 是兩份 README 開頭功能清單裡寫的工具數。
+var readmeToolCount = map[string]*regexp.Regexp{
+	"../README.md":       regexp.MustCompile(`(?m)^- (\d+) tools `),
+	"../README.zh-TW.md": regexp.MustCompile(`(?m)提供 (\d+) 個工具`),
+}
 
 // registeredToolNames 以 tools/list 取得實際註冊的工具名稱(已排序)。
 func registeredToolNames(t *testing.T) []string {
@@ -53,6 +60,9 @@ func TestReadmeToolTablesMatchRegisteredTools(t *testing.T) {
 			documented = append(documented, m[1])
 		}
 		slices.Sort(documented)
+		if m := readmeToolCount[file].FindStringSubmatch(string(raw)); m == nil || m[1] != strconv.Itoa(len(registered)) {
+			t.Errorf("%s 開頭寫的工具數 %v 與註冊的 %d 個不一致", file, m, len(registered))
+		}
 		if !slices.Equal(documented, registered) {
 			missing, extra := diffNames(registered, documented), diffNames(documented, registered)
 			t.Errorf("%s 與註冊工具不一致:README 缺少 %v;README 多出 %v", file, missing, extra)

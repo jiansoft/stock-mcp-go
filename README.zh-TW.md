@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 86 個工具（除 `set_portfolio_targets` 外皆唯讀）
+- 由 `stock_rust` Data API 提供 65 個工具（除 `set_portfolio_targets` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -63,7 +63,7 @@ stock-mcp-go
 | `get_stock_peers` | API | 比較個股與同產業上市櫃股票（不含 ETF）的市值、本益比、股價淨值比、殖利率、F 分數、毛利率與最新月營收年增率，附產業中位數與個股各指標排名 |
 | `get_market_breadth` | API | 查詢漲跌家數、52 週新高／新低家數、均線上下家數與估值分布 |
 | `get_dividend_yield_ranking` | API | 查詢上市櫃股票歷史殖利率排行 |
-| `screen_stocks` | API | 以白名單內的基本面、估值與財務體質條件（F 分數、毛利率、負債比、近四季自由現金流、最新季營益率，以及三率皆較去年同季上升的 `margins_yoy_up`）、最新月營收創歷史新高的 `revenue_record`、排除產業的 `exclude_industry_ids`（如金融業 17）、營收動能（連續年增月數、近 3 月累計年增率）、最新月營收下限（排除低基期）、RS 分數下限、外資／投信連續買超天數下限、近 20 根日線平均成交值下限（`min_avg_trade_value`，單位新台幣百萬元），以及 10 日內最新日線的官方本益比／股價淨值比上限（`max_pe`、`max_pb`；虧損股不通過本益比上限）篩選，可依 `pe_ratio`、`pb_ratio` 排序；每檔附 RS 分數、外資／投信連續買賣超、20 日均成交值與本益比／股價淨值比及日期 |
+| `screen_stocks` | API | 以白名單內的基本面、估值與財務體質條件（F 分數、毛利率、負債比、近四季自由現金流、最新季營益率，以及三率皆較去年同季上升的 `margins_yoy_up`）、最新月營收創歷史新高的 `revenue_record`、排除產業的 `exclude_industry_ids`（如金融業 17）、營收動能（連續年增月數、近 3 月累計年增率）、最新月營收下限（排除低基期）、RS 分數下限、外資／投信連續買超天數下限、近 20 根日線平均成交值下限（`min_avg_trade_value`，單位新台幣百萬元），以及 10 日內最新日線的官方本益比／股價淨值比上限（`max_pe`、`max_pb`；虧損股不通過本益比上限；`min_major_change` 為集保千張大戶持股比例近 `major_change_weeks` 週（預設 4）的增加下限，沒有大戶資料的股票不列入）篩選，可依 `pe_ratio`、`pb_ratio` 排序；每檔附 RS 分數、外資／投信連續買賣超、20 日均成交值與本益比／股價淨值比及日期 |
 | `get_market_index_history` | API | 查詢台股加權指數歷史 |
 | `get_dividend_calendar` | API | 查詢除權息與股利發放事件 |
 | `get_qfii_holding_ranking` | API | 查詢最新外資持股快照排行 |
@@ -79,7 +79,7 @@ stock-mcp-go
 | `get_industry_strength` | API | 產業相對強度：各產業有評分股票的 RS 中位數（對照上市櫃普通股，排除 ETF 與特別股）、強勢（RS ≥ 80）與弱勢（RS ≤ 20）占比、平均加權報酬、前三名領漲股，以及相較約 20 個交易日前的中位數變動，用於觀察資金輪動 |
 | `get_institutional_flow_ranking` | API | 最近 N 個交易日（1～60）外資、投信、自營商或三大法人合計買賣超排行：淨張數、估計淨金額（每日淨股數×當日收盤）、占期間成交量比例、買賣超天數與目前連續買賣超；可依市場與產業篩選 |
 | `get_institutional_streak_performance` | API | 統計法人連續買超或賣超 N 天（1～20、預設 3）後 5／20／60／120／240 個交易日的平均／中位數還原含息報酬、勝率、相對同日市場平均的超額報酬與勝大盤比例，附市場基準；可選外資、投信、自營商或合計、依市場與產業篩選，期間預設近一年、最長 3653 天，籌碼自 2019 年起；`group_by=year` 加上逐年統計與基準 |
-| `get_screen_backtest` | API | 選股策略回測（預設近三年、最長 3653 天）：每 `hold_days` 個交易日（5／20／60／120／240，預設 20）依調倉日 RS 範圍、外資／投信連續買超、持有期間內技術訊號、市場與產業條件，從上市櫃普通股選出 RS 最高的 `limit` 檔（預設 20）等權持有。回傳各期報酬與持股、總／年化報酬、最大回撤、勝率、相對同日母體平均與同期 0050 的比較、年化波動與 Sharpe、逐年明細、全期貢獻／拖累股，以及尚未結束的最新一期持股與距下次調倉交易日數。支援 `keep_rank` 排名緩衝、`hold_min_rs_score` 續抱門檻、`max_per_industry` 產業檔數上限（由其他產業遞補）、`max_weight` 個股權重上限（餘額分配其他股票，檔數不足則留現金）、`exclude_industry`（逗號分隔產業名稱）、`rebalance_offset` 調倉位移、`min_avg_trade_value` 新買進股票的 20 日均成交值下限（百萬元）、`rank_by` 改依均成交值／外資投信連買天數／當時已公告營收年增率／季營益率／當日官方本益比或股價淨值比（低到高）排序、`etf_weight` 固定配置 0～100% 的 0050，以及 `weighting` 依均成交值或其平方根加權。市場過濾可用 `market_filter_ma`（加權指數低於 20／60／120／240 日線時持有現金）、`market_filter_breadth`（站上 60 日線股票占比下限）、`market_filter_max_pe`（市場本益比中位數上限）、`market_filter_pe_percentile`（近五年歷史百分位上限，過往不足 250 個交易日視為通過）。目前持股附權重、新買進標示、最近調倉賣出股票與調倉後各股／加權策略／0050 還原報酬。另列扣除依周轉計算的券商手續費（可設 `fee_discount`）與交易稅後績效，包含續抱股恢復目標權重與 0050 核心恢復固定比重的成本；只使用當時可得資料，下市股計至最後收盤。`stop_loss`／`trailing_stop`（1～50%）依還原日收盤檢查進場價／期間最高收盤價跌幅，`close` 於觸發日收盤賣出、`next_open` 於次一個有開盤價的交易日開盤賣出（已到期末則按期末出場），計入成本並留現金至下次調倉。所有回測工具皆支援 `preset` 載入 stock_rust 已存策略（明確傳入參數優先），以及新買進股票的當時可得基本面篩選：`min_revenue_yoy_percent`、`min_revenue_yoy_streak`、`min_revenue_yoy_3m_percent`（次月 11 日起使用月營收）、`min_eps`、`min_roe_percent`（法定季報期限次日起使用）、`min_gross_margin_percent`、`min_operating_margin_percent`、`margins_yoy_up`（三率皆高於去年同季）、`max_debt_ratio_percent`（Yahoo 季報自 2015 年起），以及遵循相同公告期限的 `revenue_record`、`min_monthly_revenue`（千元）、`positive_free_cash_flow`（近四個已公告季度自由現金流為正），與調倉日官方 `max_pe`／`max_pb` 上限（虧損股不通過本益比上限） 所有回測工具另可選 `execution_price`（`close` 預設；`next_open` 換股日收盤後於次一交易日開盤買賣，支援開盤對開盤日頻回撤與次日開盤停損出場）與 `slippage_bps`（買賣各計 0～200 基點），回應揭露 `execution_model` 與 `slippage_bps`。 |
+| `get_screen_backtest` | API | 選股策略回測（預設近三年、最長 3653 天）：每 `hold_days` 個交易日（5／20／60／120／240，預設 20）依調倉日 RS 範圍、外資／投信連續買超、持有期間內技術訊號、市場與產業條件，從上市櫃普通股選出 RS 最高的 `limit` 檔（預設 20）等權持有。回傳各期報酬與持股、總／年化報酬、最大回撤、勝率、相對同日母體平均與同期 0050 的比較、年化波動與 Sharpe、逐年明細、全期貢獻／拖累股，以及尚未結束的最新一期持股與距下次調倉交易日數。支援 `keep_rank` 排名緩衝、`hold_min_rs_score` 續抱門檻、`max_per_industry` 產業檔數上限（由其他產業遞補）、`max_weight` 個股權重上限（餘額分配其他股票，檔數不足則留現金）、`exclude_industry`（逗號分隔產業名稱）、`rebalance_offset` 調倉位移、`min_avg_trade_value` 新買進股票的 20 日均成交值下限（百萬元）、`rank_by` 改依均成交值／外資投信連買天數／當時已公告營收年增率／季營益率／當日官方本益比或股價淨值比（低到高）排序、`etf_weight` 固定配置 0～100% 的 0050，以及 `weighting` 依均成交值或其平方根加權。市場過濾可用 `market_filter_ma`（加權指數低於 20／60／120／240 日線時持有現金）、`market_filter_breadth`（站上 60 日線股票占比下限）、`market_filter_max_pe`（市場本益比中位數上限）、`market_filter_pe_percentile`（近五年歷史百分位上限，過往不足 250 個交易日視為通過）；`min_major_change`／`major_change_weeks` 為千張大戶持股比例變化條件，只用換股日前已公布的週（資料 2023-07-14 起，`from` 須晚於第一週加回看週數；只用於新買進）。目前持股附權重、新買進標示、最近調倉賣出股票與調倉後各股／加權策略／0050 還原報酬。另列扣除依周轉計算的券商手續費（可設 `fee_discount`）與交易稅後績效，包含續抱股恢復目標權重與 0050 核心恢復固定比重的成本；只使用當時可得資料，下市股計至最後收盤。`stop_loss`／`trailing_stop`（1～50%）依還原日收盤檢查進場價／期間最高收盤價跌幅，`close` 於觸發日收盤賣出、`next_open` 於次一個有開盤價的交易日開盤賣出（已到期末則按期末出場），計入成本並留現金至下次調倉。所有回測工具皆支援 `preset` 載入 stock_rust 已存策略（明確傳入參數優先），以及新買進股票的當時可得基本面篩選：`min_revenue_yoy_percent`、`min_revenue_yoy_streak`、`min_revenue_yoy_3m_percent`（次月 11 日起使用月營收）、`min_eps`、`min_roe_percent`（法定季報期限次日起使用）、`min_gross_margin_percent`、`min_operating_margin_percent`、`margins_yoy_up`（三率皆高於去年同季）、`max_debt_ratio_percent`（Yahoo 季報自 2015 年起），以及遵循相同公告期限的 `revenue_record`、`min_monthly_revenue`（千元）、`positive_free_cash_flow`（近四個已公告季度自由現金流為正），與調倉日官方 `max_pe`／`max_pb` 上限（虧損股不通過本益比上限） 所有回測工具另可選 `execution_price`（`close` 預設；`next_open` 換股日收盤後於次一交易日開盤買賣，支援開盤對開盤日頻回撤與次日開盤停損出場）與 `slippage_bps`（買賣各計 0～200 基點），回應揭露 `execution_model` 與 `slippage_bps`。 |
 | `get_screen_backtest_offsets` | API | 回測調倉日穩健度：參數同 `get_screen_backtest`（不含 `rebalance_offset`），逐一測試 0～`hold_days`−1 的調倉位移（期間較長時取 20 個均勻位移），回傳各位移摘要、扣成本年化報酬／Sharpe／最大回撤／波動率的最小值、四分位、中位數、平均與最大值，對照同期 0050，並列報酬／Sharpe 勝過 0050 或回撤較淺的比例，以及逐年扣成本報酬分布與勝過 0050 的比例；中位數比單次回測更具參考性。可用 `split` 日期分開評估樣本內外績效，檢查過度擬合 |
 | `get_screen_backtest_frontier` | API | 尋找選股策略搭配 0050 的配置：參數同 `get_screen_backtest`（不含 `rebalance_offset`、`etf_weight`），以 0%、10%…100% 的 0050 核心比重各跑所有調倉位移，回傳各比重扣成本年化報酬／Sharpe／最大回撤／波動率分布、勝過 0050 比例，以及中位數 Sharpe／報酬最高的比重（0% 為純策略，100% 為純 0050）；`split` 加上每種比重的樣本內外分布，以及樣本內 Sharpe 最佳比重 |
 | `get_screen_backtest_attribution` | API | 解釋策略超額報酬來源：參數同 `get_screen_backtest`（不含 `etf_weight`，只分析策略部分），以近 20 日均成交值最高的 50 檔並依其加權建立類 0050 基準，依 Brinson-Fachler 分成產業配置、個股選擇與交互作用；列全期、逐年（前五產業）與逐產業結果，附同期 0050 報酬 |
@@ -160,7 +160,7 @@ curl http://127.0.0.1:9005/readyz
 
 正常回應為 `{"status":"ok"}`。上游 Data API 無法使用或金鑰失效時，`/readyz` 會回 HTTP 503。
 
-`/healthz` 只確認 HTTP 程序可回應；`/readyz` 以帶驗證的上游股票搜尋（`2330`、limit 1）檢查連線，逾時三秒、結果快取兩秒。通過不代表已驗證全部 56 個工具或資料新鮮度。
+`/healthz` 只確認 HTTP 程序可回應；`/readyz` 以帶驗證的上游股票搜尋（`2330`、limit 1）檢查連線，逾時三秒、結果快取兩秒。通過不代表已驗證全部工具或資料新鮮度。
 
 API 文件：瀏覽器開啟 `http://127.0.0.1:9005/docs`（Swagger UI，不需驗證）。文件由實際註冊的工具產生，`tools/call` 的參數依工具分別列出；Try it out 填入 MCP API Key 即可直接呼叫，頁面會自動補上 MCP 要求的 `Accept: application/json, text/event-stream`。
 
