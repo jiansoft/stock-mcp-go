@@ -1,0 +1,35 @@
+name: Security Audit
+
+# govulncheck 掃描 Go 標準函式庫與相依模組的已知漏洞，只報程式實際呼叫得到的
+# （symbol 層級），沒用到的漏洞不會擋。PR、main push 與每天排程都跑：新公布的漏洞
+# 不必等到下一個 PR 才發現，排程失敗時 GitHub 會寄信給 repo 擁有者。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # UTC 23:00 = 台北 07:00
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # 固定版本：舊版（v1.1.x）在 Go 1.27 會 panic。
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
