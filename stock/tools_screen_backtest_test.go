@@ -188,7 +188,7 @@ func TestScreenBacktestTool(t *testing.T) {
 	for _, bad := range []ScreenBacktestInput{
 		{From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"}, {From: "2016-10-13", To: "2026-10-14"},
 		{HoldDays: 10}, {HoldDays: -5}, {Limit: 101}, {Limit: -1}, {Market: "otc"}, {Industry: strings.Repeat("業", 21)},
-		{MinRSScore: 100}, {MinRSScore: 90, MaxRSScore: 80}, {MinForeignStreak: 61}, {Kind: "breakout"}, {Indicator: "ma1"},
+		{MinRSScore: 100}, {MinRSScore: 90, MaxRSScore: 80}, {MinForeignStreak: 61}, {Kind: "breakdown"}, {Indicator: "ma1"},
 		{FeeDiscount: ptr(-0.1)}, {FeeDiscount: ptr(1.5)}, {KeepRank: 19}, {Limit: 5, KeepRank: 4}, {KeepRank: 201}, {MarketFilterMA: 50}, {HoldMinRSScore: 100}, {HoldMinRSScore: -1},
 		{MaxPerIndustry: 101}, {MaxPerIndustry: -1},
 		{MarketBreadth: 100}, {MarketBreadth: -1},
