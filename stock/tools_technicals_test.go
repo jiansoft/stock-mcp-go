@@ -159,6 +159,18 @@ func TestTechnicalsSummary(t *testing.T) {
 		t.Errorf("只應列最近 10 日且缺值不接 %%:%s", summary)
 	}
 
+	if strings.Contains(summary, "區間突破") {
+		t.Errorf("沒有區間突破狀態時不應輸出:%s", summary)
+	}
+	e.RangeBreakout = &RangeBreakout{PivotPrice: 110, BaseLow: 100, BaseWidthPercent: 10, AverageVolume: 1000, VolumeRatio: 1.8, DistancePercent: 0.91, BreaksOut: true}
+	if text := technicalsSummary(e); !strings.Contains(text, "區間突破成立:前 30 日整理區間 100.00~110.00 元(幅度 10.00%),量比 1.80 倍,收盤距突破價 0.91%") {
+		t.Errorf("區間突破摘要錯誤:%s", text)
+	}
+	e.RangeBreakout.BreaksOut = false
+	if text := technicalsSummary(e); !strings.Contains(text, "區間突破未成立") {
+		t.Errorf("未成立時要寫未成立:%s", text)
+	}
+
 	short := sampleTechnicals(2)
 	if text := technicalsSummary(short); !strings.Contains(text, "最新一日沒有交叉或超買超賣訊號。") || !strings.Contains(text, "近 2 個交易日:") {
 		t.Errorf("無訊號摘要錯誤:%s", text)

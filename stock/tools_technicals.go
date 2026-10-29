@@ -48,12 +48,24 @@ type TechnicalSignal struct {
 
 // TechnicalsEnvelope 是 technicals endpoint 的完整回應;截止日前沒有日線時 DataAsOf 為 nil。
 type TechnicalsEnvelope struct {
-	StockSymbol string            `json:"stock_symbol"`
-	DataAsOf    *string           `json:"data_as_of"`
-	Days        int               `json:"days"`
-	Adjusted    bool              `json:"adjusted"`
-	Points      []TechnicalPoint  `json:"points"`
-	Signals     []TechnicalSignal `json:"signals"`
+	StockSymbol   string            `json:"stock_symbol"`
+	DataAsOf      *string           `json:"data_as_of"`
+	Days          int               `json:"days"`
+	Adjusted      bool              `json:"adjusted"`
+	Points        []TechnicalPoint  `json:"points"`
+	Signals       []TechnicalSignal `json:"signals"`
+	RangeBreakout *RangeBreakout    `json:"range_breakout"`
+}
+
+// RangeBreakout 是最新一日相對前 30 日整理區間的狀態(還原價,成交量不還原);資料不足時 envelope 內為 nil。
+type RangeBreakout struct {
+	PivotPrice       float64 `json:"pivot_price"`
+	BaseLow          float64 `json:"base_low"`
+	BaseWidthPercent float64 `json:"base_width_percent"`
+	AverageVolume    float64 `json:"average_volume"`
+	VolumeRatio      float64 `json:"volume_ratio"`
+	DistancePercent  float64 `json:"distance_percent"`
+	BreaksOut        bool    `json:"breaks_out"`
 }
 
 // TechnicalsQuerier 是 get_technical_indicators 對資料來源的需求介面;只有 *APIClient 實作。
@@ -185,6 +197,9 @@ func technicalsSummary(e *TechnicalsEnvelope) string {
 			b.printf("\n- %s", signal.Description)
 		}
 	}
+	if line := rangeBreakoutLine(e.RangeBreakout); line != "" {
+		b.printf("\n%s", line)
+	}
 	start := max(len(e.Points)-technicalsRecentLines, 0)
 	b.printf("\n近 %d 個交易日:", len(e.Points)-start)
 	for i := start; i < len(e.Points); i++ {
@@ -210,4 +225,18 @@ func maAlignment(p *TechnicalPoint) string {
 	default:
 		return "均線糾結(MA5、MA20、MA60 未呈單一方向排列)。"
 	}
+}
+
+// rangeBreakoutLine 把區間突破狀態寫成一行;沒有資料時回空字串。
+func rangeBreakoutLine(r *RangeBreakout) string {
+	if r == nil {
+		return ""
+	}
+	verdict := "未成立"
+	if r.BreaksOut {
+		verdict = "成立"
+	}
+	return fmt.Sprintf("區間突破%s:前 30 日整理區間 %.2f~%.2f 元(幅度 %.2f%%),量比 %.2f 倍,收盤距突破價 %.2f%%"+
+		"(條件:幅度 ≤ 20%%、收盤 > 突破價、量比 ≥ 1.5、距突破價 ≤ 5%%)",
+		verdict, r.BaseLow, r.PivotPrice, r.BaseWidthPercent, r.VolumeRatio, r.DistancePercent)
 }
