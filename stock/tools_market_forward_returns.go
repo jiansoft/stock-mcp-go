@@ -1,8 +1,8 @@
 // Package stock 的 get_market_forward_returns 工具:大盤(同市場全部股票等權)各天期未來報酬。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/market/forward-returns:期間內每個基準日買進同市場全部股票、
-// 5／20／60／120／240 個交易日後的平均報酬與上漲比例,整段與依年度;與 get_signal_performance 的大盤基準
-// 是同一份資料。
+// 5／20／60／120／240 個交易日後的平均報酬與上漲比例,整段、依年度與依月份(季節性);與
+// get_signal_performance 的大盤基準是同一份資料。
 package stock
 
 import (
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,7 +25,19 @@ type MarketForwardReturnsEnvelope struct {
 	DataAsOf  string          `json:"data_as_of"`
 	Benchmark []BenchmarkStat `json:"benchmark"`
 	ByYear    []BenchmarkYear `json:"by_year"`
+	// ByMonth 依基準日月份(1～12,跨年度合併),只列有資料的月份。
+	ByMonth []BenchmarkMonth `json:"by_month"`
 }
+
+// BenchmarkMonth 是某個月份(基準日所在月份,跨年度合併)的大盤基準;Years 為涵蓋的年度數。
+type BenchmarkMonth struct {
+	Month     int             `json:"month"`
+	Years     int             `json:"years"`
+	Benchmark []BenchmarkStat `json:"benchmark"`
+}
+
+// monthSummaryDays 是摘要裡月份表只列的天期;完整天期在結構化輸出。
+const monthSummaryDays = 20
 
 // MarketForwardReturnsOptions 是查詢條件;空字串與 0 代表用 API 預設(今天、3 年、上市加上櫃)。
 type MarketForwardReturnsOptions struct {
@@ -67,6 +80,9 @@ func (c *APIClient) MarketForwardReturns(ctx context.Context, opt MarketForwardR
 	}
 	if body.ByYear == nil {
 		body.ByYear = []BenchmarkYear{}
+	}
+	if body.ByMonth == nil {
+		body.ByMonth = []BenchmarkMonth{}
 	}
 	return &body, nil
 }
@@ -137,7 +153,7 @@ func (ts *marketForwardReturnsToolset) marketForwardReturns(ctx context.Context,
 	}, nil
 }
 
-// marketForwardReturnsSummary 組出給模型閱讀的文字摘要:整段期間與各年度的平均報酬與上漲比例。
+// marketForwardReturnsSummary 組出給模型閱讀的文字摘要:整段期間、各年度與各月份的平均報酬與上漲比例。
 func marketForwardReturnsSummary(e *MarketForwardReturnsEnvelope) string {
 	var b summaryBuilder
 	b.printf("%s 市場 %s～%s(近 %d 年,最後基準日 %s)每天買進同市場全部股票(等權)之後第 N 個交易日的還原報酬:",
@@ -146,6 +162,25 @@ func marketForwardReturnsSummary(e *MarketForwardReturnsEnvelope) string {
 	if len(e.ByYear) > 0 {
 		b.printf("\n依基準日年度:%s。", benchmarkByYearText(e.ByYear))
 	}
+	if len(e.ByMonth) > 0 {
+		b.printf("\n依基準日月份(跨年度合併,只列 %d 日;括號內為涵蓋年度數,年度少時季節性參考價值有限):%s。",
+			monthSummaryDays, benchmarkByMonthText(e.ByMonth))
+	}
 	b.printf("\n這是個股等權平均,不等於加權指數報酬;可當作訊號、策略或持股報酬的比較基準。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// benchmarkByMonthText 組出各月份 monthSummaryDays 日的平均與上漲比例,以分號分隔。
+func benchmarkByMonthText(months []BenchmarkMonth) string {
+	parts := make([]string, 0, len(months))
+	for _, month := range months {
+		text := "尚無樣本"
+		for _, bench := range month.Benchmark {
+			if bench.Days == monthSummaryDays && bench.Samples > 0 {
+				text = fmt.Sprintf("平均 %s、上漲比例 %s", displayPercent(bench.AvgReturn), displayRate(bench.WinRate))
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%d 月(%d 年)%s", month.Month, month.Years, text))
+	}
+	return strings.Join(parts, ";")
 }
