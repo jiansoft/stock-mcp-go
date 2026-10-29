@@ -221,7 +221,7 @@ func TestSignalPerformanceTool(t *testing.T) {
 	}
 	for _, bad := range []SignalPerformanceInput{
 		{Market: "otc"}, {From: "2026-13-01"}, {To: "bad"}, {From: "2026-10-14", To: "2026-10-13"},
-		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakout"}, {Indicator: "ma1"},
+		{From: "2023-10-13", To: "2026-10-13"}, {Kind: "breakdown"}, {Indicator: "ma1"},
 		{Industry: strings.Repeat("業", 21)}, {MinRSScore: 100}, {MaxRSScore: -1}, {MinRSScore: 81, MaxRSScore: 80},
 		{MinForeignStreak: 61}, {MinTrustStreak: -1}, {GroupBy: "month"}, {From: "2019-01-02"},
 		{From: "2016-10-12", To: "2026-10-13", Indicator: "kd"},
@@ -440,8 +440,8 @@ func TestSignalHistoryToolsAreRegisteredReadOnly(t *testing.T) {
 		t.Errorf("tools/list 缺少訊號歷史工具:%v", found)
 	}
 	for _, schema := range []map[string]bool{
-		{"kind": len(signalPerformanceSchema().Properties["kind"].Enum) == 8, "indicator": len(signalPerformanceSchema().Properties["indicator"].Enum) == 11},
-		{"kind": len(stockSignalHistorySchema().Properties["kind"].Enum) == 8, "required": len(stockSignalHistorySchema().Required) == 1},
+		{"kind": len(signalPerformanceSchema().Properties["kind"].Enum) == 9, "indicator": len(signalPerformanceSchema().Properties["indicator"].Enum) == 12},
+		{"kind": len(stockSignalHistorySchema().Properties["kind"].Enum) == 9, "required": len(stockSignalHistorySchema().Required) == 1},
 	} {
 		for name, ok := range schema {
 			if !ok {
