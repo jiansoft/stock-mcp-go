@@ -41,6 +41,13 @@ func sampleMarketForwardReturns() *MarketForwardReturnsEnvelope {
 			{Year: 2024, Benchmark: []BenchmarkStat{{Days: 5, Samples: 800_000, AvgReturn: ptr(0.5), WinRate: ptr(0.5)}}},
 			{Year: 2025, Benchmark: []BenchmarkStat{{Days: 5, Samples: 800_000, AvgReturn: ptr(-0.1), WinRate: ptr(0.45)}}},
 		},
+		ByMonth: []BenchmarkMonth{
+			{Month: 5, Years: 3, Benchmark: []BenchmarkStat{
+				{Days: 5, Samples: 200_000, AvgReturn: ptr(0.8), WinRate: ptr(0.55)},
+				{Days: 20, Samples: 200_000, AvgReturn: ptr(3.18), WinRate: ptr(0.59)},
+			}},
+			{Month: 9, Years: 3, Benchmark: []BenchmarkStat{{Days: 20, Samples: 0}}},
+		},
 	}
 }
 
@@ -58,7 +65,7 @@ func TestAPIClientMarketForwardReturns(t *testing.T) {
 			w.Header().Set("content-type", "application/json")
 			_, _ = w.Write([]byte(`{"from":"2023-10-29","to":"2026-10-29","years":3,"market":"all","data_as_of":"2026-10-22",` +
 				`"benchmark":[{"days":5,"samples":10,"avg_return":0.42,"win_rate":0.48},{"days":60,"samples":0,"avg_return":null,"win_rate":null}],` +
-				`"by_year":null}`))
+				`"by_year":null,"by_month":null}`))
 		}
 	}))
 	defer server.Close()
@@ -66,7 +73,7 @@ func TestAPIClientMarketForwardReturns(t *testing.T) {
 
 	envelope, err := client.MarketForwardReturns(t.Context(), MarketForwardReturnsOptions{})
 	if err != nil || len(envelope.Benchmark) != 2 || *envelope.Benchmark[0].AvgReturn != 0.42 ||
-		envelope.Benchmark[1].AvgReturn != nil || envelope.ByYear == nil || envelope.DataAsOf != "2026-10-22" {
+		envelope.Benchmark[1].AvgReturn != nil || envelope.ByYear == nil || envelope.ByMonth == nil || envelope.DataAsOf != "2026-10-22" {
 		t.Fatalf("MarketForwardReturns() = %#v, %v", envelope, err)
 	}
 	if gotPath != "/api/v1/market/forward-returns" || gotRaw != "" {
@@ -96,7 +103,7 @@ func TestMarketForwardReturnsTool(t *testing.T) {
 		t.Fatalf("marketForwardReturns 不應失敗:%v, %+v", err, f.got)
 	}
 	if out, ok := output.(MarketForwardReturnsOutput); !ok || out.DataKind != "market_forward_returns" || out.IsRealtime ||
-		out.Disclaimer != AnalysisDisclaimer || len(out.ByYear) != 2 {
+		out.Disclaimer != AnalysisDisclaimer || len(out.ByYear) != 2 || len(out.ByMonth) != 2 {
 		t.Fatalf("structured output 錯誤:%#v", output)
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
@@ -104,6 +111,8 @@ func TestMarketForwardReturnsTool(t *testing.T) {
 		"all 市場 2023-10-29～2026-10-29(近 3 年,最後基準日 2026-10-22)",
 		"整段:5 日 平均 0.42%、上漲比例 48.12%;60 日 尚無樣本。",
 		"依基準日年度:2024 年 5 日 平均 0.5%、上漲比例 50%。2025 年 5 日 平均 -0.1%、上漲比例 45%。",
+		"依基準日月份(跨年度合併,只列 20 日;",
+		"5 月(3 年)平均 3.18%、上漲比例 59%;9 月(3 年)尚無樣本。",
 		"不等於加權指數報酬",
 		AnalysisDisclaimer,
 	} {
@@ -113,8 +122,9 @@ func TestMarketForwardReturnsTool(t *testing.T) {
 	}
 	empty := sampleMarketForwardReturns()
 	empty.ByYear = nil
-	if summary := marketForwardReturnsSummary(empty); strings.Contains(summary, "依基準日年度") {
-		t.Errorf("沒有年度資料不應列年度:%s", summary)
+	empty.ByMonth = nil
+	if summary := marketForwardReturnsSummary(empty); strings.Contains(summary, "依基準日年度") || strings.Contains(summary, "依基準日月份") {
+		t.Errorf("沒有年度與月份資料不應列出:%s", summary)
 	}
 	for _, bad := range []MarketForwardReturnsInput{{Date: "2026-13-01"}, {Years: 21}, {Years: -1}, {Market: "hk"}} {
 		if _, _, err := newToolset(f).marketForwardReturns(t.Context(), nil, bad); err == nil {
