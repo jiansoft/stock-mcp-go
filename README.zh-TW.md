@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 67 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
+- 由 `stock_rust` Data API 提供 68 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -92,6 +92,7 @@ stock-mcp-go
 | `get_margin_ranking` | API | 最近 N 個交易日（1～60）融資融券排行：融資或融券增減最多、券資比最高（融資至少 100 張），附餘額、增減與收盤價；可依市場與產業篩選 |
 | `get_market_regime` | API | 某交易日（預設最新）的加權指數趨勢：收盤相對 5／20／60／120／240 日均線與斜率、多空／混合排列、連續位於 60 日線同側天數、距 52 週高低點、5／20／60／240 日報酬、近 60 個交易日穿越 20／60／120／240 日線日期；另附市場廣度（上市櫃股票站上 20／60／240 日線占比及五日前對照、近五日 52 週新高低家數）與估值位階（官方本益比／股價淨值比中位數、近五年百分位與五個交易日前本益比） |
 | `get_market_valuation` | API | 大盤估值位階：近 1～10 年（預設 5 年）上市櫃每日官方本益比／股價淨值比中位數，只計正值（排除虧損股與 ETF），附最小值／四分位／最大值、最新日在期間內的百分位與月底數值；可選市場（`twse`／`tpex`）與截止日 |
+| `get_market_forward_returns` | API | 大盤等權未來報酬：近 1～20 年（預設 3 年）每個基準日買進同市場（全部、上市或上櫃）全部股票，5／20／60／120／240 個交易日後的平均還原報酬與上漲比例，整段與依年度；與 `get_signal_performance` 的大盤基準同一份資料，不等於加權指數 |
 | `get_chip_data` | API | 查詢個股籌碼：每日三大法人、融資融券、主力淨進出、連續買賣超、千張大戶與 400 張以上、董監設質與最新日買賣超分點（主力資料僅涵蓋持股） |
 | `get_holder_levels` | API | 查詢個股單週集保股權分散全部持股分級：1～15 級（1～999 股到 1,000,001 股以上）、差異數調整與合計的人數、股數與比例；可指定日期（取該日以前最近一週），預設最新一週；分級資料自 2026-10-22 起逐週累積 |
 | `get_cagr_ranking` | API | 查詢 M3～Y10 年化報酬率排行（可選只看股價、含股利或股利再投入），可依市場與產業篩選 |

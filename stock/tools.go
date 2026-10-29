@@ -433,6 +433,16 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, vts.marketValuation)
 	}
 
+	if fq, ok := q.(MarketForwardReturnsQuerier); ok {
+		fts := &marketForwardReturnsToolset{fq: fq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_market_forward_returns",
+			Description: "查詢大盤等權各天期未來報酬與上漲比例（整段與依年度）；不等於加權指數。",
+			InputSchema: marketForwardReturnsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, fts.marketForwardReturns)
+	}
+
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
