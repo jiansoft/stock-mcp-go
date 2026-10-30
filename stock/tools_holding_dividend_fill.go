@@ -18,10 +18,12 @@ import (
 const holdingDividendFillListed = 15
 
 // HoldingDividendFillItem 是持股的一次除權息與填息狀態;填息欄位與 DividendFillEvent 相同(JSON 展開)。
+// History 是該股近 5 年(含本次)的填息統計,供對照這次填息快慢;同一檔每列相同。
 type HoldingDividendFillItem struct {
 	StockSymbol string `json:"stock_symbol"`
 	Name        string `json:"name"`
 	DividendFillEvent
+	History DividendFillSummary `json:"history"`
 }
 
 // HoldingDividendFillEnvelope 是 portfolio/dividend-fill endpoint 的完整回應。
@@ -132,14 +134,26 @@ func holdingDividendFillSummary(e *HoldingDividendFillEnvelope) string {
 				item.StockSymbol, item.Name, item.ExDate, intPtrText(item.TradingDaysToFill)))
 			continue
 		}
-		unfilled = append(unfilled, fmt.Sprintf("%s %s %s 除權息(%s)填息價 %s、最新 %s,還差 %s(已 %d 個交易日)",
+		unfilled = append(unfilled, fmt.Sprintf("%s %s %s 除權息(%s)填息價 %s、最新 %s,還差 %s(已 %d 個交易日%s)",
 			item.StockSymbol, item.Name, item.ExDate, fillDividendText(item.DividendFillEvent),
-			displayFloat(item.PreExClose), displayFloat(item.LatestClose), displayPercent(item.GapPercent), item.TradingDaysSinceEx))
+			displayFloat(item.PreExClose), displayFloat(item.LatestClose), displayPercent(item.GapPercent), item.TradingDaysSinceEx,
+			fillHistoryText(item.History)))
 	}
 	writeFillList(&b, "尚未填息", unfilled)
 	writeFillList(&b, "已填息", filled)
 	b.printf("\n填息價為除權息前一日收盤,價格未還原。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// fillHistoryText 是未填息列附的近 5 年填息紀錄;沒有歷史事件時不附。
+func fillHistoryText(h DividendFillSummary) string {
+	if h.Events == 0 {
+		return ""
+	}
+	if h.AverageTradingDaysToFill == nil {
+		return fmt.Sprintf(";近 5 年 %d 次除權息都未填息", h.Events)
+	}
+	return fmt.Sprintf(";近 5 年 %d 次填息 %d 次、平均 %s 個交易日", h.Events, h.Filled, displayFloat(h.AverageTradingDaysToFill))
 }
 
 // writeFillList 寫出一段清單,超過 holdingDividendFillListed 筆時註明省略數。
