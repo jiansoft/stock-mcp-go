@@ -40,7 +40,7 @@ func sampleHoldingDividendFill() *HoldingDividendFillEnvelope {
 			{StockSymbol: "0056", Name: "元大高股息", DividendFillEvent: DividendFillEvent{
 				ExDate: "2026-09-15", CashDividend: ptr(1.0), StockDividend: ptr(0.0), PreExClose: ptr(40.0),
 				LatestClose: ptr(36.0), GapPercent: ptr(10.0), TradingDaysSinceEx: 25,
-			}},
+			}, History: DividendFillSummary{Events: 8, Filled: 6, AverageTradingDaysToFill: ptr(12.5)}},
 			{StockSymbol: "2330", Name: "台積電", DividendFillEvent: DividendFillEvent{
 				ExDate: "2026-07-10", CashDividend: ptr(5.0), Filled: true, TradingDaysToFill: &days,
 			}},
@@ -108,7 +108,7 @@ func TestHoldingDividendFillTool(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	for _, want := range []string{
 		"全部會員持股近 365 天的除權息共 2 次,已填息 1 次(已填息者平均 6 個交易日、中位數 6)。",
-		"尚未填息(1 次):0056 元大高股息 2026-09-15 除權息(現金 1 元)填息價 40、最新 36,還差 10%(已 25 個交易日)。",
+		"尚未填息(1 次):0056 元大高股息 2026-09-15 除權息(現金 1 元)填息價 40、最新 36,還差 10%(已 25 個交易日;近 5 年 8 次填息 6 次、平均 12.5 個交易日)。",
 		"已填息(1 次):2330 台積電 2026-07-10 除權息、第 6 個交易日填息。",
 	} {
 		if !strings.Contains(text, want) {
@@ -198,5 +198,25 @@ func TestHoldingDividendFillToolIsRegisteredReadOnly(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("具備 HoldingDividendFillQuerier 時應註冊 get_holding_dividend_fill")
+	}
+}
+
+// TestFillHistoryText 驗證近 5 年填息紀錄:沒有歷史不附、全未填息、部分填息。
+func TestFillHistoryText(t *testing.T) {
+	tests := []struct {
+		name string
+		in   DividendFillSummary
+		want string
+	}{
+		{"沒有歷史", DividendFillSummary{}, ""},
+		{"全未填息", DividendFillSummary{Events: 3}, ";近 5 年 3 次除權息都未填息"},
+		{"部分填息", DividendFillSummary{Events: 5, Filled: 4, AverageTradingDaysToFill: ptr(7.0)}, ";近 5 年 5 次填息 4 次、平均 7 個交易日"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fillHistoryText(tt.in); got != tt.want {
+				t.Errorf("fillHistoryText() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
