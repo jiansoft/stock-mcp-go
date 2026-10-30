@@ -62,9 +62,11 @@ type ScreenStocksInput struct {
 	// MinMajorChange 是集保千張大戶持股比例,最近一週相對 MajorChangeWeeks 週前的變化下限(百分點);週數 0 為預設 4 週。
 	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
 	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
-	SortBy           string   `json:"sort_by,omitempty"`
-	SortOrder        string   `json:"sort_order,omitempty"`
-	Limit            int      `json:"limit,omitempty"`
+	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
+	RangeBreakoutDays int    `json:"range_breakout_days,omitempty"`
+	SortBy            string `json:"sort_by,omitempty"`
+	SortOrder         string `json:"sort_order,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -145,6 +147,11 @@ func screenStocksSchema() *jsonschema.Schema {
 			"major_change_weeks": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
 				Description: "min_major_change 的回看週數(集保資料週,1–12,預設 4);沒有設 min_major_change 時不影響結果",
+			},
+			"range_breakout_days": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
+				Description: "只留最近 N 個交易日(含查詢日,1–20)出現區間突破、且突破後還沒跌回突破價的股票;" +
+					"每檔附最近一次突破的日期與說明。2019 年起回測單獨依區間突破選股明顯輸 0050,約七成突破在 10 個交易日內跌回,只供參考",
 			},
 			"sort_by": {
 				Type:        "string",
@@ -257,6 +264,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MajorChangeWeeks != 0 && (in.MajorChangeWeeks < 1 || in.MajorChangeWeeks > 12) {
 		return nil, nil, fmt.Errorf("參數 major_change_weeks 必須介於 1 到 12 之間")
 	}
+	if in.RangeBreakoutDays != 0 && (in.RangeBreakoutDays < 1 || in.RangeBreakoutDays > 20) {
+		return nil, nil, fmt.Errorf("參數 range_breakout_days 必須介於 1 到 20 之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
@@ -265,7 +275,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
-		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil
+		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -304,7 +314,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinOperatingMarginPercent: in.MinOperatingMarginPercent, MarginsYoYUp: in.MarginsYoYUp, RevenueRecord: in.RevenueRecord,
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
-		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
+		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)
@@ -325,6 +336,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			millionText(first.AvgTradeValue20D), displayFloat(first.PERatio), displayFloat(first.PBRatio), displayString(first.RatioDate),
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
+		if line := screenBreakoutLine(in.RangeBreakoutDays, first); line != "" {
+			summary = line + "\n" + summary
+		}
 	}
 	return textResult(summary), ScreeningOutput{
 		DataKind: "stock_screening_result", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
@@ -406,4 +420,13 @@ func fScoreText(score, evaluated *int) string {
 		return fmt.Sprint(*score)
 	}
 	return fmt.Sprintf("%d/%d 項", *score, *evaluated)
+}
+
+// screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。
+func screenBreakoutLine(days int, first ScreenedStock) string {
+	if days <= 0 || first.RangeBreakoutDate == nil {
+		return ""
+	}
+	return fmt.Sprintf("區間突破條件:近 %d 個交易日突破且還沒跌回;首筆最近一次突破 %s(%s)。回測單獨使用明顯輸 0050,只供參考。",
+		days, *first.RangeBreakoutDate, displayString(first.RangeBreakoutDescription))
 }
