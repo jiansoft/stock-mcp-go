@@ -64,6 +64,10 @@ type ScreenedStock struct {
 	PERatio   *float64 `json:"pe_ratio"`
 	PBRatio   *float64 `json:"pb_ratio"`
 	RatioDate *string  `json:"ratio_date"`
+	// RangeBreakoutDate、RangeBreakoutDescription 是設 range_breakout_days 時最近一次區間突破的日期與說明;
+	// 沒設時為 nil。
+	RangeBreakoutDate        *string `json:"range_breakout_date"`
+	RangeBreakoutDescription *string `json:"range_breakout_description"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -111,9 +115,11 @@ type ScreenOptions struct {
 	// MinMajorChange 是千張大戶持股比例變化下限(百分點);MajorChangeWeeks 為 0 時用 Data API 預設 4 週。
 	MinMajorChange   *float64
 	MajorChangeWeeks int
-	SortBy           string
-	SortOrder        string
-	Limit            int
+	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
+	RangeBreakoutDays int
+	SortBy            string
+	SortOrder         string
+	Limit             int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。

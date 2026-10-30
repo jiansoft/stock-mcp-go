@@ -337,6 +337,9 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MajorChangeWeeks > 0 {
 		values.Set("major_change_weeks", fmt.Sprint(opt.MajorChangeWeeks))
 	}
+	if opt.RangeBreakoutDays > 0 {
+		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
