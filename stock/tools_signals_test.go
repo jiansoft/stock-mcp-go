@@ -188,7 +188,7 @@ func TestSignalsSummary(t *testing.T) {
 	}
 }
 
-// TestSignalLabel 涵蓋交叉、站上跌破、52 週、相對強度穿越、區間突破與未知名稱。
+// TestSignalLabel 涵蓋交叉、站上跌破、52 週、相對強度穿越、區間突破與假突破、未知名稱。
 func TestSignalLabel(t *testing.T) {
 	cases := map[[2]string]string{
 		{"ma5_ma20", "golden_cross"}:   "MA5/MA20 黃金交叉",
@@ -198,6 +198,7 @@ func TestSignalLabel(t *testing.T) {
 		{"rs80", "cross_above"}:        "相對強度站上 80 分",
 		{"rs50", "cross_below"}:        "相對強度跌破 50 分",
 		{"range_breakout", "breakout"}: "區間突破",
+		{"range_breakout", "failed"}:   "區間假突破",
 		{"unknown", "golden_cross"}:    "unknown golden_cross",
 		{"kd", "unknown"}:              "kd unknown",
 	}
@@ -206,7 +207,7 @@ func TestSignalLabel(t *testing.T) {
 			t.Errorf("signalLabel(%q, %q) = %q, want %q", in[0], in[1], got, want)
 		}
 	}
-	if len(signalsSchema().Properties["kind"].Enum) != 9 || len(signalsSchema().Properties["indicator"].Enum) != 12 {
+	if len(signalsSchema().Properties["kind"].Enum) != 10 || len(signalsSchema().Properties["indicator"].Enum) != 12 {
 		t.Error("schema 列舉數量應與 Data API 一致")
 	}
 }

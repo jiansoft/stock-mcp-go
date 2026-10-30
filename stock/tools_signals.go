@@ -28,6 +28,7 @@ var signalKinds = []struct{ name, label string }{
 	{"new_high", "新高"},
 	{"new_low", "新低"},
 	{"breakout", "突破"},
+	{"failed", "假突破"},
 }
 
 // signalIndicators 是訊號來源與中文名稱,依對外說明的順序。
@@ -160,7 +161,7 @@ func signalsSchema() *jsonschema.Schema {
 				Type: "string",
 				Enum: kinds,
 				Description: "只列出這種訊號(選填):golden_cross 黃金交叉、death_cross 死亡交叉、cross_above 收盤站上均線或 RS 向上穿越、" +
-					"cross_below 收盤跌破均線或 RS 向下穿越、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低、breakout 區間整理後帶量突破",
+					"cross_below 收盤跌破均線或 RS 向下穿越、overbought 超買、oversold 超賣、new_high 52 週新高、new_low 52 週新低、breakout 區間整理後帶量突破、failed 假突破(區間突破後 10 個交易日內收盤第一次跌回突破價之下)",
 			},
 			"indicator": {
 				Type: "string",
@@ -168,7 +169,7 @@ func signalsSchema() *jsonschema.Schema {
 				Description: "只列出這個來源的訊號(選填):ma5_ma20、ma20_ma60(均線交叉)、kd、macd、" +
 					"close_ma20/close_ma60/close_ma240(收盤站上或跌破月/季/年線)、rsi14、52_week(52 週新高新低)、" +
 					"rs80/rs50(相對強度分數比前一個交易日站上或跌破 80/50 分)、" +
-					"range_breakout(區間突破:前 30 日整理幅度 20% 內,收盤帶前 20 日均量 1.5 倍以上突破整理高點,且離突破價不超過 5%)",
+					"range_breakout(區間突破:前 30 日整理幅度 20% 內,收盤帶前 20 日均量 1.5 倍以上突破整理高點,且離突破價不超過 5%;種類 breakout 為突破、failed 為假突破)",
 			},
 			"industry": {
 				Type:        "string",
@@ -264,7 +265,7 @@ func signalIndicatorLabel(indicator string) string {
 	return ""
 }
 
-// signalLabel 組出訊號的中文名稱,例如「KD 黃金交叉」「站上季線」「52 週新高」「相對強度站上 80 分」。
+// signalLabel 組出訊號的中文名稱,例如「KD 黃金交叉」「站上季線」「52 週新高」「相對強度站上 80 分」「區間假突破」。
 func signalLabel(indicator, kind string) string {
 	indicatorLabel, kindLabel := signalIndicatorLabel(indicator), signalKindLabel(kind)
 	if indicatorLabel == "" || kindLabel == "" {
@@ -274,6 +275,9 @@ func signalLabel(indicator, kind string) string {
 		return kindLabel + indicatorLabel
 	}
 	if indicator == "range_breakout" {
+		if kind == "failed" {
+			return "區間" + kindLabel
+		}
 		return indicatorLabel
 	}
 	if indicator == "rs80" || indicator == "rs50" {
