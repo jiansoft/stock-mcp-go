@@ -17,13 +17,14 @@ import (
 // fakeHoldingDividendFillQuerier 是同時具備基本 Querier 與 HoldingDividendFillQuerier 的假資料來源。
 type fakeHoldingDividendFillQuerier struct {
 	fakeQuerier
-	envelope *HoldingDividendFillEnvelope
-	err      error
-	got      int
+	envelope  *HoldingDividendFillEnvelope
+	err       error
+	got       int
+	gotMember int64
 }
 
-func (f *fakeHoldingDividendFillQuerier) HoldingDividendFill(_ context.Context, days int) (*HoldingDividendFillEnvelope, error) {
-	f.got = days
+func (f *fakeHoldingDividendFillQuerier) HoldingDividendFill(_ context.Context, days int, memberID int64) (*HoldingDividendFillEnvelope, error) {
+	f.got, f.gotMember = days, memberID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -68,18 +69,24 @@ func TestAPIClientHoldingDividendFill(t *testing.T) {
 	defer server.Close()
 	client := NewAPIClient(server.URL, "secret", time.Second)
 
-	envelope, err := client.HoldingDividendFill(t.Context(), 0)
+	envelope, err := client.HoldingDividendFill(t.Context(), 0, 0)
 	if err != nil || len(envelope.Items) != 1 || envelope.Items[0].ExDate != "2026-09-15" || *envelope.Items[0].GapPercent != 10 || envelope.Items[0].Name != "元大高股息" {
 		t.Fatalf("HoldingDividendFill() = %#v, %v", envelope, err)
 	}
 	if gotPath != "/api/v1/portfolio/dividend-fill" || gotRaw != "" {
 		t.Fatalf("未指定天數不應帶參數:%s?%s", gotPath, gotRaw)
 	}
-	empty, err := client.HoldingDividendFill(t.Context(), 30)
+	empty, err := client.HoldingDividendFill(t.Context(), 30, 0)
 	if err != nil || gotRaw != "days=30" || empty.Items == nil {
 		t.Fatalf("沒有資料時 items 應是空清單:%#v, %v, %s", empty, err, gotRaw)
 	}
-	if _, err := client.HoldingDividendFill(t.Context(), 999); err == nil {
+	if _, err := client.HoldingDividendFill(t.Context(), 0, 2); err != nil || gotRaw != "member_id=2" {
+		t.Fatalf("只指定會員應只帶 member_id:%v, %s", err, gotRaw)
+	}
+	if _, err := client.HoldingDividendFill(t.Context(), 30, 2); err != nil || gotRaw != "days=30&member_id=2" {
+		t.Fatalf("天數與會員應一起帶:%v, %s", err, gotRaw)
+	}
+	if _, err := client.HoldingDividendFill(t.Context(), 999, 0); err == nil {
 		t.Fatal("非 2xx 應回錯誤")
 	}
 }
@@ -92,15 +99,15 @@ func TestHoldingDividendFillTool(t *testing.T) {
 	}
 	f := &fakeHoldingDividendFillQuerier{envelope: sampleHoldingDividendFill()}
 	result, output, err := newToolset(f).holdingDividendFill(t.Context(), nil, HoldingDividendFillInput{Days: 180})
-	if err != nil || f.got != 180 {
-		t.Fatalf("holdingDividendFill 不應失敗:%v, %d", err, f.got)
+	if err != nil || f.got != 180 || f.gotMember != 0 {
+		t.Fatalf("holdingDividendFill 不應失敗:%v, %d, %d", err, f.got, f.gotMember)
 	}
 	if out, ok := output.(HoldingDividendFillOutput); !ok || out.DataKind != "holding_dividend_fill" || out.IsRealtime || len(out.Items) != 2 {
 		t.Fatalf("structured output 錯誤:%#v", output)
 	}
 	text := result.Content[0].(*mcp.TextContent).Text
 	for _, want := range []string{
-		"持股近 365 天的除權息共 2 次,已填息 1 次(已填息者平均 6 個交易日、中位數 6)。",
+		"全部會員持股近 365 天的除權息共 2 次,已填息 1 次(已填息者平均 6 個交易日、中位數 6)。",
 		"尚未填息(1 次):0056 元大高股息 2026-09-15 除權息(現金 1 元)填息價 40、最新 36,還差 10%(已 25 個交易日)。",
 		"已填息(1 次):2330 台積電 2026-07-10 除權息、第 6 個交易日填息。",
 	} {
@@ -121,6 +128,27 @@ func TestHoldingDividendFillTool(t *testing.T) {
 	}
 	if days := holdingDividendFillSchema().Properties["days"]; days == nil || days.Default != nil {
 		t.Error("days 不該有 schema 預設值")
+	}
+	if member := holdingDividendFillSchema().Properties["member_id"]; member == nil || member.Default != nil {
+		t.Error("member_id 要在 schema 裡且不該有預設值")
+	}
+}
+
+// TestHoldingDividendFillToolMember 驗證會員參數傳到資料來源、負數回錯誤,摘要標出會員。
+func TestHoldingDividendFillToolMember(t *testing.T) {
+	envelope := sampleHoldingDividendFill()
+	envelope.MemberID = 2
+	f := &fakeHoldingDividendFillQuerier{envelope: envelope}
+	ts := &holdingDividendFillToolset{fq: f, logf: func(string, ...any) {}}
+	result, _, err := ts.holdingDividendFill(t.Context(), nil, HoldingDividendFillInput{MemberID: 2})
+	if err != nil || f.gotMember != 2 {
+		t.Fatalf("會員參數未傳到資料來源:%v, %d", err, f.gotMember)
+	}
+	if text := result.Content[0].(*mcp.TextContent).Text; !strings.HasPrefix(text, "會員 2 的持股近 365 天") {
+		t.Errorf("摘要應標出會員:%s", text)
+	}
+	if _, _, err := ts.holdingDividendFill(t.Context(), nil, HoldingDividendFillInput{MemberID: -1}); err == nil {
+		t.Error("member_id=-1 應回錯誤")
 	}
 }
 

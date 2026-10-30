@@ -26,21 +26,29 @@ type HoldingDividendFillItem struct {
 
 // HoldingDividendFillEnvelope 是 portfolio/dividend-fill endpoint 的完整回應。
 type HoldingDividendFillEnvelope struct {
-	Days    int                       `json:"days"`
-	Summary DividendFillSummary       `json:"summary"`
-	Items   []HoldingDividendFillItem `json:"items"`
+	MemberID int64                     `json:"member_id"`
+	Days     int                       `json:"days"`
+	Summary  DividendFillSummary       `json:"summary"`
+	Items    []HoldingDividendFillItem `json:"items"`
 }
 
 // HoldingDividendFillQuerier 是 get_holding_dividend_fill 對資料來源的需求介面;只有 *APIClient 實作。
 type HoldingDividendFillQuerier interface {
-	HoldingDividendFill(ctx context.Context, days int) (*HoldingDividendFillEnvelope, error)
+	HoldingDividendFill(ctx context.Context, days int, memberID int64) (*HoldingDividendFillEnvelope, error)
 }
 
-// HoldingDividendFill 查詢持股填息狀態;days 為 0 代表用 API 預設(365 天)。
-func (c *APIClient) HoldingDividendFill(ctx context.Context, days int) (*HoldingDividendFillEnvelope, error) {
+// HoldingDividendFill 查詢持股填息狀態;days 為 0 代表用 API 預設(365 天),memberID 為 0 是全部會員合計。
+func (c *APIClient) HoldingDividendFill(ctx context.Context, days int, memberID int64) (*HoldingDividendFillEnvelope, error) {
 	path := "/api/v1/portfolio/dividend-fill"
+	values := url.Values{}
 	if days > 0 {
-		path += "?" + url.Values{"days": {fmt.Sprint(days)}}.Encode()
+		values.Set("days", fmt.Sprint(days))
+	}
+	if memberID > 0 {
+		values.Set("member_id", fmt.Sprint(memberID))
+	}
+	if len(values) > 0 {
+		path += "?" + values.Encode()
 	}
 	var body HoldingDividendFillEnvelope
 	if err := c.get(ctx, path, &body); err != nil {
@@ -54,7 +62,8 @@ func (c *APIClient) HoldingDividendFill(ctx context.Context, days int) (*Holding
 
 // HoldingDividendFillInput 是 get_holding_dividend_fill 的輸入。
 type HoldingDividendFillInput struct {
-	Days int `json:"days,omitempty"`
+	Days     int   `json:"days,omitempty"`
+	MemberID int64 `json:"member_id,omitempty"`
 }
 
 // HoldingDividendFillOutput 是持股填息 envelope 加上 MCP 分析中繼資料。
@@ -74,6 +83,10 @@ func holdingDividendFillSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(30.0), Maximum: ptr(730.0),
 				Description: "只看除權息日在今天往前幾天內的事件(選填,30 至 730;未提供為 365)",
 			},
+			"member_id": {
+				Type: "integer", Minimum: ptr(0.0),
+				Description: "會員編號(選填);未提供或 0 為全部會員合計",
+			},
 		},
 	}
 }
@@ -89,7 +102,10 @@ func (ts *holdingDividendFillToolset) holdingDividendFill(ctx context.Context, _
 	if in.Days != 0 && (in.Days < 30 || in.Days > 730) {
 		return nil, nil, fmt.Errorf("參數 days 必須介於 30 到 730 之間")
 	}
-	envelope, err := ts.fq.HoldingDividendFill(ctx, in.Days)
+	if in.MemberID < 0 {
+		return nil, nil, fmt.Errorf("參數 member_id 不可為負數")
+	}
+	envelope, err := ts.fq.HoldingDividendFill(ctx, in.Days, in.MemberID)
 	if err != nil {
 		ts.logf("工具 get_holding_dividend_fill 執行失敗:%v", err)
 		return nil, nil, fmt.Errorf("%s", errInternal)
@@ -103,8 +119,12 @@ func (ts *holdingDividendFillToolset) holdingDividendFill(ctx context.Context, _
 func holdingDividendFillSummary(e *HoldingDividendFillEnvelope) string {
 	var b summaryBuilder
 	s := e.Summary
-	b.printf("持股近 %d 天的除權息共 %d 次,已填息 %d 次(已填息者平均 %s 個交易日、中位數 %s)。",
-		e.Days, s.Events, s.Filled, displayFloat(s.AverageTradingDaysToFill), displayFloat(s.MedianTradingDaysToFill))
+	scope := "全部會員"
+	if e.MemberID > 0 {
+		scope = fmt.Sprintf("會員 %d 的", e.MemberID)
+	}
+	b.printf("%s持股近 %d 天的除權息共 %d 次,已填息 %d 次(已填息者平均 %s 個交易日、中位數 %s)。",
+		scope, e.Days, s.Events, s.Filled, displayFloat(s.AverageTradingDaysToFill), displayFloat(s.MedianTradingDaysToFill))
 	var unfilled, filled []string
 	for _, item := range e.Items {
 		if item.Filled {
