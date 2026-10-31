@@ -19,11 +19,13 @@ const holdingDividendFillListed = 15
 
 // HoldingDividendFillItem 是持股的一次除權息與填息狀態;填息欄位與 DividendFillEvent 相同(JSON 展開)。
 // History 是該股近 5 年(含本次)的填息統計,供對照這次填息快慢;同一檔每列相同。
+// Peer 是本次現金殖利率同組的全市場近 5 年基準(同 get_dividend_fill_stats 的一組);沒有現金股利時為 nil。
 type HoldingDividendFillItem struct {
 	StockSymbol string `json:"stock_symbol"`
 	Name        string `json:"name"`
 	DividendFillEvent
 	History DividendFillSummary `json:"history"`
+	Peer    *DividendFillBucket `json:"peer"`
 }
 
 // HoldingDividendFillEnvelope 是 portfolio/dividend-fill endpoint 的完整回應。
@@ -137,7 +139,7 @@ func holdingDividendFillSummary(e *HoldingDividendFillEnvelope) string {
 		unfilled = append(unfilled, fmt.Sprintf("%s %s %s 除權息(%s)填息價 %s、最新 %s,還差 %s(已 %d 個交易日%s)",
 			item.StockSymbol, item.Name, item.ExDate, fillDividendText(item.DividendFillEvent),
 			displayFloat(item.fillPrice()), displayFloat(item.LatestClose), displayPercent(item.GapPercent), item.TradingDaysSinceEx,
-			fillHistoryText(item.History)))
+			fillHistoryText(item.History)+fillPeerText(item)))
 	}
 	writeFillList(&b, "尚未填息", unfilled)
 	writeFillList(&b, "已填息", filled)
@@ -154,6 +156,14 @@ func fillHistoryText(h DividendFillSummary) string {
 		return fmt.Sprintf(";近 5 年 %d 次除權息都未填息", h.Events)
 	}
 	return fmt.Sprintf(";近 5 年 %d 次填息 %d 次、平均 %s 個交易日", h.Events, h.Filled, displayFloat(h.AverageTradingDaysToFill))
+}
+
+// fillPeerText 在自身近 5 年沒有已填息紀錄時,附同殖利率組的全市場中位數供對照;有自身紀錄或沒有基準時不附。
+func fillPeerText(item HoldingDividendFillItem) string {
+	if item.History.AverageTradingDaysToFill != nil || item.Peer == nil || item.Peer.MedianTradingDaysToFill == nil {
+		return ""
+	}
+	return fmt.Sprintf(";同殖利率組(%s)全市場中位數 %s 個交易日", item.Peer.Label, displayFloat(item.Peer.MedianTradingDaysToFill))
 }
 
 // writeFillList 寫出一段清單,超過 holdingDividendFillListed 筆時註明省略數。

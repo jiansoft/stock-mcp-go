@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 68 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
+- 由 `stock_rust` Data API 提供 69 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -55,6 +55,7 @@ stock-mcp-go
 | `get_monthly_revenue_history` | API | 查詢單月與累計營收歷史 |
 | `get_financial_statement_history` | API | 查詢季度或年度財務指標 |
 | `get_financial_reports` | API | 查詢單季或年度三大財務報表：損益表、資產負債表、現金流量表（金額單位新台幣千元） |
+| `get_dividend_fill_stats` | API | 全市場填息基準：近 1～8 年（預設 5 年）上市櫃普通股有現金股利的除權息，依現金殖利率分組（<3%、3～5%、5～7%、≥7%），列出 20／60／120 個交易日內填息比例與填息天數中位數（只計除權息後滿 120 個交易日的事件，填息價依配股調整） |
 | `get_dividend_fill` | API | 填息分析：除權息後第幾個交易日回到除權息前收盤，附平均／中位數填息天數與未填息差距 |
 | `get_financial_health` | API | 以 Piotroski F 分數評估年度財務體質（9 項指標與前一年度比較，附本期數值與比較基準） |
 | `get_dividend_history` | API | 查詢歷年現金與股票股利 |
