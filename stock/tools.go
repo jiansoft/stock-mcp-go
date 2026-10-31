@@ -433,6 +433,16 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, vts.marketValuation)
 	}
 
+	if sq, ok := q.(DividendFillStatsQuerier); ok {
+		sts := &dividendFillStatsToolset{sq: sq, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_dividend_fill_stats",
+			Description: "查詢全市場依現金殖利率分組的填息率與填息天數中位數。",
+			InputSchema: dividendFillStatsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, sts.dividendFillStats)
+	}
+
 	if fq, ok := q.(MarketForwardReturnsQuerier); ok {
 		fts := &marketForwardReturnsToolset{fq: fq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

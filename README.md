@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 68 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
+- 69 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -70,6 +70,7 @@ continue to describe ranges, units and validation rules.
 | `get_monthly_revenue_history` | API | Query monthly and cumulative revenue history |
 | `get_financial_statement_history` | API | Query quarterly or annual financial metrics |
 | `get_financial_reports` | API | Query quarterly or annual income statements, balance sheets, and cash flow statements (amounts in thousand TWD) |
+| `get_dividend_fill_stats` | API | Market-wide dividend-fill baseline over the past 1–8 years (default 5): ordinary listed/OTC stocks grouped by cash yield (<3%, 3–5%, 5–7%, ≥7%), with the share filled within 20/60/120 trading days and the median trading days to fill (events at least 120 trading days old; fill price adjusted for stock dividends) |
 | `get_dividend_fill` | API | Ex-dividend gap fill: how many trading days the price took to recover the pre-ex close, with averages and the gap for unfilled events |
 | `get_financial_health` | API | Score annual financial health with the Piotroski F-score (9 criteria vs. the prior year, each with its value and baseline) |
 | `get_dividend_history` | API | Query historical cash and stock dividends |
