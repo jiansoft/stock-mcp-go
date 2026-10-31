@@ -136,12 +136,12 @@ func holdingDividendFillSummary(e *HoldingDividendFillEnvelope) string {
 		}
 		unfilled = append(unfilled, fmt.Sprintf("%s %s %s 除權息(%s)填息價 %s、最新 %s,還差 %s(已 %d 個交易日%s)",
 			item.StockSymbol, item.Name, item.ExDate, fillDividendText(item.DividendFillEvent),
-			displayFloat(item.PreExClose), displayFloat(item.LatestClose), displayPercent(item.GapPercent), item.TradingDaysSinceEx,
+			displayFloat(item.fillPrice()), displayFloat(item.LatestClose), displayPercent(item.GapPercent), item.TradingDaysSinceEx,
 			fillHistoryText(item.History)))
 	}
 	writeFillList(&b, "尚未填息", unfilled)
 	writeFillList(&b, "已填息", filled)
-	b.printf("\n填息價為除權息前一日收盤,價格未還原。免責聲明:%s", AnalysisDisclaimer)
+	b.printf("\n填息價為除權息前一日收盤(有配股時除以 1 + 股票股利 ÷ 10),價格未還原。免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
 }
 

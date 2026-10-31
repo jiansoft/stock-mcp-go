@@ -174,3 +174,31 @@ func TestDividendFillToolIsRegisteredReadOnly(t *testing.T) {
 		t.Error("tools/list 缺少 get_dividend_fill")
 	}
 }
+
+// TestDividendFillSummaryStockDividendTarget 驗證配股時註明調整後的填息價,未填息清單也用它;
+// fill_target 與前一日收盤相同時不註明。
+func TestDividendFillSummaryStockDividendTarget(t *testing.T) {
+	e := &DividendFillEnvelope{
+		StockSymbol: "2539",
+		DataAsOf:    ptr("2026-10-30"),
+		Summary:     DividendFillSummary{Events: 1},
+		Events: []DividendFillEvent{
+			{ExDate: "2026-08-20", CashDividend: ptr(0.6), StockDividend: ptr(2.2), PreExDate: "2026-08-19", PreExClose: ptr(41.25),
+				FillTarget: ptr(33.81), TradingDaysSinceEx: 50, LatestClose: ptr(31.35), GapPercent: ptr(7.28)},
+		},
+	}
+	summary := dividendFillSummary(e)
+	for _, want := range []string{
+		"除權息前收盤 41.25 元(依配股調整的填息價 33.81 元),尚未填息。",
+		"最新收盤 31.35 元,距填息價 33.81 元還差 7.28%",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("摘要缺少 %q:%s", want, summary)
+		}
+	}
+
+	e.Events[0].FillTarget = ptr(41.25)
+	if summary := dividendFillSummary(e); strings.Contains(summary, "依配股調整") {
+		t.Errorf("填息價等於前一日收盤時不應註明調整:%s", summary)
+	}
+}

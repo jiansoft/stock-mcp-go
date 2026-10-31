@@ -1,7 +1,8 @@
 // Package stock 的 get_dividend_fill 工具:查詢單一股票最近幾次除權息的填息天數。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/stocks/{symbol}/dividend-fill:
-// 除權息前一日收盤為填息價,除權息日起第一個收盤價大於等於填息價的交易日即填息
+// 填息價(fill_target)是除權息前一日收盤依配股調整:前一日收盤 ÷ (1 + 股票股利 ÷ 10),
+// 沒有配股時就是前一日收盤;除權息日起第一個收盤價大於等於填息價的交易日即填息
 // (除權息當日填息算第 1 天)。價格單位為新台幣元。
 package stock
 
@@ -22,12 +23,30 @@ type DividendFillEvent struct {
 	StockDividend      *float64 `json:"stock_dividend"`
 	PreExDate          string   `json:"pre_ex_date"`
 	PreExClose         *float64 `json:"pre_ex_close"`
+	FillTarget         *float64 `json:"fill_target"`
 	Filled             bool     `json:"filled"`
 	FillDate           *string  `json:"fill_date"`
 	TradingDaysToFill  *int     `json:"trading_days_to_fill"`
 	TradingDaysSinceEx int      `json:"trading_days_since_ex"`
 	LatestClose        *float64 `json:"latest_close"`
 	GapPercent         *float64 `json:"gap_percent"`
+}
+
+// fillPrice 是填息價:API 有 fill_target 就用它,舊版 API 沒有時退回除權息前收盤。
+func (e DividendFillEvent) fillPrice() *float64 {
+	if e.FillTarget != nil {
+		return e.FillTarget
+	}
+	return e.PreExClose
+}
+
+// adjustedTargetText 在填息價因配股而不等於除權息前收盤時註明調整後的填息價;沒有調整時為空字串。
+func adjustedTargetText(e DividendFillEvent) string {
+	target := e.fillPrice()
+	if target == nil || e.PreExClose == nil || *target == *e.PreExClose {
+		return ""
+	}
+	return fmt.Sprintf("(依配股調整的填息價 %s 元)", displayFloat(target))
 }
 
 // DividendFillSummary 是這幾次除權息的填息統計;平均與中位數只看已填息者。
@@ -149,8 +168,8 @@ func dividendFillSummary(e *DividendFillEnvelope) string {
 	b.printf("(資料截至 %s;除權息當日填息算第 1 天)。", displayString(e.DataAsOf))
 
 	latest := e.Events[0]
-	b.printf("\n最近一次 %s:現金股利 %s 元、股票股利 %s 元,除權息前收盤 %s 元,",
-		latest.ExDate, displayFloat(latest.CashDividend), displayFloat(latest.StockDividend), displayFloat(latest.PreExClose))
+	b.printf("\n最近一次 %s:現金股利 %s 元、股票股利 %s 元,除權息前收盤 %s 元%s,",
+		latest.ExDate, displayFloat(latest.CashDividend), displayFloat(latest.StockDividend), displayFloat(latest.PreExClose), adjustedTargetText(latest))
 	if latest.Filled {
 		b.printf("第 %s 個交易日(%s)填息。", displayInt(latest.TradingDaysToFill), displayString(latest.FillDate))
 	} else {
@@ -167,7 +186,7 @@ func dividendFillSummary(e *DividendFillEnvelope) string {
 		}
 		listed++
 		b.printf("\n- %s 除權息,已過 %d 個交易日,最新收盤 %s 元,距填息價 %s 元還差 %s",
-			event.ExDate, event.TradingDaysSinceEx, displayFloat(event.LatestClose), displayFloat(event.PreExClose), displayPercent(event.GapPercent))
+			event.ExDate, event.TradingDaysSinceEx, displayFloat(event.LatestClose), displayFloat(event.fillPrice()), displayPercent(event.GapPercent))
 	}
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
