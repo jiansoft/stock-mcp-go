@@ -3,6 +3,8 @@ package stock
 import (
 	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // TestCalendarFillText 驗證有自身紀錄寫次數與平均、沒有時寫同組中位數、都沒有的不列,最多列 calendarFillListed 筆。
@@ -38,5 +40,22 @@ func TestCalendarFillText(t *testing.T) {
 	}
 	if n := strings.Count(calendarFillText(many), "近 5 年填息"); n != calendarFillListed {
 		t.Errorf("最多列 %d 筆,實際 %d", calendarFillListed, n)
+	}
+}
+
+// TestDividendCalendarSummaryIncludesFill 驗證工具摘要在免責聲明前插入歷年填息那一行。
+func TestDividendCalendarSummaryIncludesFill(t *testing.T) {
+	f := &fakeMarketDataQuerier{calendar: &DividendCalendar{Events: []DividendEvent{
+		{StockSymbol: "2330", Name: "台積電", EventType: "ex_dividend", EventDate: "2026-12-11", CashDividend: ptr(5.0), StockDividend: ptr(0.0),
+			FillHistory: &DividendFillSummary{Events: 4, Filled: 4, AverageTradingDaysToFill: ptr(2.5)}},
+	}}}
+	result, _, err := newMarketDataToolset(f).dividendCalendar(t.Context(), nil, DividendCalendarInput{})
+	if err != nil {
+		t.Fatalf("dividendCalendar 不應失敗:%v", err)
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	want := "\n除權息事件的歷年填息:2026-12-11 2330 台積電 近 5 年填息 4/4 次、平均 2.5 個交易日。\n免責聲明:"
+	if !strings.Contains(text, want) {
+		t.Fatalf("摘要缺少歷年填息:%s", text)
 	}
 }
