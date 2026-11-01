@@ -520,11 +520,43 @@ func (ts *marketDataToolset) dividendCalendar(ctx context.Context, _ *mcp.CallTo
 		summary = fmt.Sprintf("查詢區間內共 %d 筆股利行事曆事件;最近一筆為 %s 的 %s %s(%s),現金股利 %s 元、股票股利 %s 元。\n免責聲明:%s",
 			len(envelope.Events), first.EventDate, first.StockSymbol, first.Name, eventTypeLabels[first.EventType],
 			displayFloat(first.CashDividend), displayFloat(first.StockDividend), AnalysisDisclaimer)
+		if fill := calendarFillText(envelope.Events); fill != "" {
+			summary = strings.Replace(summary, "\n免責聲明:", "\n"+fill+"\n免責聲明:", 1)
+		}
 	}
 	return textResult(summary), DividendCalendarOutput{
 		DataKind: "dividend_calendar", IsRealtime: false, Disclaimer: AnalysisDisclaimer,
 		DataAsOf: envelope.DataAsOf, Events: envelope.Events,
 	}, nil
+}
+
+// calendarFillListed 是摘要列出歷年填息的除息/除權事件上限;完整資料在結構化輸出。
+const calendarFillListed = 10
+
+// calendarFillText 列出除息/除權事件的歷年填息:有自身紀錄寫次數與平均天數,沒有時寫同殖利率組中位數;
+// 都沒有的事件不列。沒有任何可列的事件時回空字串。
+func calendarFillText(events []DividendEvent) string {
+	var parts []string
+	for _, event := range events {
+		if len(parts) == calendarFillListed {
+			break
+		}
+		switch {
+		case event.FillHistory != nil && event.FillHistory.Events > 0:
+			text := fmt.Sprintf("%s %s %s 近 5 年填息 %d/%d 次", event.EventDate, event.StockSymbol, event.Name, event.FillHistory.Filled, event.FillHistory.Events)
+			if event.FillHistory.AverageTradingDaysToFill != nil {
+				text += fmt.Sprintf("、平均 %s 個交易日", displayFloat(event.FillHistory.AverageTradingDaysToFill))
+			}
+			parts = append(parts, text)
+		case event.FillPeer != nil && event.FillPeer.MedianTradingDaysToFill != nil:
+			parts = append(parts, fmt.Sprintf("%s %s %s 無自身紀錄,同殖利率組(%s)填息中位數 %s 個交易日",
+				event.EventDate, event.StockSymbol, event.Name, event.FillPeer.Label, displayFloat(event.FillPeer.MedianTradingDaysToFill)))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "除權息事件的歷年填息:" + strings.Join(parts, ";") + "。"
 }
 
 // qfiiHoldingRanking 執行 get_qfii_holding_ranking。

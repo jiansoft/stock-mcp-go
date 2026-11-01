@@ -75,6 +75,10 @@ type DividendEvent struct {
 	CashDividend  *float64 `json:"cash_dividend"`
 	StockDividend *float64 `json:"stock_dividend"`
 	TotalDividend *float64 `json:"total_dividend"`
+	// FillHistory 是除息/除權事件該股近 5 年的填息統計;發放日事件或沒有紀錄為 nil。
+	FillHistory *DividendFillSummary `json:"fill_history"`
+	// FillPeer 是除息事件沒有自身紀錄時,同現金殖利率組的全市場填息基準;其餘為 nil。
+	FillPeer *DividendFillBucket `json:"fill_peer"`
 }
 
 // DividendCalendar 是 market/dividend-calendar endpoint 的完整回應 envelope。
