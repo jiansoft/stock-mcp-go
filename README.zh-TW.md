@@ -10,7 +10,7 @@
 ## 功能特色
 
 - Stateless MCP Streamable HTTP endpoint，所有工具皆標示為唯讀
-- 由 `stock_rust` Data API 提供 70 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
+- 由 `stock_rust` Data API 提供 71 個工具（除 `set_portfolio_targets` 與 `restore_portfolio_target_revision` 外皆唯讀）
 - 回傳繁體中文摘要與可供程式處理的 structured content
 - 支援多組 MCP API Key 的建立、編輯、啟用、停用、輪替與撤銷
 - 使用 HMAC-SHA-256 與 server-side pepper 驗證 API Key，不保存明文 Key
@@ -117,6 +117,7 @@ stock-mcp-go
 | `get_holding_chip` | API | 某交易日（預設最新）的個人持股籌碼日報：當日收盤仍持有的普通股（排除 ETF），逐檔列出外資／投信／自營商淨買賣超與占成交量比例、外資／投信連續買賣超天數、融資融券餘額與日變動、主力淨進出及買賣超分點與近五個主力交易日合計；達到每日 Telegram 通知門檻的持股標示原因 |
 | `get_dividend_forecast` | API | 目前持股未來 1～24 個月預期現金股利：已公告配息與依去年模式推估、每月總額、逐筆明細與預期殖利率 |
 | `get_upcoming_dividends` | API | 目前持股未來 `days` 天（預設 14、最多 60，含今天）已公告的除權息：每股現金與股票股利、預估入帳與配股股數，附近 5 年填息（沒有自身紀錄時附同殖利率組基準） |
+| `get_upcoming_payouts` | API | 目前持股未來 `days` 天（預設 30、最多 90，含今天）的股利入帳：依發放日列出現金與配股；已除權息的金額取已領股利紀錄（之後賣出仍列入），尚未除權息的以目前持股推算 |
 
 除 `set_portfolio_targets` 與 `restore_portfolio_target_revision`（僅儲存個人目標權重）外，所有工具都是唯讀。回應欄位因工具而異：報價輸出包含 `data_as_of`，其他工具可能以結果物件內的日期或區間表達時間基準。允許空值的缺失指標維持 `null`；空集合與合計為 0 也可能是有效結果。`get_dividend_forecast` 會以逐筆 `basis` 與 `announced_total`／`estimated_total` 區分已公告與推估股利，推估值不代表已公告配息。
 
