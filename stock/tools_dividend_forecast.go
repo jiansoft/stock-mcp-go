@@ -24,6 +24,26 @@ type DividendForecastItem struct {
 	CashPerShare float64 `json:"cash_per_share"`
 	Amount       float64 `json:"amount"`
 	Basis        string  `json:"basis"`
+	// FillHistory 是該股近 5 年的填息統計;沒有紀錄為 nil。
+	FillHistory *DividendFillSummary `json:"fill_history"`
+	// FillPeer 是沒有自身紀錄時,同現金殖利率組的全市場填息基準;其餘為 nil。
+	FillPeer *DividendFillBucket `json:"fill_peer"`
+}
+
+// forecastFillText 是一筆預估附的歷年填息:有自身紀錄寫次數與平均天數,沒有時寫同組中位數;都沒有為空字串。
+func forecastFillText(item DividendForecastItem) string {
+	switch {
+	case item.FillHistory != nil && item.FillHistory.Events > 0:
+		text := fmt.Sprintf(";近 5 年填息 %d/%d 次", item.FillHistory.Filled, item.FillHistory.Events)
+		if item.FillHistory.AverageTradingDaysToFill != nil {
+			text += fmt.Sprintf("、平均 %s 個交易日", displayFloat(item.FillHistory.AverageTradingDaysToFill))
+		}
+		return text
+	case item.FillPeer != nil && item.FillPeer.MedianTradingDaysToFill != nil:
+		return fmt.Sprintf(";同殖利率組(%s)填息中位數 %s 個交易日", item.FillPeer.Label, displayFloat(item.FillPeer.MedianTradingDaysToFill))
+	default:
+		return ""
+	}
 }
 
 // DividendForecastMonth 是單月預估合計。
@@ -162,8 +182,8 @@ func dividendForecastText(f *DividendForecast) string {
 	}
 	b.printf("\n金額最大的幾筆:")
 	for _, item := range largest {
-		b.printf("\n- %s %s %s 發放 %s(%d 股 × %s 元,%s)",
-			item.StockSymbol, item.Name, item.PayDate, FormatCurrencyWithUnit(&item.Amount, CurrencyYuan), item.Shares, formatFloat(item.CashPerShare), basisText(item.Basis))
+		b.printf("\n- %s %s %s 發放 %s(%d 股 × %s 元,%s)%s",
+			item.StockSymbol, item.Name, item.PayDate, FormatCurrencyWithUnit(&item.Amount, CurrencyYuan), item.Shares, formatFloat(item.CashPerShare), basisText(item.Basis), forecastFillText(item))
 	}
 	b.printf("\n只含現金股利,未扣二代健保補充保費與所得稅,並假設目前持股持有到各次除息日。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
