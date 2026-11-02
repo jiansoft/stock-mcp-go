@@ -136,6 +136,16 @@ func addPortfolioTools(server *mcp.Server, q Querier, logf func(format string, a
 		}, fts.dividendForecast)
 	}
 
+	if upcoming, ok := q.(UpcomingDividendsQuerier); ok {
+		uts := &upcomingDividendsToolset{upcoming: upcoming, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_upcoming_dividends",
+			Description: "查詢個人持股未來幾天（預設 14、最多 60）已公告的除權息：每股股利、預估入帳與配股、歷年填息；不含推估。",
+			InputSchema: upcomingDividendsSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, uts.upcomingDividends)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
