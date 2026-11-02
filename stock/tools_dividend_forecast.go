@@ -30,17 +30,23 @@ type DividendForecastItem struct {
 	FillPeer *DividendFillBucket `json:"fill_peer"`
 }
 
-// forecastFillText 是一筆預估附的歷年填息:有自身紀錄寫次數與平均天數,沒有時寫同組中位數;都沒有為空字串。
+// forecastFillText 是一筆預估附的歷年填息,規則見 fillHintText。
 func forecastFillText(item DividendForecastItem) string {
+	return fillHintText(item.FillHistory, item.FillPeer)
+}
+
+// fillHintText 是一筆股利附的歷年填息:有自身紀錄寫次數與平均天數,沒有時寫同組中位數;都沒有為空字串。
+// 股利預估與近期除權息兩個工具共用。
+func fillHintText(history *DividendFillSummary, peer *DividendFillBucket) string {
 	switch {
-	case item.FillHistory != nil && item.FillHistory.Events > 0:
-		text := fmt.Sprintf(";近 5 年填息 %d/%d 次", item.FillHistory.Filled, item.FillHistory.Events)
-		if item.FillHistory.AverageTradingDaysToFill != nil {
-			text += fmt.Sprintf("、平均 %s 個交易日", displayFloat(item.FillHistory.AverageTradingDaysToFill))
+	case history != nil && history.Events > 0:
+		text := fmt.Sprintf(";近 5 年填息 %d/%d 次", history.Filled, history.Events)
+		if history.AverageTradingDaysToFill != nil {
+			text += fmt.Sprintf("、平均 %s 個交易日", displayFloat(history.AverageTradingDaysToFill))
 		}
 		return text
-	case item.FillPeer != nil && item.FillPeer.MedianTradingDaysToFill != nil:
-		return fmt.Sprintf(";同殖利率組(%s)填息中位數 %s 個交易日", item.FillPeer.Label, displayFloat(item.FillPeer.MedianTradingDaysToFill))
+	case peer != nil && peer.MedianTradingDaysToFill != nil:
+		return fmt.Sprintf(";同殖利率組(%s)填息中位數 %s 個交易日", peer.Label, displayFloat(peer.MedianTradingDaysToFill))
 	default:
 		return ""
 	}
