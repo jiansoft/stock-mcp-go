@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 71 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
+- 72 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -133,6 +133,7 @@ continue to describe ranges, units and validation rules.
 | `get_dividend_forecast` | API | Expected cash dividends from current holdings over the next 1-24 months: announced payouts plus last year's pattern, monthly totals, per-payout details, and forward yield |
 | `get_upcoming_dividends` | API | Announced ex-dividend events for current holdings in the next `days` days (default 14, max 60, including today): per-share cash and stock dividends, expected cash amount and bonus shares, plus 5-year fill history (or the same-yield-bucket market baseline) |
 | `get_upcoming_payouts` | API | Dividend payouts for current holdings in the next `days` days (default 30, max 90, including today), listed by payable date with cash amount and bonus shares; amounts after the ex-dividend date come from the recorded received-dividend items (still listed if sold afterwards), those not yet ex-dividend are estimated from current holdings |
+| `get_dividend_income` | API | Dividend income for current holdings by payable month (January–December) of a `year` (default this year, 2000 to next year): cash per month, the part already received and the part estimated from current holdings, bonus shares and payout count, with last year's same month; plus the full-year total, last year's total and last year's same period |
 
 Every tool is read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`, which only save personal target weights. Response fields vary by tool: quote outputs include `data_as_of`, while other tools may use dates or ranges in their result objects instead. Nullable missing metrics remain `null`; empty collections and zero totals can be valid results. `get_dividend_forecast` explicitly separates announced and estimated dividends using each item's `basis` and the `announced_total` / `estimated_total` fields; estimates are not announced payouts.
 
