@@ -14,7 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// DividendForecastItem 是單筆預估配息;Basis 為 announced、amount_announced 或 estimated。
+// DividendForecastItem 是單筆預估配息;Basis 為 announced、amount_announced、estimated、
+// latest_amount(季配、月配依最近一期金額)或 cadence(月配依配息間隔)。
 type DividendForecastItem struct {
 	StockSymbol  string  `json:"stock_symbol"`
 	Name         string  `json:"name"`
@@ -164,7 +165,7 @@ func dividendForecastText(f *DividendForecast) string {
 		b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 		return b.String()
 	}
-	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s(已公告 %s、依去年同期推估 %s),預估殖利率 %s。",
+	b.printf("%s預估 %s 之後到 %s 可收到現金股利約 %s(已公告 %s、推估 %s),預估殖利率 %s。",
 		scope, f.From, f.To, FormatCurrencyWithUnit(&f.Total, CurrencyYuan), FormatCurrencyWithUnit(&f.AnnouncedTotal, CurrencyYuan), FormatCurrencyWithUnit(&f.EstimatedTotal, CurrencyYuan), displayPercent(f.ForwardYieldPercent))
 
 	b.printf("\n每月入帳:")
@@ -203,6 +204,10 @@ func basisText(basis string) string {
 		return "已公告"
 	case "amount_announced":
 		return "金額已公告、日期推估"
+	case "latest_amount":
+		return "依最近一期金額、日期依去年同期推估"
+	case "cadence":
+		return "依配息間隔推估"
 	default:
 		return "依去年同期推估"
 	}

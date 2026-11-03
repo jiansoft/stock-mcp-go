@@ -89,7 +89,7 @@ func TestDividendForecastTool(t *testing.T) {
 	}
 	summary := result.Content[0].(*mcp.TextContent).Text
 	for _, want := range []string{
-		"全部會員預估 2026-10-12 之後到 2027-10-12 可收到現金股利約 3936 元(已公告 1720 元、依去年同期推估 2216 元),預估殖利率 9.84%。",
+		"全部會員預估 2026-10-12 之後到 2027-10-12 可收到現金股利約 3936 元(已公告 1720 元、推估 2216 元),預估殖利率 9.84%。",
 		"- 2026-11:1720 元",
 		"- 2027-02:866 元(推估)",
 		"- 2027-08:1450 元(其中推估 1350 元)",
@@ -140,6 +140,26 @@ func TestDividendForecastTextEdgeCases(t *testing.T) {
 	}
 	if !strings.Contains(got, "依去年同期推估)") {
 		t.Errorf("推估依據應轉成中文:%s", got)
+	}
+}
+
+// TestBasisText 確認每種預估依據都有中文說明,未知值退回去年同期。
+func TestBasisText(t *testing.T) {
+	tests := []struct {
+		basis string
+		want  string
+	}{
+		{"announced", "已公告"},
+		{"amount_announced", "金額已公告、日期推估"},
+		{"latest_amount", "依最近一期金額、日期依去年同期推估"},
+		{"cadence", "依配息間隔推估"},
+		{"estimated", "依去年同期推估"},
+		{"unknown", "依去年同期推估"},
+	}
+	for _, tt := range tests {
+		if got := basisText(tt.basis); got != tt.want {
+			t.Errorf("basisText(%q) = %q,want %q", tt.basis, got, tt.want)
+		}
 	}
 }
 
