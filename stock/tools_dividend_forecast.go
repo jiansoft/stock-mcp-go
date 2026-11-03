@@ -1,7 +1,8 @@
 // Package stock 的 get_dividend_forecast 工具:以目前持股預估未來幾個月的現金股利入帳。
 //
 // 資料來自 stock_rust Data API 的 GET /api/v1/portfolio/dividend-forecast:已公告的配息直接
-// 列入,過去 12 個月的配息往後推一年估算。只含現金股利、不扣二代健保與稅。這是個人持股資料。
+// 列入(已除息、未發放的依除息日持股),過去 12 個月的配息往後推一年估算。只含現金股利、
+// 不扣二代健保與稅。這是個人持股資料。
 package stock
 
 import (
@@ -25,6 +26,8 @@ type DividendForecastItem struct {
 	CashPerShare float64 `json:"cash_per_share"`
 	Amount       float64 `json:"amount"`
 	Basis        string  `json:"basis"`
+	// Entitled 為 true 時已除息,股數與金額取已領股利明細(除息日當時的持股),不是目前持股。
+	Entitled bool `json:"entitled"`
 	// FillHistory 是該股近 5 年的填息統計;沒有紀錄為 nil。
 	FillHistory *DividendFillSummary `json:"fill_history"`
 	// FillPeer 是沒有自身紀錄時,同現金殖利率組的全市場填息基準;其餘為 nil。
@@ -190,11 +193,19 @@ func dividendForecastText(f *DividendForecast) string {
 	b.printf("\n金額最大的幾筆:")
 	for _, item := range largest {
 		b.printf("\n- %s %s %s 發放 %s(%d 股 × %s 元,%s)%s",
-			item.StockSymbol, item.Name, item.PayDate, FormatCurrencyWithUnit(&item.Amount, CurrencyYuan), item.Shares, formatFloat(item.CashPerShare), basisText(item.Basis), forecastFillText(item))
+			item.StockSymbol, item.Name, item.PayDate, FormatCurrencyWithUnit(&item.Amount, CurrencyYuan), item.Shares, formatFloat(item.CashPerShare), itemBasisText(item), forecastFillText(item))
 	}
-	b.printf("\n只含現金股利,未扣二代健保補充保費與所得稅,並假設目前持股持有到各次除息日。")
+	b.printf("\n只含現金股利,未扣二代健保補充保費與所得稅;已除息的依除息日持股,其餘假設目前持股持有到除息日。")
 	b.printf("\n免責聲明:%s", AnalysisDisclaimer)
 	return b.String()
+}
+
+// itemBasisText 是一筆預估的依據說明:已除息的標明依除息日持股,其餘見 basisText。
+func itemBasisText(item DividendForecastItem) string {
+	if item.Entitled {
+		return "已除息、依除息日持股"
+	}
+	return basisText(item.Basis)
 }
 
 // basisText 把預估依據轉成中文。
