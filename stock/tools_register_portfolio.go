@@ -136,6 +136,16 @@ func addPortfolioTools(server *mcp.Server, q Querier, logf func(format string, a
 		}, fts.dividendForecast)
 	}
 
+	if accuracy, ok := q.(DividendForecastAccuracyQuerier); ok {
+		ats := &dividendForecastAccuracyToolset{accuracy: accuracy, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_dividend_forecast_accuracy",
+			Description: "比對某次股利預估快照（每月 1 日）與實際入帳：依代號與發放月份配對，列出差額、漏領與未預估的入帳，並依預估依據彙總誤差中位數。",
+			InputSchema: dividendForecastAccuracySchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, ats.dividendForecastAccuracy)
+	}
+
 	if upcoming, ok := q.(UpcomingDividendsQuerier); ok {
 		uts := &upcomingDividendsToolset{upcoming: upcoming, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
