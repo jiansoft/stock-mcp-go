@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,10 +21,11 @@ type fakeIncomeQuerier struct {
 	err       error
 	gotMember int64
 	gotYear   int
+	gotItems  bool
 }
 
-func (f *fakeIncomeQuerier) DividendIncome(_ context.Context, memberID int64, year int) (*DividendIncome, error) {
-	f.gotMember, f.gotYear = memberID, year
+func (f *fakeIncomeQuerier) DividendIncome(_ context.Context, memberID int64, year int, includeItems bool) (*DividendIncome, error) {
+	f.gotMember, f.gotYear, f.gotItems = memberID, year, includeItems
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -60,19 +62,22 @@ func TestAPIClientDividendIncome(t *testing.T) {
 	defer server.Close()
 	client := NewAPIClient(server.URL, "secret", time.Second)
 
-	income, err := client.DividendIncome(t.Context(), 0, 0)
+	income, err := client.DividendIncome(t.Context(), 0, 0, false)
 	if err != nil || income.Months == nil || income.Year != 2026 {
 		t.Fatalf("DividendIncome() = %#v, %v", income, err)
 	}
 	if gotQuery != "member_id=0" {
 		t.Fatalf("省略年度時 query string 錯誤:%q", gotQuery)
 	}
-	if _, err := client.DividendIncome(t.Context(), 2, 2025); err != nil || gotQuery != "member_id=2&year=2025" {
+	if _, err := client.DividendIncome(t.Context(), 2, 2025, false); err != nil || gotQuery != "member_id=2&year=2025" {
 		t.Fatalf("指定年度時 query string 錯誤:%q %v", gotQuery, err)
+	}
+	if _, err := client.DividendIncome(t.Context(), 0, 0, true); err != nil || gotQuery != "include_items=true&member_id=0" {
+		t.Fatalf("要明細時 query string 錯誤:%q %v", gotQuery, err)
 	}
 
 	failing := NewAPIClient(server.URL+"/missing", "secret", time.Second)
-	if _, err := failing.DividendIncome(t.Context(), 0, 0); err == nil {
+	if _, err := failing.DividendIncome(t.Context(), 0, 0, false); err == nil {
 		t.Fatal("API 失敗時應回錯誤")
 	}
 }
@@ -89,8 +94,8 @@ func TestDividendIncomeTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dividendIncome 不應失敗:%v", err)
 	}
-	if f.gotMember != 0 || f.gotYear != 0 {
-		t.Fatalf("預設應為全部會員、今年,收到 %d/%d", f.gotMember, f.gotYear)
+	if f.gotMember != 0 || f.gotYear != 0 || f.gotItems {
+		t.Fatalf("預設應為全部會員、今年、不取明細,收到 %d/%d/%v", f.gotMember, f.gotYear, f.gotItems)
 	}
 	summary := result.Content[0].(*mcp.TextContent).Text
 	for _, want := range []string{
@@ -106,8 +111,8 @@ func TestDividendIncomeTool(t *testing.T) {
 			t.Errorf("摘要缺少 %q:%s", want, summary)
 		}
 	}
-	if strings.Contains(summary, "- 2 月") {
-		t.Errorf("沒有入帳的月份不應列出:%s", summary)
+	if strings.Contains(summary, "- 2 月") || strings.Contains(summary, "入帳明細") {
+		t.Errorf("沒有入帳的月份與未要求的明細不應列出:%s", summary)
 	}
 	if out, ok := output.(DividendIncomeOutput); !ok || out.DataKind != "dividend_income" || len(out.Months) != 12 {
 		t.Fatalf("structured output 錯誤:%#v", output)
@@ -116,7 +121,7 @@ func TestDividendIncomeTool(t *testing.T) {
 	if _, _, err := newToolset(f).dividendIncome(t.Context(), nil, DividendIncomeInput{MemberID: 2, Year: 2027}); err != nil || f.gotMember != 2 || f.gotYear != 2027 {
 		t.Fatalf("參數應原樣傳給 API:%v %d/%d", err, f.gotMember, f.gotYear)
 	}
-	for _, in := range []DividendIncomeInput{{MemberID: -1}, {Year: 1999}, {Year: 2028}} {
+	for _, in := range []DividendIncomeInput{{MemberID: -1}, {Year: 1999}, {Year: 2028}, {Month: -1}, {Month: 13}} {
 		if _, _, err := newToolset(f).dividendIncome(t.Context(), nil, in); err == nil {
 			t.Errorf("%+v 應回錯誤", in)
 		}
@@ -181,5 +186,81 @@ func TestDividendIncomeToolIsRegisteredReadOnly(t *testing.T) {
 	}
 	if !found {
 		t.Error("tools/list 缺少 get_dividend_income")
+	}
+}
+
+// incomeItems 是三個月份、四筆入帳的明細(依發放日排序)。
+func incomeItems() []UpcomingPayoutItem {
+	ex := "2026-10-16"
+	return []UpcomingPayoutItem{
+		{PayableDate: "2026-01-09", StockSymbol: "0056", Name: "元大高股息", Quarter: "Q4", Shares: 1000, CashDividend: 1.5, CashAmount: 1500},
+		{PayableDate: "2026-11-12", StockSymbol: "2330", Name: "台積電", Quarter: "Q2", ExDate: &ex, Shares: 1000, CashDividend: 5, CashAmount: 5000},
+		{PayableDate: "2026-11-20", StockSymbol: "2002", Name: "中鋼", Shares: 2000, StockDividend: 0.5, StockShares: 100},
+		{PayableDate: "2026-12-15", StockSymbol: "00878", Name: "國泰永續高股息", Quarter: "Q3", Shares: 1000, CashDividend: 0.98, CashAmount: 980, Estimated: true},
+	}
+}
+
+// TestDividendIncomeToolItems 驗證 month 會自動取明細並只列該月;只帶 include_items 時列現金最多的幾筆。
+func TestDividendIncomeToolItems(t *testing.T) {
+	income := sampleIncome()
+	income.Items = incomeItems()
+	f := &fakeIncomeQuerier{income: income}
+	ts := &dividendIncomeToolset{income: f, logf: func(string, ...any) {}}
+
+	result, output, err := ts.dividendIncome(t.Context(), nil, DividendIncomeInput{Month: 11})
+	if err != nil || !f.gotItems {
+		t.Fatalf("指定月份應取明細:%v %v", err, f.gotItems)
+	}
+	summary := result.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{
+		"\n11 月入帳明細(2 筆):",
+		"\n- 2026-11-12 入帳 2330 台積電(Q2,2026-10-16 除權息,1000 股)每股 5 元、現金 5000 元",
+		"\n- 2026-11-20 入帳 2002 中鋼(年配,2000 股)配股 100 股(每股 0.5 元)",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("摘要缺少 %q:%s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "0056 元大高股息(") {
+		t.Errorf("其他月份的明細不應列出:%s", summary)
+	}
+	if out := output.(DividendIncomeOutput); len(out.Items) != 4 {
+		t.Fatalf("structured output 應含全部明細:%d", len(out.Items))
+	}
+
+	result, _, err = ts.dividendIncome(t.Context(), nil, DividendIncomeInput{IncludeItems: true})
+	if err != nil {
+		t.Fatalf("dividendIncome 不應失敗:%v", err)
+	}
+	summary = result.Content[0].(*mcp.TextContent).Text
+	top := strings.Index(summary, "現金最多的 4 筆入帳:")
+	if top < 0 {
+		t.Fatalf("摘要缺少最大幾筆:%s", summary)
+	}
+	order := []string{"2330 台積電", "0056 元大高股息", "00878 國泰永續高股息", "2002 中鋼"}
+	last := top
+	for _, name := range order {
+		i := strings.Index(summary[top:], name)
+		if i < 0 || top+i < last {
+			t.Fatalf("最大幾筆應依現金由大到小:%s", summary[top:])
+		}
+		last = top + i
+	}
+	if !strings.Contains(summary, "現金 980 元(推算)") {
+		t.Errorf("推算的入帳要標示:%s", summary)
+	}
+}
+
+// TestIncomeItemsText 涵蓋沒有明細、指定月份沒有入帳與超過 5 筆只列 5 筆。
+func TestIncomeItemsText(t *testing.T) {
+	if got := incomeItemsText(nil, 0); got != "\n今年沒有入帳明細。" {
+		t.Errorf("沒有明細:%q", got)
+	}
+	if got := incomeItemsText(incomeItems(), 3); got != "\n3 月沒有入帳明細。" {
+		t.Errorf("該月沒有入帳:%q", got)
+	}
+	many := slices.Repeat(incomeItems()[:1], 7)
+	if got := incomeItemsText(many, 0); !strings.Contains(got, "現金最多的 5 筆入帳:") || strings.Count(got, "\n- ") != 5 {
+		t.Errorf("超過 5 筆只列 5 筆:%q", got)
 	}
 }
