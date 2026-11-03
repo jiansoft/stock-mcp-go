@@ -160,7 +160,7 @@ func addPortfolioTools(server *mcp.Server, q Querier, logf func(format string, a
 		dis := &dividendIncomeToolset{income: income, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "get_dividend_income",
-			Description: "查詢個人持股某一年（預設今年）1～12 月的股利入帳：每月現金、已入帳與推算、配股，附去年同月、去年全年與去年同期。",
+			Description: "查詢個人持股某一年（預設今年）1～12 月的股利入帳：每月現金、已入帳與推算、配股，附去年同月、去年全年與去年同期；include_items 或 month 另列每一筆入帳明細。",
 			InputSchema: dividendIncomeSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, dis.dividendIncome)
