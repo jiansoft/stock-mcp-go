@@ -156,6 +156,16 @@ func addPortfolioTools(server *mcp.Server, q Querier, logf func(format string, a
 		}, pts.upcomingPayouts)
 	}
 
+	if income, ok := q.(DividendIncomeQuerier); ok {
+		dis := &dividendIncomeToolset{income: income, logf: logf}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "get_dividend_income",
+			Description: "查詢個人持股某一年（預設今年）1～12 月的股利入帳：每月現金、已入帳與推算、配股，附去年同月、去年全年與去年同期。",
+			InputSchema: dividendIncomeSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, dis.dividendIncome)
+	}
+
 	if cagr, ok := q.(CagrQuerier); ok {
 		cgs := &cagrToolset{cagr: cagr, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{
