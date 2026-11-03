@@ -41,7 +41,7 @@ func sampleForecast() *DividendForecast {
 			{Month: "2027-08", Announced: 100, Estimated: 1350},
 		},
 		Items: []DividendForecastItem{
-			{StockSymbol: "0056", Name: "元大高股息", Shares: 1000, ExDate: "2026-10-22", PayDate: "2026-11-11", CashPerShare: 1.72, Amount: 1720, Basis: "announced"},
+			{StockSymbol: "0056", Name: "元大高股息", Shares: 1000, ExDate: "2026-10-22", PayDate: "2026-11-11", CashPerShare: 1.72, Amount: 1720, Basis: "announced", Entitled: true},
 			{StockSymbol: "0056", Name: "元大高股息", Shares: 1000, ExDate: "2027-01-22", PayDate: "2027-02-11", CashPerShare: 0.866, Amount: 866, Basis: "estimated"},
 			{StockSymbol: "2887", Name: "台新新光金", Shares: 200, ExDate: "2027-07-24", PayDate: "2027-08-23", CashPerShare: 0.5, Amount: 100, Basis: "amount_announced"},
 		},
@@ -93,7 +93,8 @@ func TestDividendForecastTool(t *testing.T) {
 		"- 2026-11:1720 元",
 		"- 2027-02:866 元(推估)",
 		"- 2027-08:1450 元(其中推估 1350 元)",
-		"- 0056 元大高股息 2026-11-11 發放 1720 元(1000 股 × 1.72 元,已公告)",
+		"- 0056 元大高股息 2026-11-11 發放 1720 元(1000 股 × 1.72 元,已除息、依除息日持股)",
+		"已除息的依除息日持股,其餘假設目前持股持有到除息日",
 		"(200 股 × 0.5 元,金額已公告、日期推估)",
 		"未扣二代健保",
 		"免責聲明",
@@ -159,6 +160,23 @@ func TestBasisText(t *testing.T) {
 	for _, tt := range tests {
 		if got := basisText(tt.basis); got != tt.want {
 			t.Errorf("basisText(%q) = %q,want %q", tt.basis, got, tt.want)
+		}
+	}
+}
+
+// TestItemBasisText 確認已除息的項目標明依除息日持股,其餘沿用 basisText。
+func TestItemBasisText(t *testing.T) {
+	tests := []struct {
+		item DividendForecastItem
+		want string
+	}{
+		{DividendForecastItem{Basis: "announced", Entitled: true}, "已除息、依除息日持股"},
+		{DividendForecastItem{Basis: "announced"}, "已公告"},
+		{DividendForecastItem{Basis: "cadence"}, "依配息間隔推估"},
+	}
+	for _, tt := range tests {
+		if got := itemBasisText(tt.item); got != tt.want {
+			t.Errorf("itemBasisText(%+v) = %q,want %q", tt.item, got, tt.want)
 		}
 	}
 }
