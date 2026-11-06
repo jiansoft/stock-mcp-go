@@ -4,6 +4,7 @@ package stock
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func TestScreenValuationCaps(t *testing.T) {
 		t.Fatal("schema 缺少 max_pe／max_pb 或不該有預設值")
 	}
 	enum := schema.Properties["sort_by"].Enum
-	if enum[len(enum)-2] != "pe_ratio" || enum[len(enum)-1] != "pb_ratio" {
+	if !slices.Contains(enum, any("pe_ratio")) || !slices.Contains(enum, any("pb_ratio")) {
 		t.Fatalf("sort_by enum 缺少估值:%v", enum)
 	}
 	query := apiScreenQueryForTest(t, ScreenOptions{MaxPE: ptr(12.5), MaxPB: ptr(0.8), SortBy: "pb_ratio", SortOrder: "asc", Limit: 20})

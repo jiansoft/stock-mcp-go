@@ -29,6 +29,11 @@ type BacktestFundamentals struct {
 	// nil 為不篩選,週數 0 代表沿用 Data API 預設的 4 週。
 	MinMajorChange   *float64
 	MajorChangeWeeks int
+	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
+	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
+	MinEPSYoYPercent          *float64
+	MinAnnualEPSGrowthPercent *float64
+	NewHighDays               int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -106,6 +111,20 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
 			Description: "min_major_change 的回看週數(集保資料週,選填,1 至 12,預設 4);沒有設 min_major_change 時不影響結果",
 		},
+		"min_eps_yoy_percent": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
+			Description: "換股當天已公布的最近一季單季 EPS 對去年同季的成長率至少這麼高(%,選填,-100 至 10000;CANSLIM 的 C)。" +
+				"去年同季 EPS ≤ 0 的不通過。" + reportRule,
+		},
+		"min_annual_eps_growth_percent": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
+			Description: "換股當天已公布的最近 4 個年度 EPS 算出 3 個年增率,最低的一年至少這麼高(%,選填,-100 至 10000;CANSLIM 的 A)。" +
+				"年度 EPS 隔年 4/1 起才用;年度不連續、任一基期 ≤ 0 或最新年度落後換股年超過 2 年的不通過;只用於新買進",
+		},
+		"new_high_days": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0),
+			Description: "只選換股日(含)往前 N 個日曆天內(選填,1 至 365)創過 52 週新高的股票(CANSLIM 的 N;訊號 2019 年起);只用於新買進",
+		},
 	}
 }
 
@@ -127,6 +146,8 @@ func (f BacktestFundamentals) validate() error {
 		{"max_pe", f.MaxPE, 0, 10000},
 		{"max_pb", f.MaxPB, 0, 1000},
 		{"min_major_change", f.MinMajorChange, -100, 100},
+		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
+		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 	} {
 		if v := bound.value; v != nil && (math.IsNaN(*v) || *v < bound.min || *v > bound.max) {
 			return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", bound.name, formatFloat(bound.min), formatFloat(bound.max))
@@ -137,6 +158,9 @@ func (f BacktestFundamentals) validate() error {
 	}
 	if f.MajorChangeWeeks != 0 && (f.MajorChangeWeeks < 1 || f.MajorChangeWeeks > 12) {
 		return fmt.Errorf("參數 major_change_weeks 必須介於 1 到 12 之間")
+	}
+	if f.NewHighDays != 0 && (f.NewHighDays < 1 || f.NewHighDays > 365) {
+		return fmt.Errorf("參數 new_high_days 必須介於 1 到 365 之間")
 	}
 	return nil
 }
@@ -149,6 +173,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_gross_margin_percent": f.MinGrossMarginPercent, "min_operating_margin_percent": f.MinOperatingMarginPercent,
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
 		"max_pe": f.MaxPE, "max_pb": f.MaxPB, "min_major_change": f.MinMajorChange,
+		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 	} {
 		if value != nil {
 			values.Set(key, formatFloat(*value))
@@ -159,6 +184,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MajorChangeWeeks > 0 {
 		values.Set("major_change_weeks", fmt.Sprint(f.MajorChangeWeeks))
+	}
+	if f.NewHighDays > 0 {
+		values.Set("new_high_days", fmt.Sprint(f.NewHighDays))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -207,6 +235,21 @@ func majorChangeTexts(minChange *float64, weeks int) []string {
 		weeks = defaultMajorChangeWeeks
 	}
 	return []string{fmt.Sprintf("千張大戶持股比例近 %d 週變化 ≥ %s 個百分點(換股前已公布的週)", weeks, formatFloat(*minChange))}
+}
+
+// canslimTexts 描述 CANSLIM 的 C、A、N 條件;nil 與 0 代表不篩選。
+func canslimTexts(epsYoY, annualGrowth *float64, newHighDays int) []string {
+	var filters []string
+	if epsYoY != nil {
+		filters = append(filters, fmt.Sprintf("已公布的最近一季單季 EPS 年增 ≥ %s%%", formatFloat(*epsYoY)))
+	}
+	if annualGrowth != nil {
+		filters = append(filters, fmt.Sprintf("已公布的近 3 年每年 EPS 年增 ≥ %s%%", formatFloat(*annualGrowth)))
+	}
+	if newHighDays > 0 {
+		filters = append(filters, fmt.Sprintf("近 %d 天內創 52 週新高", newHighDays))
+	}
+	return filters
 }
 
 // revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。

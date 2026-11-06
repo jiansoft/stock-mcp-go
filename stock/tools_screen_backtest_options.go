@@ -157,6 +157,8 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinMonthlyRevenue: in.MinMonthlyRevenue, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks,
+		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent,
+		NewHighDays: in.NewHighDays,
 	}
 	if err := fundamentals.validate(); err != nil {
 		return ScreenBacktestOptions{}, err

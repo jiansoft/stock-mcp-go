@@ -63,10 +63,15 @@ type ScreenStocksInput struct {
 	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
 	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
-	RangeBreakoutDays int    `json:"range_breakout_days,omitempty"`
-	SortBy            string `json:"sort_by,omitempty"`
-	SortOrder         string `json:"sort_order,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
+	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
+	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
+	// 近 3 年每年 EPS 年增率下限,以及近幾個日曆天內創過 52 週新高(0 為不篩)。
+	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
+	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
+	NewHighDays               int      `json:"new_high_days,omitempty"`
+	SortBy                    string   `json:"sort_by,omitempty"`
+	SortOrder                 string   `json:"sort_order,omitempty"`
+	Limit                     int      `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -153,9 +158,18 @@ func screenStocksSchema() *jsonschema.Schema {
 				Description: "只留最近 N 個交易日(含查詢日,1–20)出現區間突破、且突破後還沒跌回突破價的股票;" +
 					"每檔附最近一次突破的日期與說明。2019 年起回測單獨依區間突破選股明顯輸 0050,約七成突破在 10 個交易日內跌回,只供參考",
 			},
+			"min_eps_yoy_percent": number(-100, 10000,
+				"最新一季單季 EPS 對去年同季的成長率下限(%,CANSLIM 的 C 建議 25);去年同季 EPS ≤ 0 無法計算,這類股票不符合"),
+			"min_annual_eps_growth_percent": number(-100, 10000,
+				"近 3 個年度 EPS「每年」年增率的下限(%,CANSLIM 的 A 建議 25):取最近 4 個年度 EPS 算出 3 個年增率,以最低者比較;"+
+					"年度不連續、任一基期 ≤ 0 或最新年度落後超過 2 年都不符合"),
+			"new_high_days": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0),
+				Description: "只留最近 N 個日曆天(含查詢日,1–365)內創過 52 週新高的股票(CANSLIM 的 N);每檔附最近一次新高日",
+			},
 			"sort_by": {
 				Type:        "string",
-				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio"},
+				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth"},
 				Default:     []byte(`"stock_symbol"`),
 				Description: "固定白名單排序欄位",
 			},
@@ -238,6 +252,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"max_pe", in.MaxPE, 0, 10000},
 		{"max_pb", in.MaxPB, 0, 1000},
 		{"min_major_change", in.MinMajorChange, -100, 100},
+		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
+		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 	} {
 		if err := validateOptionalFloat(check.field, check.value, check.minimum, check.max); err != nil {
 			return nil, nil, err
@@ -267,6 +283,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.RangeBreakoutDays != 0 && (in.RangeBreakoutDays < 1 || in.RangeBreakoutDays > 20) {
 		return nil, nil, fmt.Errorf("參數 range_breakout_days 必須介於 1 到 20 之間")
 	}
+	if in.NewHighDays != 0 && (in.NewHighDays < 1 || in.NewHighDays > 365) {
+		return nil, nil, fmt.Errorf("參數 new_high_days 必須介於 1 到 365 之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
@@ -275,7 +294,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinFScore != nil || in.MinGrossMarginPercent != nil || in.MaxDebtRatioPercent != nil || in.PositiveFreeCashFlow ||
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
-		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0
+		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
+		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -287,7 +307,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	validSort := map[string]bool{
 		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true, "operating_margin": true, "rs_score": true,
-		"pe_ratio": true, "pb_ratio": true,
+		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true,
 	}
 	if !validSort[sortBy] {
 		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
@@ -315,6 +335,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
+		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
@@ -337,6 +358,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			displayString(first.RevenueMonth), displayString(first.FinancialPeriod), displayString(first.ValuationDate), displayString(first.YieldDate),
 			displayString(first.HealthPeriod), AnalysisDisclaimer)
 		if line := screenBreakoutLine(in.RangeBreakoutDays, first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenGrowthLine(first); line != "" {
 			summary = line + "\n" + summary
 		}
 	}
@@ -420,6 +444,20 @@ func fScoreText(score, evaluated *int) string {
 		return fmt.Sprint(*score)
 	}
 	return fmt.Sprintf("%d/%d 項", *score, *evaluated)
+}
+
+// screenGrowthLine 描述首筆的 CANSLIM 成長指標(單季 EPS 年增、近 3 年最低年增、最近一次 52 週新高);
+// 三者都沒有資料時回空字串,避免一般選股的摘要多一行「無」。
+func screenGrowthLine(first ScreenedStock) string {
+	if first.EPSYoYPercent == nil && first.AnnualEPSGrowthPercent == nil && first.NewHighDate == nil {
+		return ""
+	}
+	annual := displayPercent(first.AnnualEPSGrowthPercent)
+	if first.AnnualEPSGrowthPercent != nil && first.AnnualEPSYear != nil {
+		annual = fmt.Sprintf("%s(至 %d 年)", annual, *first.AnnualEPSYear)
+	}
+	return fmt.Sprintf("首筆成長指標:單季 EPS 年增 %s、近 3 年每年 EPS 年增最低 %s、最近一次 52 週新高 %s。",
+		displayPercent(first.EPSYoYPercent), annual, displayString(first.NewHighDate))
 }
 
 // screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。

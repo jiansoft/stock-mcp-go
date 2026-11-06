@@ -68,6 +68,13 @@ type ScreenedStock struct {
 	// 沒設時為 nil。
 	RangeBreakoutDate        *string `json:"range_breakout_date"`
 	RangeBreakoutDescription *string `json:"range_breakout_description"`
+	// EPSYoYPercent 是最新一季單季 EPS 對去年同季的成長率(去年同季 ≤ 0 或財報過期時為 nil);
+	// AnnualEPSGrowthPercent 是近 3 個年度 EPS 年增率中最低的一年,AnnualEPSYear 是比較的最新年度;
+	// NewHighDate 是設 new_high_days 時一年內最近一次創 52 週新高的交易日。舊版 API 沒有這些欄位時為 nil。
+	EPSYoYPercent          *float64 `json:"eps_yoy_percent"`
+	AnnualEPSGrowthPercent *float64 `json:"annual_eps_growth_percent"`
+	AnnualEPSYear          *int     `json:"annual_eps_year"`
+	NewHighDate            *string  `json:"new_high_date"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -117,9 +124,13 @@ type ScreenOptions struct {
 	MajorChangeWeeks int
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
-	SortBy            string
-	SortOrder         string
-	Limit             int
+	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。
+	MinEPSYoYPercent          *float64
+	MinAnnualEPSGrowthPercent *float64
+	NewHighDays               int
+	SortBy                    string
+	SortOrder                 string
+	Limit                     int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。
