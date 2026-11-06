@@ -10,7 +10,7 @@ A read-only Model Context Protocol (MCP) server for Taiwan stock data, built wit
 ## Features
 
 - Stateless MCP Streamable HTTP endpoint with read-only tool annotations
-- 73 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
+- 74 tools (all read-only except `set_portfolio_targets` and `restore_portfolio_target_revision`) backed by the `stock_rust` Data API
 - Traditional Chinese text summaries plus structured content for programmatic use
 - Multiple MCP API keys with create, edit, enable, disable, rotate, and revoke workflows
 - HMAC-SHA-256 API-key verification with a server-side pepper; plaintext keys are never stored
@@ -80,6 +80,7 @@ continue to describe ranges, units and validation rules.
 | `get_market_breadth` | API | Get advances/declines, 52-week new highs/lows, moving-average breadth, and valuation distribution |
 | `get_dividend_yield_ranking` | API | Rank TWSE/TPEX stocks by historical dividend yield |
 | `screen_stocks` | API | Screen stocks with an allowlisted set of fundamental, valuation, financial-health (Piotroski F-score, gross margin, debt ratio, trailing free cash flow, operating margin from the latest quarterly income statement, and `margins_yoy_up` for stocks whose gross, operating and net margins all beat the same quarter last year), `revenue_record` for stocks whose latest monthly revenue is an all-time high, `exclude_industry_ids` to drop industries such as financials (17), revenue-momentum filters (consecutive months of YoY growth, trailing 3-month YoY), a minimum latest monthly revenue to exclude low-base distortions, a minimum relative-strength (RS) score, minimum consecutive net-buy days by foreign investors or investment trusts, a minimum average trade value over the latest 20 daily bars (`min_avg_trade_value`, in NT$ millions), and caps on the official P/E and P/B ratios from the latest daily bar within 10 days (`max_pe`, `max_pb`; loss-making stocks fail the P/E cap; `min_major_change` keeps stocks whose TDCC 1,000-lot holder percentage rose at least N points over `major_change_weeks` published weeks, default 4, and drops stocks without holder data), sortable by `pe_ratio` or `pb_ratio`; each result carries its RS score, foreign/trust buy-sell streaks, 20-day average trade value and P/E, P/B with their date |
+| `screen_canslim` | API | Screen stocks with William O'Neil's CANSLIM rules: C latest-quarter EPS growth versus the same quarter last year (default 25%), A the lowest of the last three annual EPS growth rates (default 25%) plus ROE (default 17%), N a 52-week high within `new_high_days` calendar days (default 60), L relative strength (default 80), optional I (foreign/trust net-buy streaks) and S (minimum average trade value); M reports whether TAIEX closes above its 60-day moving average. Any threshold can be overridden and `skip_letters` drops C, A, N or L; `screen_stocks` and the backtest tools accept the same `min_eps_yoy_percent`, `min_annual_eps_growth_percent` and `new_high_days` filters |
 | `get_market_index_history` | API | Query TAIEX index history |
 | `get_dividend_calendar` | API | Query ex-dividend, ex-rights, and dividend-payment events |
 | `get_qfii_holding_ranking` | API | Rank the latest QFII holding snapshot |

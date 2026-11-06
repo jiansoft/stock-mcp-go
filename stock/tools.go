@@ -413,6 +413,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		}, mts.marginRanking)
 	}
 
+	// screen_canslim 同時需要選股與大盤趨勢(M);兩者都有才註冊。
+	if screener, ok := q.(Screener); ok {
+		if rq, ok := q.(MarketRegimeQuerier); ok {
+			cts := &canslimToolset{screener: screener, regime: rq, logf: logf}
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "screen_canslim",
+				Description: "以歐尼爾 CANSLIM 選股:單季與年度 EPS 成長、ROE、52 週新高、相對強度,附大盤 60 日均線判斷;可調門檻或跳過字母,非投資建議。",
+				InputSchema: screenCanslimSchema(),
+				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+			}, cts.screenCanslim)
+		}
+	}
+
 	if rq, ok := q.(MarketRegimeQuerier); ok {
 		rts := &marketRegimeToolset{rq: rq, logf: logf}
 		mcp.AddTool(server, &mcp.Tool{

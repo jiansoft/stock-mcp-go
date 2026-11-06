@@ -340,6 +340,15 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}
+	if opt.MinEPSYoYPercent != nil {
+		values.Set("min_eps_yoy_percent", formatFloat(*opt.MinEPSYoYPercent))
+	}
+	if opt.MinAnnualEPSGrowthPercent != nil {
+		values.Set("min_annual_eps_growth_percent", formatFloat(*opt.MinAnnualEPSGrowthPercent))
+	}
+	if opt.NewHighDays > 0 {
+		values.Set("new_high_days", fmt.Sprint(opt.NewHighDays))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {

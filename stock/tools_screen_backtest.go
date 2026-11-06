@@ -196,9 +196,13 @@ type ScreenBacktestEnvelope struct {
 	// MinMajorChange、MajorChangeWeeks 是千張大戶持股比例變化條件;舊版 API 沒有這兩欄時為 nil。
 	MinMajorChange   *float64 `json:"min_major_change"`
 	MajorChangeWeeks *int     `json:"major_change_weeks"`
-	Indicator        *string  `json:"indicator"`
-	Kind             *string  `json:"kind"`
-	FeeDiscount      *float64 `json:"fee_discount"`
+	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
+	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
+	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
+	NewHighDays               *int     `json:"new_high_days"`
+	Indicator                 *string  `json:"indicator"`
+	Kind                      *string  `json:"kind"`
+	FeeDiscount               *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
 	ExecutionModel *string               `json:"execution_model"`
 	SlippageBps    *int                  `json:"slippage_bps"`
@@ -382,6 +386,10 @@ type ScreenBacktestInput struct {
 	// MinMajorChange 是千張大戶持股比例近 MajorChangeWeeks 週變化的下限(百分點);週數 0 為預設 4 週。
 	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
 	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
+	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
+	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
+	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
+	NewHighDays               int      `json:"new_high_days,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
