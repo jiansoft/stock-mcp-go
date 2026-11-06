@@ -65,7 +65,7 @@ stock-mcp-go
 | `get_market_breadth` | API | 查詢漲跌家數、52 週新高／新低家數、均線上下家數與估值分布 |
 | `get_dividend_yield_ranking` | API | 查詢上市櫃股票歷史殖利率排行 |
 | `screen_stocks` | API | 以白名單內的基本面、估值與財務體質條件（F 分數、毛利率、負債比、近四季自由現金流、最新季營益率，以及三率皆較去年同季上升的 `margins_yoy_up`）、最新月營收創歷史新高的 `revenue_record`、排除產業的 `exclude_industry_ids`（如金融業 17）、營收動能（連續年增月數、近 3 月累計年增率）、最新月營收下限（排除低基期）、RS 分數下限、外資／投信連續買超天數下限、近 20 根日線平均成交值下限（`min_avg_trade_value`，單位新台幣百萬元），以及 10 日內最新日線的官方本益比／股價淨值比上限（`max_pe`、`max_pb`；虧損股不通過本益比上限；`min_major_change` 為集保千張大戶持股比例近 `major_change_weeks` 週（預設 4）的增加下限，沒有大戶資料的股票不列入）篩選，可依 `pe_ratio`、`pb_ratio` 排序；每檔附 RS 分數、外資／投信連續買賣超、20 日均成交值與本益比／股價淨值比及日期 |
-| `screen_canslim` | API | 以威廉·歐尼爾的 CANSLIM 選股:C 最新一季單季 EPS 對去年同季成長（預設 25%）、A 近 3 年每年 EPS 年增最低值（預設 25%）與 ROE（預設 17%）、N `new_high_days` 個日曆天內創 52 週新高（預設 60）、L 相對強度（預設 80），可選 I（外資／投信連買）與 S（平均成交金額下限）；M 回報加權指數是否在 60 日均線之上。門檻都可覆蓋，`skip_letters` 可拿掉 C、A、N、L；`screen_stocks` 與回測工具也接受同樣的 `min_eps_yoy_percent`、`min_annual_eps_growth_percent`、`new_high_days` |
+| `screen_canslim` | API | 以威廉·歐尼爾的 CANSLIM 選股:C 最新一季單季 EPS 對去年同季成長（預設 25%）、A 近 3 年每年 EPS 年增最低值與 ROE（預設不篩：2019-06 起台股回測 A、ROE 17% 與 60 日均線濾網都讓結果變差；帶 `include_annual_growth` 或 A 的門檻才套用，預設 25%／17%）、N `new_high_days` 個日曆天內創 52 週新高（預設 60）、L 相對強度（預設 80），可選 I（外資／投信連買）與 S（平均成交金額下限）；M 回報加權指數是否在 60 日均線之上（只供參考）。摘要附回測結論（C+N+L 扣成本年化中位數 38.4%、夏普 1.07）與具名策略 `CANSLIM`（C+N+L 加一半 0050）。門檻都可覆蓋，`skip_letters` 可拿掉 C、A、N、L；`screen_stocks` 與回測工具也接受同樣的 `min_eps_yoy_percent`、`min_annual_eps_growth_percent`、`new_high_days` |
 | `get_market_index_history` | API | 查詢台股加權指數歷史 |
 | `get_dividend_calendar` | API | 查詢除權息與股利發放事件 |
 | `get_qfii_holding_ranking` | API | 查詢最新外資持股快照排行 |

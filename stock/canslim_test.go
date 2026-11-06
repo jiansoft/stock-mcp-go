@@ -31,7 +31,8 @@ func newCanslimToolset(screener *fakeStockScreener, regime fakeRegime) *canslimT
 	return &canslimToolset{screener: screener, regime: regime, logf: func(string, ...any) {}}
 }
 
-// TestScreenCanslimDefaults 驗證沒有提供門檻時套用歐尼爾的預設值、依相對強度降冪排序,並附大盤在 60 日均線之上的判斷。
+// TestScreenCanslimDefaults 驗證沒有提供門檻時套用 C、N、L 的歐尼爾預設值(A 預設不篩)、依相對強度降冪排序,
+// 附大盤在 60 日均線之上的判斷與台股回測結論。
 func TestScreenCanslimDefaults(t *testing.T) {
 	yoy, growth, year, high := 80.5, 31.2, 2025, "2026-11-03"
 	screener := &fakeStockScreener{result: &Screening{Stocks: []ScreenedStock{{
@@ -44,18 +45,19 @@ func TestScreenCanslimDefaults(t *testing.T) {
 		t.Fatalf("預設條件不應失敗:%v", err)
 	}
 	opt := screener.gotOpt
-	if *opt.MinEPSYoYPercent != 25 || *opt.MinAnnualEPSGrowthPercent != 25 || *opt.MinROEPercent != 17 ||
+	if *opt.MinEPSYoYPercent != 25 || opt.MinAnnualEPSGrowthPercent != nil || opt.MinROEPercent != nil ||
 		opt.NewHighDays != 60 || *opt.MinRSScore != 80 || opt.SortBy != "rs_score" || opt.SortOrder != "desc" {
 		t.Fatalf("預設門檻錯誤:%+v", opt)
 	}
 	output := structured.(CanslimOutput)
-	if len(output.Criteria) != 5 || output.Market.Above == nil || !*output.Market.Above || len(output.Stocks) != 1 {
+	if len(output.Criteria) != 3 || strings.Join(output.Skipped, ",") != "A" || output.Market.Above == nil || !*output.Market.Above || len(output.Stocks) != 1 {
 		t.Fatalf("輸出錯誤:%+v", output)
 	}
 	text := resultText(t, result)
 	for _, want := range []string{
-		"CANSLIM 條件:C 單季 EPS 年增 ≥ 25%、A 近 3 年每年 EPS 年增 ≥ 25%、A ROE ≥ 17%、N 近 60 天創 52 週新高、L 相對強度 ≥ 80",
-		"在 60 日均線 22000.00 之上",
+		"CANSLIM 條件:C 單季 EPS 年增 ≥ 25%、N 近 60 天創 52 週新高、L 相對強度 ≥ 80(未篩:A)",
+		"M 大盤方向(只供參考):加權指數 2026-11-06 收盤 23000.00 在 60 日均線 22000.00 之上",
+		"preset=CANSLIM",
 		"符合 1 檔(依 rs_score 由高到低",
 		"2330 台積電(單季 EPS 年增 80.5%、近 3 年最低年增 31.2%",
 	} {
@@ -86,10 +88,43 @@ func TestScreenCanslimOverridesAndSkip(t *testing.T) {
 		t.Fatalf("跳過的字母應去重複並轉大寫:%v", output.Skipped)
 	}
 	text := resultText(t, result)
-	for _, want := range []string{"(未篩:A、N)", "S 近 20 日平均成交 ≥ 50 百萬元", "I 外資連買 ≥ 3 天", "I 投信連買 ≥ 2 天", "跌破 60 日均線", "沒有符合的股票"} {
+	for _, want := range []string{"(未篩:A、N)", "S 近 20 日平均成交 ≥ 50 百萬元", "I 外資連買 ≥ 3 天", "I 投信連買 ≥ 2 天", "跌破 60 日均線", "報酬反而變差", "沒有符合的股票"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("摘要缺少 %q:%s", want, text)
 		}
+	}
+}
+
+// TestScreenCanslimAnnualGrowth 驗證 A 的三種開法:include_annual_growth 用預設門檻、給 A 的門檻就套用,
+// 但 skip_letters 含 A 時連明確的門檻也忽略。
+func TestScreenCanslimAnnualGrowth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		in          ScreenCanslimInput
+		growth, roe *float64
+		skipped     string
+	}{
+		{"include", ScreenCanslimInput{IncludeAnnualGrowth: true}, ptr(25.0), ptr(17.0), ""},
+		{"threshold", ScreenCanslimInput{MinAnnualEPSGrowthPercent: ptr(10.0)}, ptr(10.0), ptr(17.0), ""},
+		{"roe only", ScreenCanslimInput{MinROEPercent: ptr(12.0)}, ptr(25.0), ptr(12.0), ""},
+		{"skip wins", ScreenCanslimInput{MinAnnualEPSGrowthPercent: ptr(10.0), SkipLetters: []string{"A"}}, nil, nil, "A"},
+	} {
+		screener := &fakeStockScreener{result: &Screening{Stocks: []ScreenedStock{}}}
+		_, structured, err := newCanslimToolset(screener, fakeRegime{envelope: regimeAt(1, 1)}).screenCanslim(t.Context(), nil, tc.in)
+		if err != nil {
+			t.Fatalf("%s:不應失敗:%v", tc.name, err)
+		}
+		opt := screener.gotOpt
+		same := func(got, want *float64) bool { return (got == nil) == (want == nil) && (got == nil || *got == *want) }
+		if !same(opt.MinAnnualEPSGrowthPercent, tc.growth) || !same(opt.MinROEPercent, tc.roe) {
+			t.Errorf("%s:A 門檻錯誤:%v %v", tc.name, opt.MinAnnualEPSGrowthPercent, opt.MinROEPercent)
+		}
+		if got := strings.Join(structured.(CanslimOutput).Skipped, ","); got != tc.skipped {
+			t.Errorf("%s:skipped = %q", tc.name, got)
+		}
+	}
+	if screenCanslimSchema().Properties["include_annual_growth"] == nil {
+		t.Fatal("schema 缺少 include_annual_growth")
 	}
 }
 
