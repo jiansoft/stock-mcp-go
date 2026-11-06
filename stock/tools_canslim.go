@@ -1,8 +1,11 @@
 // Package stock 的 screen_canslim 工具:以威廉·歐尼爾(William O'Neil)的 CANSLIM 七項條件選股。
 //
 // C、A、N、L 與 I 交給 screen_stocks 的同一組白名單條件(Data API /api/v1/stocks/screen),
-// M(大盤方向)讀 get_market_regime 的加權指數相對 60 日均線位置,與回測 market_filter_ma=60 同一判斷。
+// M(大盤方向)讀 get_market_regime 的加權指數相對 60 日均線位置,與回測 market_filter_ma=60 同一判斷,只供參考。
 // S(供需)的「流通股數少」無法直接量化,只提供 min_avg_trade_value 排除買不到量的股票。
+//
+// 預設不篩 A(近 3 年每年 EPS 成長與 ROE):2019-06 起的台股回測顯示 A 與 ROE 17% 讓候選股只剩一兩檔、
+// 報酬大幅變差;要套用時帶 include_annual_growth,或直接給 A 的門檻。
 package stock
 
 import (
@@ -15,7 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// CANSLIM 預設門檻:歐尼爾原書的數字(EPS 年增 25%、ROE 17%、RS 80),新高回看 60 個日曆天。
+// CANSLIM 預設門檻:歐尼爾原書的數字(EPS 年增 25%、ROE 17%、RS 80),新高回看 60 個日曆天;A 與 ROE 只在要求時套用。
 const (
 	canslimDefaultEPSYoY        = 25.0
 	canslimDefaultAnnualGrowth  = 25.0
@@ -27,11 +30,16 @@ const (
 	canslimDefaultSortDirection = "desc"
 )
 
+// canslimBacktestNote 是摘要附帶的台股回測結論(第 37 輪 T28)。
+const canslimBacktestNote = "台股回測(2019-06 起、扣成本、換股日偏移中位數):C+N+L 年化 38.4%、夏普 1.07,只看 RS 為 27.8%、0.78;A、ROE 17% 與大盤 60 日均線濾網都讓結果變差,所以 A 預設不篩。具名策略 CANSLIM(C+N+L 加一半 0050)年化 35.5%、夏普 1.27,可用回測工具 preset=CANSLIM 查看"
+
 // canslimSkippable 是可以用 skip_letters 拿掉的字母;S、I、M 預設就不篩選,不需要跳過。
 var canslimSkippable = []string{"C", "A", "N", "L"}
 
 // ScreenCanslimInput 是 screen_canslim 的輸入;門檻沒有提供時用歐尼爾的預設值,skip_letters 可整項不篩。
+// A(年度 EPS 成長與 ROE)只在 IncludeAnnualGrowth 為 true 或給了 A 的門檻時套用。
 type ScreenCanslimInput struct {
+	IncludeAnnualGrowth       bool     `json:"include_annual_growth,omitempty"`
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
 	MinROEPercent             *float64 `json:"min_roe_percent,omitempty"`
@@ -59,11 +67,15 @@ func screenCanslimSchema() *jsonschema.Schema {
 			},
 			"min_annual_eps_growth_percent": {
 				Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0), Default: []byte("25"),
-				Description: "A:近 3 個年度 EPS 每年年增率的下限(%,預設 25;取三年中最低的一年比較)。台股景氣循環明顯,連 3 年都成長 25% 的股票很少,結果太少時可調低或用 skip_letters 拿掉 A",
+				Description: "A:近 3 個年度 EPS 每年年增率的下限(%,套用 A 時預設 25;取三年中最低的一年比較)。給了這個值就會套用 A",
+			},
+			"include_annual_growth": {
+				Type:        "boolean",
+				Description: "true 時套用 A(近 3 年每年 EPS 年增與 ROE,預設 25%／17%)。預設不篩:台股回測 A 與 ROE 17% 讓結果明顯變差",
 			},
 			"min_roe_percent": {
 				Type: "number", Minimum: ptr(-10000.0), Maximum: ptr(10000.0), Default: []byte("17"),
-				Description: "A:最新一季股東權益報酬率下限(%,預設 17);跳過 A 時一併不篩",
+				Description: "A:最新一季股東權益報酬率下限(%,套用 A 時預設 17);給了這個值就會套用 A,skip_letters 含 A 時一併不篩",
 			},
 			"new_high_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0), Default: []byte("60"),
@@ -89,7 +101,7 @@ func screenCanslimSchema() *jsonschema.Schema {
 				Type:        "array",
 				Items:       &jsonschema.Schema{Type: "string", Enum: []any{"C", "A", "N", "L"}},
 				MaxItems:    ptr(4),
-				Description: "不篩選的字母(選填):C、A(連同 ROE)、N、L。例如 [\"A\"] 拿掉年度 EPS 成長與 ROE",
+				Description: "不篩選的字母(選填):C、A(連同 ROE)、N、L;A 預設就不篩,列在這裡時連明確給的 A 門檻也忽略",
 			},
 			"market":               base["market"],
 			"exclude_industry_ids": base["exclude_industry_ids"],
@@ -138,7 +150,7 @@ type canslimToolset struct {
 
 // screenCanslim 執行 screen_canslim:組出 screen_stocks 的條件並查大盤 60 日均線位置。
 func (ts *canslimToolset) screenCanslim(ctx context.Context, req *mcp.CallToolRequest, in ScreenCanslimInput) (*mcp.CallToolResult, any, error) {
-	skipped, err := canslimSkipped(in.SkipLetters)
+	skipped, err := canslimSkipped(in)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -160,9 +172,10 @@ func (ts *canslimToolset) screenCanslim(ctx context.Context, req *mcp.CallToolRe
 }
 
 // canslimSkipped 正規化 skip_letters(去空白、轉大寫、去重複);不在 C、A、N、L 之內回錯誤。
-func canslimSkipped(letters []string) ([]string, error) {
+// 沒有要求 A(include_annual_growth 或 A 的門檻)時把 A 加進跳過清單。
+func canslimSkipped(in ScreenCanslimInput) ([]string, error) {
 	var skipped []string
-	for _, raw := range letters {
+	for _, raw := range in.SkipLetters {
 		letter := strings.ToUpper(strings.TrimSpace(raw))
 		if !slices.Contains(canslimSkippable, letter) {
 			return nil, fmt.Errorf("參數 skip_letters 只能包含 C、A、N、L")
@@ -170,6 +183,10 @@ func canslimSkipped(letters []string) ([]string, error) {
 		if !slices.Contains(skipped, letter) {
 			skipped = append(skipped, letter)
 		}
+	}
+	wantsAnnual := in.IncludeAnnualGrowth || in.MinAnnualEPSGrowthPercent != nil || in.MinROEPercent != nil
+	if !wantsAnnual && !slices.Contains(skipped, "A") {
+		skipped = append(skipped, "A")
 	}
 	return skipped, nil
 }
@@ -259,7 +276,7 @@ func canslimSummary(out CanslimOutput) string {
 	}
 	b.printf("。\n%s", canslimMarketText(out.Market))
 	if len(out.Stocks) == 0 {
-		b.printf("\n沒有符合的股票。A 的「連 3 年每年 EPS 成長」在台股最嚴格,可調低 min_annual_eps_growth_percent 或 skip_letters 拿掉 A、N 再看。")
+		b.printf("\n沒有符合的股票。可調低門檻(A 的「連 3 年每年 EPS 成長」在台股最嚴格),或用 skip_letters 拿掉 N 再看。")
 	} else {
 		b.printf("\n符合 %d 檔(依 %s 由高到低,列前 10 檔):", len(out.Stocks), out.SortBy)
 		shown := out.Stocks[:min(len(out.Stocks), 10)]
@@ -272,7 +289,7 @@ func canslimSummary(out CanslimOutput) string {
 		}
 		b.printf("\n%s", strings.Join(lines, "\n"))
 	}
-	b.printf("\nCANSLIM 是篩選框架,不保證報酬;台股回測結果見 get_screen_backtest。免責聲明:%s", AnalysisDisclaimer)
+	b.printf("\n%s。CANSLIM 是篩選框架,過去回測不保證未來報酬。免責聲明:%s", canslimBacktestNote, AnalysisDisclaimer)
 	return b.String()
 }
 
@@ -282,9 +299,9 @@ func canslimMarketText(m CanslimMarket) string {
 		return "M 大盤方向:無法取得加權指數 60 日均線,請另以 get_market_regime 確認。"
 	}
 	if *m.Above {
-		return fmt.Sprintf("M 大盤方向:加權指數 %s 收盤 %.2f 在 60 日均線 %.2f 之上,符合順勢進場。",
+		return fmt.Sprintf("M 大盤方向(只供參考):加權指數 %s 收盤 %.2f 在 60 日均線 %.2f 之上,符合順勢進場。",
 			displayString(m.DataAsOf), *m.Close, *m.MA60)
 	}
-	return fmt.Sprintf("M 大盤方向:加權指數 %s 收盤 %.2f 跌破 60 日均線 %.2f,歐尼爾的原則是大盤轉弱時不新買進。",
-		displayString(m.DataAsOf), *m.Close, *m.MA60)
+	return fmt.Sprintf("M 大盤方向(只供參考):加權指數 %s 收盤 %.2f 跌破 60 日均線 %.2f,歐尼爾的原則是大盤轉弱時不新買進;"+
+		"但台股回測以這條濾網空手,報酬反而變差。", displayString(m.DataAsOf), *m.Close, *m.MA60)
 }

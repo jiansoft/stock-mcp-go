@@ -419,7 +419,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 			cts := &canslimToolset{screener: screener, regime: rq, logf: logf}
 			mcp.AddTool(server, &mcp.Tool{
 				Name:        "screen_canslim",
-				Description: "以歐尼爾 CANSLIM 選股:單季與年度 EPS 成長、ROE、52 週新高、相對強度,附大盤 60 日均線判斷;可調門檻或跳過字母,非投資建議。",
+				Description: "以歐尼爾 CANSLIM 選股:單季 EPS 成長、52 週新高、相對強度(年度 EPS 成長與 ROE 預設不篩,台股回測變差),附大盤 60 日均線判斷;可調門檻或跳過字母,非投資建議。",
 				InputSchema: screenCanslimSchema(),
 				Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 			}, cts.screenCanslim)
