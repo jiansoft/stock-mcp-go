@@ -36,6 +36,12 @@ type BacktestFundamentals struct {
 	NewHighDays               int
 	// MinFScore 是換股當天已公布的最近一個年度 Piotroski F 分數下限(0 至 9);nil 為不篩選。
 	MinFScore *int
+	// MinDividendYieldPercent、MinFillRatePercent、MaxAvgFillDays、MinDividendYears 是存股條件:換股當天的現金殖利率下限、
+	// 近 5 年填息率下限、平均填息天數上限與連續配息年數下限(nil 與 0 為不篩),只用換股當天已發生的除息。
+	MinDividendYieldPercent *float64
+	MinFillRatePercent      *float64
+	MaxAvgFillDays          *float64
+	MinDividendYears        int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -133,8 +139,30 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 				"每個年度與前一年度比較,年報隔年 4/1 起才用,評分年度落後換股年超過 2 年或沒有年報的不通過;" +
 				"可搭配 max_pb 做低淨值比的價值股;只用於新買進",
 		},
+		"min_dividend_yield_percent": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "換股當天的現金殖利率至少這麼高(%,選填,0 至 100;存股常用 5):最近一次除息往回 350 天的現金股利合計 ÷ 換股日收盤," +
+				"季配、月配會算到一年份;最近一次除息早於換股日 400 天以上(已停止配息)或換股日沒有收盤的不通過。" + dividendRule,
+		},
+		"min_fill_rate_percent": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "近 5 年填息率至少這麼高(%,選填,0 至 100):除息日在換股日前 5 年內、且換股日前已觀察滿 120 個交易日的現金除息中," +
+				"120 個交易日內收盤回到填息價的比例;沒有觀察期已滿的除息不通過。" + dividendRule,
+		},
+		"max_avg_fill_days": {
+			Type: "number", Minimum: ptr(1.0), Maximum: ptr(120.0),
+			Description: "近 5 年已填息者的平均填息天數不超過這個值(交易日,選填,1 至 120);事件規則同 min_fill_rate_percent,都沒有填息的不通過。" + dividendRule,
+		},
+		"min_dividend_years": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+			Description: "連續配發現金股利至少這麼多年(選填,1 至 30):以除息日年度計,從換股日以前最近一次除息的年度往回數;" +
+				"最近一次除息的年度早於換股年前一年的不通過。" + dividendRule,
+		},
 	}
 }
+
+// dividendRule 是存股條件的共同說明。
+const dividendRule = "除息資料來自每日重算的填息事件(日線 2012 年起),只用換股當天已發生的除息;只用於新買進"
 
 // validate 檢查基本面門檻的範圍(與 Data API 相同)。
 func (f BacktestFundamentals) validate() error {
@@ -156,6 +184,9 @@ func (f BacktestFundamentals) validate() error {
 		{"min_major_change", f.MinMajorChange, -100, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
+		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
+		{"min_fill_rate_percent", f.MinFillRatePercent, 0, 100},
+		{"max_avg_fill_days", f.MaxAvgFillDays, 1, 120},
 	} {
 		if v := bound.value; v != nil && (math.IsNaN(*v) || *v < bound.min || *v > bound.max) {
 			return fmt.Errorf("參數 %s 必須介於 %s 到 %s 之間", bound.name, formatFloat(bound.min), formatFloat(bound.max))
@@ -173,6 +204,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.MinFScore != nil && (*f.MinFScore < 0 || *f.MinFScore > 9) {
 		return fmt.Errorf("參數 min_f_score 必須介於 0 到 9 之間")
 	}
+	if f.MinDividendYears != 0 && (f.MinDividendYears < 1 || f.MinDividendYears > 30) {
+		return fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
+	}
 	return nil
 }
 
@@ -185,6 +219,8 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
 		"max_pe": f.MaxPE, "max_pb": f.MaxPB, "min_major_change": f.MinMajorChange,
 		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
+		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
+		"max_avg_fill_days": f.MaxAvgFillDays,
 	} {
 		if value != nil {
 			values.Set(key, formatFloat(*value))
@@ -201,6 +237,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinFScore != nil {
 		values.Set("min_f_score", fmt.Sprint(*f.MinFScore))
+	}
+	if f.MinDividendYears > 0 {
+		values.Set("min_dividend_years", fmt.Sprint(f.MinDividendYears))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -272,6 +311,24 @@ func fScoreTexts(minFScore *int) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("已公布年度 F 分數 ≥ %d", *minFScore)}
+}
+
+// dividendTexts 描述存股條件(殖利率、填息率、平均填息天數、連續配息年數);nil 與 0 代表不篩選。
+func dividendTexts(yield, fillRate, avgFillDays *float64, years int) []string {
+	var filters []string
+	if yield != nil {
+		filters = append(filters, fmt.Sprintf("換股當天現金殖利率 ≥ %s%%", formatFloat(*yield)))
+	}
+	if fillRate != nil {
+		filters = append(filters, fmt.Sprintf("近 5 年填息率 ≥ %s%%", formatFloat(*fillRate)))
+	}
+	if avgFillDays != nil {
+		filters = append(filters, fmt.Sprintf("近 5 年平均填息 ≤ %s 個交易日", formatFloat(*avgFillDays)))
+	}
+	if years > 0 {
+		filters = append(filters, fmt.Sprintf("連續配息 ≥ %d 年", years))
+	}
+	return filters
 }
 
 // revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。

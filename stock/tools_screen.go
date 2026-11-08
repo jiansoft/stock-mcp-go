@@ -69,9 +69,14 @@ type ScreenStocksInput struct {
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
 	NewHighDays               int      `json:"new_high_days,omitempty"`
-	SortBy                    string   `json:"sort_by,omitempty"`
-	SortOrder                 string   `json:"sort_order,omitempty"`
-	Limit                     int      `json:"limit,omitempty"`
+	// MinFillRatePercent、MaxAvgFillDays、MinDividendYears 是存股條件:近 5 年填息率下限、平均填息天數上限、
+	// 連續配息年數下限(0 為不篩)。
+	MinFillRatePercent *float64 `json:"min_fill_rate_percent,omitempty"`
+	MaxAvgFillDays     *float64 `json:"max_avg_fill_days,omitempty"`
+	MinDividendYears   int      `json:"min_dividend_years,omitempty"`
+	SortBy             string   `json:"sort_by,omitempty"`
+	SortOrder          string   `json:"sort_order,omitempty"`
+	Limit              int      `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -167,6 +172,16 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0),
 				Description: "只留最近 N 個日曆天(含查詢日,1–365)內創過 52 週新高的股票(CANSLIM 的 N);每檔附最近一次新高日",
 			},
+			"min_fill_rate_percent": number(0, 100,
+				"近 5 年填息率下限(%,存股條件):除息日在查詢日前 5 年內、已觀察滿 120 個交易日的現金除息中,120 個交易日內收盤回到填息價的比例;"+
+					"沒有觀察期已滿的除息不符合。每檔都會回傳 fill_rate_percent、avg_fill_days、dividend_years"),
+			"max_avg_fill_days": number(1, 120,
+				"近 5 年已填息者的平均填息交易日數上限(1–120,存股條件);都沒有填息的不符合"),
+			"min_dividend_years": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+				Description: "連續配發現金股利的年數下限(1–30,存股條件),以除息日年度計;最近一次除息早於查詢年前一年的不符合。" +
+					"可搭配 min_dividend_yield_percent、min_fill_rate_percent 找高殖利率又常填息的股票",
+			},
 			"sort_by": {
 				Type:        "string",
 				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth"},
@@ -254,6 +269,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"min_major_change", in.MinMajorChange, -100, 100},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
+		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
+		{"max_avg_fill_days", in.MaxAvgFillDays, 1, 120},
 	} {
 		if err := validateOptionalFloat(check.field, check.value, check.minimum, check.max); err != nil {
 			return nil, nil, err
@@ -286,6 +303,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.NewHighDays != 0 && (in.NewHighDays < 1 || in.NewHighDays > 365) {
 		return nil, nil, fmt.Errorf("參數 new_high_days 必須介於 1 到 365 之間")
 	}
+	if in.MinDividendYears != 0 && (in.MinDividendYears < 1 || in.MinDividendYears > 30) {
+		return nil, nil, fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
+	}
 
 	// all 是預設資料範圍，不會縮小結果，單獨提供不算實質篩選；twse/tpex
 	// 會把範圍縮到單一市場，所以本身即可作為必要的篩選條件。
@@ -295,7 +315,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
-		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0
+		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
+		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -336,6 +357,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
+		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
@@ -361,6 +383,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenGrowthLine(first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenDividendLine(first); line != "" {
 			summary = line + "\n" + summary
 		}
 	}
@@ -458,6 +483,16 @@ func screenGrowthLine(first ScreenedStock) string {
 	}
 	return fmt.Sprintf("首筆成長指標:單季 EPS 年增 %s、近 3 年每年 EPS 年增最低 %s、最近一次 52 週新高 %s。",
 		displayPercent(first.EPSYoYPercent), annual, displayString(first.NewHighDate))
+}
+
+// screenDividendLine 描述首筆的存股指標(近 5 年填息率、平均填息天數、連續配息年數);沒有填息率且沒有連續配息時
+// 回空字串(舊版 API 或不配息的股票)。
+func screenDividendLine(first ScreenedStock) string {
+	if first.FillRatePercent == nil && (first.DividendYears == nil || *first.DividendYears == 0) {
+		return ""
+	}
+	return fmt.Sprintf("首筆存股指標:近 5 年填息率 %s、平均填息 %s 個交易日、連續配息 %s 年。",
+		displayPercent(first.FillRatePercent), displayFloat(first.AvgFillDays), displayInt(first.DividendYears))
 }
 
 // screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。
