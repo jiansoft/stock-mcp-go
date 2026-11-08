@@ -137,6 +137,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		newHighDays = *e.NewHighDays
 	}
 	filters = append(filters, canslimTexts(e.MinEPSYoYPercent, e.MinAnnualEPSGrowthPercent, newHighDays)...)
+	filters = append(filters, fScoreTexts(e.MinFScore)...)
 	filters = append(filters, marginFilterTexts(e.MinGrossMarginPercent, e.MinOperatingMarginPercent,
 		e.MarginsYoYUp, e.MaxDebtRatioPercent)...)
 	if signal := backtestSignalText(e.Indicator, e.Kind); signal != "" {

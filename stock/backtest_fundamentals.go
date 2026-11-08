@@ -34,6 +34,8 @@ type BacktestFundamentals struct {
 	MinEPSYoYPercent          *float64
 	MinAnnualEPSGrowthPercent *float64
 	NewHighDays               int
+	// MinFScore 是換股當天已公布的最近一個年度 Piotroski F 分數下限(0 至 9);nil 為不篩選。
+	MinFScore *int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -125,6 +127,12 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0),
 			Description: "只選換股日(含)往前 N 個日曆天內(選填,1 至 365)創過 52 週新高的股票(CANSLIM 的 N;訊號 2019 年起);只用於新買進",
 		},
+		"min_f_score": {
+			Type: "integer", Minimum: ptr(0.0), Maximum: ptr(9.0),
+			Description: "換股當天已公布的最近一個年度 Piotroski F 分數至少這麼高(選填,0 至 9;7 以上常見於價值選股)。" +
+				"每個年度與前一年度比較,年報隔年 4/1 起才用,評分年度落後換股年超過 2 年或沒有年報的不通過;" +
+				"可搭配 max_pb 做低淨值比的價值股;只用於新買進",
+		},
 	}
 }
 
@@ -162,6 +170,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.NewHighDays != 0 && (f.NewHighDays < 1 || f.NewHighDays > 365) {
 		return fmt.Errorf("參數 new_high_days 必須介於 1 到 365 之間")
 	}
+	if f.MinFScore != nil && (*f.MinFScore < 0 || *f.MinFScore > 9) {
+		return fmt.Errorf("參數 min_f_score 必須介於 0 到 9 之間")
+	}
 	return nil
 }
 
@@ -187,6 +198,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.NewHighDays > 0 {
 		values.Set("new_high_days", fmt.Sprint(f.NewHighDays))
+	}
+	if f.MinFScore != nil {
+		values.Set("min_f_score", fmt.Sprint(*f.MinFScore))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -250,6 +264,14 @@ func canslimTexts(epsYoY, annualGrowth *float64, newHighDays int) []string {
 		filters = append(filters, fmt.Sprintf("近 %d 天內創 52 週新高", newHighDays))
 	}
 	return filters
+}
+
+// fScoreTexts 描述已公布年度 F 分數下限;nil 代表不篩選。
+func fScoreTexts(minFScore *int) []string {
+	if minFScore == nil {
+		return nil
+	}
+	return []string{fmt.Sprintf("已公布年度 F 分數 ≥ %d", *minFScore)}
 }
 
 // revenueRecordTexts 描述營收創歷史新高條件;false 代表不篩選。
