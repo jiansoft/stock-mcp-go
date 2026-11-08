@@ -75,6 +75,11 @@ type ScreenedStock struct {
 	AnnualEPSGrowthPercent *float64 `json:"annual_eps_growth_percent"`
 	AnnualEPSYear          *int     `json:"annual_eps_year"`
 	NewHighDate            *string  `json:"new_high_date"`
+	// FillRatePercent、AvgFillDays 是近 5 年(已觀察滿 120 個交易日)的填息率與已填息者平均填息交易日數;
+	// DividendYears 是連續配發現金股利的年數。舊版 API 沒有這些欄位時為 nil。
+	FillRatePercent *float64 `json:"fill_rate_percent"`
+	AvgFillDays     *float64 `json:"avg_fill_days"`
+	DividendYears   *int     `json:"dividend_years"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -128,9 +133,13 @@ type ScreenOptions struct {
 	MinEPSYoYPercent          *float64
 	MinAnnualEPSGrowthPercent *float64
 	NewHighDays               int
-	SortBy                    string
-	SortOrder                 string
-	Limit                     int
+	// MinFillRatePercent、MaxAvgFillDays 是近 5 年填息率下限與平均填息天數上限(nil 為不篩);MinDividendYears 為 0 不篩。
+	MinFillRatePercent *float64
+	MaxAvgFillDays     *float64
+	MinDividendYears   int
+	SortBy             string
+	SortOrder          string
+	Limit              int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。

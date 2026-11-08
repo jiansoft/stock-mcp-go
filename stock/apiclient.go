@@ -349,6 +349,15 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.NewHighDays > 0 {
 		values.Set("new_high_days", fmt.Sprint(opt.NewHighDays))
 	}
+	if opt.MinFillRatePercent != nil {
+		values.Set("min_fill_rate_percent", formatFloat(*opt.MinFillRatePercent))
+	}
+	if opt.MaxAvgFillDays != nil {
+		values.Set("max_avg_fill_days", formatFloat(*opt.MaxAvgFillDays))
+	}
+	if opt.MinDividendYears > 0 {
+		values.Set("min_dividend_years", fmt.Sprint(opt.MinDividendYears))
+	}
 
 	var body Screening
 	if err := c.get(ctx, "/api/v1/stocks/screen?"+values.Encode(), &body); err != nil {
