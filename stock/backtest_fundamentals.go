@@ -150,7 +150,7 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 		},
 		"max_peg": {
 			Type: "number", Minimum: ptr(0.01), Maximum: ptr(10.0),
-			Description: "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率 ≤ 0 的不通過,例如 1 代表本益比不高於成長率。換股日只用已過法定期限的那一季,只用於新買進",
+			Description: "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率不在 0～100%(超過 100% 多為低基期轉盈,PEG 失真)的不通過,例如 1 代表本益比不高於成長率。換股日只用已過法定期限的那一季,只用於新買進",
 		},
 		"min_eps_yoy_percent": {
 			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
@@ -344,7 +344,7 @@ func pegTexts(maxPEG *float64) []string {
 	if maxPEG == nil {
 		return nil
 	}
-	return []string{"PEG(本益比 ÷ 近四季 EPS 成長率)≤ " + formatFloat(*maxPEG) + "(虧損或衰退不選)"}
+	return []string{"PEG(本益比 ÷ 近四季 EPS 成長率)≤ " + formatFloat(*maxPEG) + "(虧損、衰退或成長逾 100% 不選)"}
 }
 
 // defaultMajorChangeWeeks 是 Data API 的 major_change_weeks 預設值。
