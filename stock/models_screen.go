@@ -84,6 +84,8 @@ type ScreenedStock struct {
 	DividendYears   *int     `json:"dividend_years"`
 	// DividendGrowthYears 是完整年度現金股利連續不減少的年數;舊版 API 為 nil。
 	DividendGrowthYears *int `json:"dividend_growth_years"`
+	// TrendTemplate 是否符合 Minervini 趨勢模板;資料不足、日線過期或舊版 API 為 nil。
+	TrendTemplate *bool `json:"trend_template"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -143,6 +145,8 @@ type ScreenOptions struct {
 	MinDividendYears   int
 	// MinDividendGrowthYears 是股利成長年數下限;0 為不篩。
 	MinDividendGrowthYears int
+	// TrendTemplate 為 true 時只留符合 Minervini 趨勢模板的股票。
+	TrendTemplate bool
 	// MinRevenueAccelerationMonths 是營收加速月數下限;0 為不篩。
 	MinRevenueAccelerationMonths int
 	SortBy                       string

@@ -144,6 +144,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	if e.MinDividendGrowthYears != nil {
 		filters = append(filters, dividendGrowthTexts(*e.MinDividendGrowthYears)...)
 	}
+	filters = append(filters, trendTemplateTexts(e.TrendTemplate)...)
 	dividendYears := 0
 	if e.MinDividendYears != nil {
 		dividendYears = *e.MinDividendYears
