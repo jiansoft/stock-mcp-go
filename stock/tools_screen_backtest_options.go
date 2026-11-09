@@ -162,6 +162,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinDividendYieldPercent: in.MinDividendYieldPercent, MinFillRatePercent: in.MinFillRatePercent,
 		MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
+		MinDividendGrowthYears:       in.MinDividendGrowthYears,
 	}
 	if err := fundamentals.validate(); err != nil {
 		return ScreenBacktestOptions{}, err

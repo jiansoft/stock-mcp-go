@@ -74,6 +74,8 @@ type ScreenStocksInput struct {
 	MinFillRatePercent *float64 `json:"min_fill_rate_percent,omitempty"`
 	MaxAvgFillDays     *float64 `json:"max_avg_fill_days,omitempty"`
 	MinDividendYears   int      `json:"min_dividend_years,omitempty"`
+	// MinDividendGrowthYears 是股利成長年數下限(1–30);0 為不篩。
+	MinDividendGrowthYears int `json:"min_dividend_growth_years,omitempty"`
 	// MinRevenueAccelerationMonths 是營收加速月數下限(1–11);0 為不篩。
 	MinRevenueAccelerationMonths int    `json:"min_revenue_acceleration_months,omitempty"`
 	SortBy                       string `json:"sort_by,omitempty"`
@@ -188,6 +190,11 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
 				Description: "連續配發現金股利的年數下限(1–30,存股條件),以除息日年度計;最近一次除息早於查詢年前一年的不符合。" +
 					"可搭配 min_dividend_yield_percent、min_fill_rate_percent 找高殖利率又常填息的股票",
+			},
+			"min_dividend_growth_years": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+				Description: "股利成長年數下限(1–30,股利貴族):以除息日年度加總現金股利,只看查詢年以前的完整年度,從查詢年前一年往回" +
+					"每年都不低於前一年(年度相連)的年數;例如 5 代表連續 6 年配息且 5 次都沒減少。每檔附 dividend_growth_years",
 			},
 			"sort_by": {
 				Type:        "string",
@@ -313,6 +320,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MinRevenueAccelerationMonths != 0 && (in.MinRevenueAccelerationMonths < 1 || in.MinRevenueAccelerationMonths > 11) {
 		return nil, nil, fmt.Errorf("參數 min_revenue_acceleration_months 必須介於 1 到 11 之間")
 	}
+	if in.MinDividendGrowthYears != 0 && (in.MinDividendGrowthYears < 1 || in.MinDividendGrowthYears > 30) {
+		return nil, nil, fmt.Errorf("參數 min_dividend_growth_years 必須介於 1 到 30 之間")
+	}
 	if in.MinDividendYears != 0 && (in.MinDividendYears < 1 || in.MinDividendYears > 30) {
 		return nil, nil, fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -327,7 +337,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
-		in.MinRevenueAccelerationMonths > 0
+		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -370,6 +380,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
+		MinDividendGrowthYears:       in.MinDividendGrowthYears,
 		SortBy:                       sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
@@ -497,14 +508,18 @@ func screenGrowthLine(first ScreenedStock) string {
 		displayPercent(first.EPSYoYPercent), annual, displayString(first.NewHighDate))
 }
 
-// screenDividendLine 描述首筆的存股指標(近 5 年填息率、平均填息天數、連續配息年數);沒有填息率且沒有連續配息時
-// 回空字串(舊版 API 或不配息的股票)。
+// screenDividendLine 描述首筆的存股指標(近 5 年填息率、平均填息天數、連續配息年數,有股利成長年數時一併附上);
+// 沒有填息率且沒有連續配息時回空字串(舊版 API 或不配息的股票)。
 func screenDividendLine(first ScreenedStock) string {
 	if first.FillRatePercent == nil && (first.DividendYears == nil || *first.DividendYears == 0) {
 		return ""
 	}
-	return fmt.Sprintf("首筆存股指標:近 5 年填息率 %s、平均填息 %s 個交易日、連續配息 %s 年。",
-		displayPercent(first.FillRatePercent), displayFloat(first.AvgFillDays), displayInt(first.DividendYears))
+	growth := ""
+	if first.DividendGrowthYears != nil {
+		growth = fmt.Sprintf("、股利連續不減少 %d 年", *first.DividendGrowthYears)
+	}
+	return fmt.Sprintf("首筆存股指標:近 5 年填息率 %s、平均填息 %s 個交易日、連續配息 %s 年%s。",
+		displayPercent(first.FillRatePercent), displayFloat(first.AvgFillDays), displayInt(first.DividendYears), growth)
 }
 
 // screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。
