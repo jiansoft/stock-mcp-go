@@ -102,6 +102,9 @@ type ScreenedStock struct {
 	// EPSTTMGrowthPercent 是近四季 EPS 對前四季的成長率(%);PEGRatio 是本益比 ÷ 成長率(虧損、衰退或成長逾 100% 時為 nil)。
 	EPSTTMGrowthPercent *float64 `json:"eps_ttm_growth_percent"`
 	PEGRatio            *float64 `json:"peg_ratio"`
+	// VolatilityPercent、Beta 是查詢日前 10 天內最新的近 240 日年化波動度(%)與對加權指數 beta;資料不足或舊版 API 為 nil。
+	VolatilityPercent *float64 `json:"volatility_percent"`
+	Beta              *float64 `json:"beta"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -154,6 +157,9 @@ type ScreenOptions struct {
 	MaxMarginChangePercent *float64
 	// MaxPEG 是 PEG 上限。
 	MaxPEG *float64
+	// MaxVolatilityPercent、MaxBeta 是年化波動度(%)與 beta 上限。
+	MaxVolatilityPercent *float64
+	MaxBeta              *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。

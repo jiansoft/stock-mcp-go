@@ -346,6 +346,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MaxPEG != nil {
 		values.Set("max_peg", formatFloat(*opt.MaxPEG))
 	}
+	if opt.MaxVolatilityPercent != nil {
+		values.Set("max_volatility_percent", formatFloat(*opt.MaxVolatilityPercent))
+	}
+	if opt.MaxBeta != nil {
+		values.Set("max_beta", formatFloat(*opt.MaxBeta))
+	}
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}
