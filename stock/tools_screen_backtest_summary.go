@@ -53,14 +53,16 @@ func rankByText(rankBy string) string {
 		return "神奇公式名次合計"
 	case "peg":
 		return "PEG"
+	case "low_volatility":
+		return "近 240 日年化波動度"
 	}
 	return "相對強度分數"
 }
 
-// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比、神奇公式名次合計、PEG);其餘由高到低。
+// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比、神奇公式名次合計、PEG、波動度);其餘由高到低。
 func rankAscending(rankBy string) bool {
 	switch rankBy {
-	case "pe_ratio", "pb_ratio", "magic_formula", "peg":
+	case "pe_ratio", "pb_ratio", "magic_formula", "peg", "low_volatility":
 		return true
 	}
 	return false
@@ -134,6 +136,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	filters = append(filters, revenueScaleCashTexts(e.MinMonthlyRevenue, e.PositiveFreeCashFlow)...)
 	filters = append(filters, valuationCapTexts(e.MaxPE, e.MaxPB)...)
 	filters = append(filters, pegTexts(e.MaxPEG)...)
+	filters = append(filters, lowVolatilityTexts(e.MaxVolatilityPercent, e.MaxBeta)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {
