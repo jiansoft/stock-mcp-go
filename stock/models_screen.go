@@ -19,8 +19,10 @@ type ScreenedStock struct {
 	RevenueYOYPercent *float64 `json:"revenue_yoy_percent"`
 	// 營收動能:從最新月份往回連續年增的月數(最多 12)與近 3 個月合計營收年增率;
 	// 最新營收過期時兩者皆為 nil,三個月不相連時近 3 月年增率為 nil。
-	RevenueYOYStreak    *int     `json:"revenue_yoy_streak"`
-	RevenueYOY3MPercent *float64 `json:"revenue_yoy_3m_percent"`
+	RevenueYOYStreak *int `json:"revenue_yoy_streak"`
+	// RevenueAccelerationMonths 是從最新月往回,年增率逐月高於前一個月(月份相連)的月數;營收過期或舊版 API 為 nil。
+	RevenueAccelerationMonths *int     `json:"revenue_acceleration_months"`
+	RevenueYOY3MPercent       *float64 `json:"revenue_yoy_3m_percent"`
 	// MonthlyRevenue 是最新一個月營收(千元);最新營收過期時為 nil。
 	MonthlyRevenue       *float64 `json:"monthly_revenue"`
 	EarningsPerShare     *float64 `json:"earnings_per_share"`
@@ -137,9 +139,11 @@ type ScreenOptions struct {
 	MinFillRatePercent *float64
 	MaxAvgFillDays     *float64
 	MinDividendYears   int
-	SortBy             string
-	SortOrder          string
-	Limit              int
+	// MinRevenueAccelerationMonths 是營收加速月數下限;0 為不篩。
+	MinRevenueAccelerationMonths int
+	SortBy                       string
+	SortOrder                    string
+	Limit                        int
 }
 
 // Screener 是 Phase 3 選股工具對資料來源的最小需求介面。

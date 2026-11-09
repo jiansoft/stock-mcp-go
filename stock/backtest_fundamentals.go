@@ -42,6 +42,9 @@ type BacktestFundamentals struct {
 	MinFillRatePercent      *float64
 	MaxAvgFillDays          *float64
 	MinDividendYears        int
+	// MinRevenueAccelerationMonths 是營收加速月數下限:已公布的月營收從最新月往回,年增率逐月高於前一個月(月份相連)
+	// 的月數(1 至 11);0 為不篩選。
+	MinRevenueAccelerationMonths int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -139,6 +142,11 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 				"每個年度與前一年度比較,年報隔年 4/1 起才用,評分年度落後換股年超過 2 年或沒有年報的不通過;" +
 				"可搭配 max_pb 做低淨值比的價值股;只用於新買進",
 		},
+		"min_revenue_acceleration_months": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(11.0),
+			Description: "營收加速:換股當天已公布的月營收從最新一個月往回,年增率逐月高於前一個月(月份相連)至少這麼多個月(選填,1 至 11;" +
+				"例如 2 代表最近 3 個月的年增率一個比一個高)。可搭配 min_revenue_yoy_percent 排除年增率仍為負的股票。" + revenueRule,
+		},
 		"min_dividend_yield_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "換股當天的現金殖利率至少這麼高(%,選填,0 至 100;存股常用 5):最近一次除息往回 350 天的現金股利合計 ÷ 換股日收盤," +
@@ -204,6 +212,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.MinFScore != nil && (*f.MinFScore < 0 || *f.MinFScore > 9) {
 		return fmt.Errorf("參數 min_f_score 必須介於 0 到 9 之間")
 	}
+	if f.MinRevenueAccelerationMonths != 0 && (f.MinRevenueAccelerationMonths < 1 || f.MinRevenueAccelerationMonths > 11) {
+		return fmt.Errorf("參數 min_revenue_acceleration_months 必須介於 1 到 11 之間")
+	}
 	if f.MinDividendYears != 0 && (f.MinDividendYears < 1 || f.MinDividendYears > 30) {
 		return fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -240,6 +251,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinDividendYears > 0 {
 		values.Set("min_dividend_years", fmt.Sprint(f.MinDividendYears))
+	}
+	if f.MinRevenueAccelerationMonths > 0 {
+		values.Set("min_revenue_acceleration_months", fmt.Sprint(f.MinRevenueAccelerationMonths))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -311,6 +325,14 @@ func fScoreTexts(minFScore *int) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("已公布年度 F 分數 ≥ %d", *minFScore)}
+}
+
+// revenueAccelerationTexts 描述營收加速條件;0 代表不篩選。
+func revenueAccelerationTexts(months int) []string {
+	if months <= 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("已公布的月營收年增率連續 %d 個月逐月提高", months)}
 }
 
 // dividendTexts 描述存股條件(殖利率、填息率、平均填息天數、連續配息年數);nil 與 0 代表不篩選。
