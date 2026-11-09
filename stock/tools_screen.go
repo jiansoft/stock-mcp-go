@@ -71,6 +71,8 @@ type ScreenStocksInput struct {
 	// MaxVolatilityPercent、MaxBeta 是近 240 日年化波動度(%)與 beta 上限。
 	MaxVolatilityPercent *float64 `json:"max_volatility_percent,omitempty"`
 	MaxBeta              *float64 `json:"max_beta,omitempty"`
+	// MaxBias240 是年線乖離率(%)上限。
+	MaxBias240 *float64 `json:"max_bias240,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
 	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
@@ -185,6 +187,7 @@ func screenStocksSchema() *jsonschema.Schema {
 					"基期融資為 0(不能融資或沒有資料)的不列入,每檔附 margin_change_percent"),
 			"max_volatility_percent": number(1, 200, "年化波動度上限(%,1 至 200,選填;低波動):近 240 筆日線漲跌幅的樣本標準差 × √240,樣本不足 200 筆的不通過(0050 約 20～30%);每檔附 volatility_percent"),
 			"max_beta":               number(-5, 5, "beta 上限(-5 至 5,選填;低波動):近 240 筆日線對加權指數日報酬的迴歸斜率;台股大盤由台積電主導,非電子股的 beta 常接近 0;每檔附 beta"),
+			"max_bias240":            number(-90, 100, "年線乖離率上限(%,-90 至 100,選填;均值回歸):收盤 ÷ 240 日均線 − 1,例如 -15 只選跌破年線 15% 以上的股票;年線用未還原收盤計算(除權息後乖離偏低),上市未滿一年的不通過;建議搭配 min_f_score 或 min_roe_percent 避開體質變差的;每檔附 bias240_percent"),
 			"max_peg":                number(0.01, 10, "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率不在 0～100%(超過 100% 多為低基期轉盈,PEG 失真)的不通過,例如 1 代表本益比不高於成長率;每檔附 eps_ttm_growth_percent、peg_ratio"),
 			"range_breakout_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
@@ -222,13 +225,13 @@ func screenStocksSchema() *jsonschema.Schema {
 			},
 			"sort_by": {
 				Type:    "string",
-				Enum:    []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth", "magic_formula", "peg", "volatility", "beta"},
+				Enum:    []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth", "magic_formula", "peg", "volatility", "beta", "bias240"},
 				Default: []byte(`"stock_symbol"`),
 				Description: "固定白名單排序欄位;magic_formula 為神奇公式(Greenblatt)名次合計:盈餘殖利率(近四季營業利益 ÷ 企業價值)名次 + " +
 					"資本報酬率(÷ 淨營運資金 + 不動產廠房設備)名次,搭配 sort_order=asc 由好到差;每檔都附 earnings_yield_percent、" +
 					"return_on_capital_percent、magic_formula_rank(名次只在本次篩選範圍內比較)、magic_formula_ranked_count(排名母體檔數)與分子分母 " +
-					"operating_income_ttm、invested_capital、enterprise_value(千元;金融業沒有資料);peg 為 PEG 由低到高(搭配 asc)。" +
-					"magic_formula 與 peg 單獨即可查詢(全市場排行),其他排序仍需篩選條件",
+					"operating_income_ttm、invested_capital、enterprise_value(千元;金融業沒有資料);peg 為 PEG 由低到高(搭配 asc);bias240 為年線乖離率(搭配 asc 跌最深的排前面)。" +
+					"magic_formula、peg 與 bias240 單獨即可查詢(全市場排行),其他排序仍需篩選條件",
 			},
 			"sort_order": {
 				Type:        "string",
@@ -314,6 +317,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"max_peg", in.MaxPEG, 0.01, 10},
 		{"max_volatility_percent", in.MaxVolatilityPercent, 1, 200},
 		{"max_beta", in.MaxBeta, -5, 5},
+		{"max_bias240", in.MaxBias240, -90, 100},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
@@ -369,12 +373,12 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
 		in.MinHolder400Change != nil || in.MaxMarginChangePercent != nil || in.MaxPEG != nil || rankingSort(in.SortBy) ||
-		in.MaxVolatilityPercent != nil || in.MaxBeta != nil ||
+		in.MaxVolatilityPercent != nil || in.MaxBeta != nil || in.MaxBias240 != nil ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
 		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
 	if !hasFilter {
-		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、limit 與 magic_formula／peg 以外的排序不算篩選條件")
+		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、limit 與 magic_formula／peg／bias240 以外的排序不算篩選條件")
 	}
 
 	sortBy := strings.ToLower(strings.TrimSpace(in.SortBy))
@@ -384,7 +388,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	validSort := map[string]bool{
 		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true, "operating_margin": true, "rs_score": true,
-		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true, "magic_formula": true, "peg": true, "volatility": true, "beta": true,
+		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true, "magic_formula": true, "peg": true, "volatility": true, "beta": true, "bias240": true,
 	}
 	if !validSort[sortBy] {
 		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
@@ -413,7 +417,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
 		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent, MaxPEG: in.MaxPEG,
-		MaxVolatilityPercent: in.MaxVolatilityPercent, MaxBeta: in.MaxBeta,
+		MaxVolatilityPercent: in.MaxVolatilityPercent, MaxBeta: in.MaxBeta, MaxBias240: in.MaxBias240,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
@@ -444,6 +448,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenGrowthLine(first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenBias240Line(first); line != "" {
 			summary = line + "\n" + summary
 		}
 		if line := screenVolatilityLine(first); line != "" {
@@ -575,10 +582,10 @@ func screenDividendLine(first ScreenedStock) string {
 // extremeReturnOnCapital 是資本報酬率提示的門檻(%):超過時投入資本相對營業利益很小,比率容易失真。
 const extremeReturnOnCapital = 200.0
 
-// rankingSort 回報排序本身是否就是全市場排行(神奇公式、PEG),不必另設篩選條件。
+// rankingSort 回報排序本身是否就是全市場排行(神奇公式、PEG、年線乖離),不必另設篩選條件。
 func rankingSort(sortBy string) bool {
 	switch strings.ToLower(strings.TrimSpace(sortBy)) {
-	case "magic_formula", "peg":
+	case "magic_formula", "peg", "bias240":
 		return true
 	}
 	return false
@@ -599,6 +606,14 @@ func screenMagicFormulaLine(first ScreenedStock) string {
 		line += "資本報酬率極高:投入資本(淨營運資金 + 不動產廠房設備)相對營業利益很小,比率容易失真,宜一併看盈餘殖利率。"
 	}
 	return line
+}
+
+// screenBias240Line 描述首筆的年線乖離率;沒有資料時回空字串(上市未滿一年或舊版 API)。
+func screenBias240Line(first ScreenedStock) string {
+	if first.Bias240Percent == nil {
+		return ""
+	}
+	return "首筆年線乖離:收盤相對 240 日均線 " + displayPercent(first.Bias240Percent) + "。"
 }
 
 // screenVolatilityLine 描述首筆的近 240 日年化波動度與 beta;兩者都沒有時回空字串(資料不足或舊版 API)。

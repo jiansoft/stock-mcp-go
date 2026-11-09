@@ -105,6 +105,8 @@ type ScreenedStock struct {
 	// VolatilityPercent、Beta 是查詢日前 10 天內最新的近 240 日年化波動度(%)與對加權指數 beta;資料不足或舊版 API 為 nil。
 	VolatilityPercent *float64 `json:"volatility_percent"`
 	Beta              *float64 `json:"beta"`
+	// Bias240Percent 是查詢日前 10 天內最新一筆日線的年線乖離率(%);上市未滿一年或舊版 API 為 nil。
+	Bias240Percent *float64 `json:"bias240_percent"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -160,6 +162,8 @@ type ScreenOptions struct {
 	// MaxVolatilityPercent、MaxBeta 是年化波動度(%)與 beta 上限。
 	MaxVolatilityPercent *float64
 	MaxBeta              *float64
+	// MaxBias240 是年線乖離率(%)上限。
+	MaxBias240 *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。
