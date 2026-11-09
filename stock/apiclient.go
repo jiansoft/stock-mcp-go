@@ -361,6 +361,9 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinDividendGrowthYears > 0 {
 		values.Set("min_dividend_growth_years", fmt.Sprint(opt.MinDividendGrowthYears))
 	}
+	if opt.TrendTemplate {
+		values.Set("trend_template", "true")
+	}
 	if opt.MinRevenueAccelerationMonths > 0 {
 		values.Set("min_revenue_acceleration_months", fmt.Sprint(opt.MinRevenueAccelerationMonths))
 	}

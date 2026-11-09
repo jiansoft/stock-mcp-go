@@ -169,6 +169,7 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	filters = append(filters, fScoreTexts(fundamentals.MinFScore)...)
 	filters = append(filters, revenueAccelerationTexts(fundamentals.MinRevenueAccelerationMonths)...)
 	filters = append(filters, dividendGrowthTexts(fundamentals.MinDividendGrowthYears)...)
+	filters = append(filters, trendTemplateTexts(fundamentals.TrendTemplate)...)
 	filters = append(filters, dividendTexts(fundamentals.MinDividendYieldPercent, fundamentals.MinFillRatePercent,
 		fundamentals.MaxAvgFillDays, fundamentals.MinDividendYears)...)
 	filters = append(filters, marginFilterTexts(fundamentals.MinGrossMarginPercent, fundamentals.MinOperatingMarginPercent,

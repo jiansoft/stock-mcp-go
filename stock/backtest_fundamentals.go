@@ -48,6 +48,8 @@ type BacktestFundamentals struct {
 	// MinDividendGrowthYears 是股利成長年數下限:換股年以前的完整年度現金股利合計,從換股年前一年往回每年不低於
 	// 前一年(年度相連)的年數(1 至 30);0 為不篩選。
 	MinDividendGrowthYears int
+	// TrendTemplate 為 true 時只選換股當天符合 Minervini 趨勢模板(MA20 > MA60 > MA120 > MA240、收盤站上 MA240、不低於 52 週最高價的 75% 且比 52 週最低價高 30% 以上)的股票。
+	TrendTemplate bool
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -91,6 +93,11 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 		"max_debt_ratio_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1000.0),
 			Description: "換股當天已公布的最近一季季末負債比不超過這個值(%,選填,0 至 1000)。" + statementRule,
+		},
+		"trend_template": {
+			Type: "boolean",
+			Description: "true 時只選換股當天收盤後符合 Minervini 趨勢模板的股票:MA20 > MA60 > MA120 > MA240、收盤站上 MA240、不低於 52 週最高價的 75% 且比 52 週最低價高 30% 以上;" +
+				"年線或 52 週最低價為 0(上市未滿一年或資料不足)的不通過。只用於新買進,可搭配 min_rs_score 找相對強勢股",
 		},
 		"revenue_record": {
 			Type:        "boolean",
@@ -275,6 +282,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	if f.RevenueRecord {
 		values.Set("revenue_record", "true")
 	}
+	if f.TrendTemplate {
+		values.Set("trend_template", "true")
+	}
 	if f.PositiveFreeCashFlow {
 		values.Set("positive_free_cash_flow", "true")
 	}
@@ -355,6 +365,17 @@ func dividendGrowthTexts(years int) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("完整年度現金股利連續 %d 年不減少", years)}
+}
+
+// trendTemplateText 是 Minervini 趨勢模板條件的說明。
+const trendTemplateText = "符合 Minervini 趨勢模板(MA20 > MA60 > MA120 > MA240、收盤站上 MA240、不低於 52 週最高價的 75% 且比 52 週最低價高 30% 以上)"
+
+// trendTemplateTexts 描述趨勢模板條件;false 代表不篩選。
+func trendTemplateTexts(enabled bool) []string {
+	if !enabled {
+		return nil
+	}
+	return []string{trendTemplateText}
 }
 
 // dividendTexts 描述存股條件(殖利率、填息率、平均填息天數、連續配息年數);nil 與 0 代表不篩選。

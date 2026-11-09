@@ -76,6 +76,8 @@ type ScreenStocksInput struct {
 	MinDividendYears   int      `json:"min_dividend_years,omitempty"`
 	// MinDividendGrowthYears 是股利成長年數下限(1–30);0 為不篩。
 	MinDividendGrowthYears int `json:"min_dividend_growth_years,omitempty"`
+	// TrendTemplate 為 true 時只留符合 Minervini 趨勢模板的股票。
+	TrendTemplate bool `json:"trend_template,omitempty"`
 	// MinRevenueAccelerationMonths 是營收加速月數下限(1–11);0 為不篩。
 	MinRevenueAccelerationMonths int    `json:"min_revenue_acceleration_months,omitempty"`
 	SortBy                       string `json:"sort_by,omitempty"`
@@ -131,6 +133,11 @@ func screenStocksSchema() *jsonschema.Schema {
 			"revenue_record": {
 				Type:        "boolean",
 				Description: "true 時只留最新月營收創歷史新高(高於之前所有月份,之前至少 12 個月)的股票",
+			},
+			"trend_template": {
+				Type: "boolean",
+				Description: "true 時只留符合 Minervini 趨勢模板的股票(查詢日前 10 天內最新一筆日線):MA20 > MA60 > MA120 > MA240、收盤站上 MA240、不低於 52 週最高價的 75% 且比 52 週最低價高 30% 以上;" +
+					"每檔附 trend_template(資料不足為 null)。可搭配 min_rs_score 找相對強勢股",
 			},
 			"positive_free_cash_flow": {
 				Type:        "boolean",
@@ -337,7 +344,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
-		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0
+		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -381,6 +388,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
 		MinDividendGrowthYears:       in.MinDividendGrowthYears,
+		TrendTemplate:                in.TrendTemplate,
 		SortBy:                       sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
@@ -410,6 +418,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		}
 		if line := screenDividendLine(first); line != "" {
 			summary = line + "\n" + summary
+		}
+		if in.TrendTemplate {
+			summary = "篩選條件:" + trendTemplateText + "。\n" + summary
 		}
 	}
 	return textResult(summary), ScreeningOutput{

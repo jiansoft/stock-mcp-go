@@ -210,10 +210,12 @@ type ScreenBacktestEnvelope struct {
 	// MinRevenueAccelerationMonths 是營收加速月數下限;舊版 API 沒有這欄時為 nil。
 	MinRevenueAccelerationMonths *int `json:"min_revenue_acceleration_months"`
 	// MinDividendGrowthYears 是股利成長年數下限;舊版 API 沒有這欄時為 nil。
-	MinDividendGrowthYears *int     `json:"min_dividend_growth_years"`
-	Indicator              *string  `json:"indicator"`
-	Kind                   *string  `json:"kind"`
-	FeeDiscount            *float64 `json:"fee_discount"`
+	MinDividendGrowthYears *int `json:"min_dividend_growth_years"`
+	// TrendTemplate 是否只選符合 Minervini 趨勢模板;舊版 API 沒有這欄時為 false。
+	TrendTemplate bool     `json:"trend_template"`
+	Indicator     *string  `json:"indicator"`
+	Kind          *string  `json:"kind"`
+	FeeDiscount   *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
 	ExecutionModel *string               `json:"execution_model"`
 	SlippageBps    *int                  `json:"slippage_bps"`
@@ -413,6 +415,8 @@ type ScreenBacktestInput struct {
 	MinRevenueAccelerationMonths int `json:"min_revenue_acceleration_months,omitempty"`
 	// MinDividendGrowthYears 是股利成長年數下限(1 至 30):完整年度現金股利連續不減少的年數。
 	MinDividendGrowthYears int `json:"min_dividend_growth_years,omitempty"`
+	// TrendTemplate 為 true 時只選換股當天符合 Minervini 趨勢模板的股票。
+	TrendTemplate bool `json:"trend_template,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。
