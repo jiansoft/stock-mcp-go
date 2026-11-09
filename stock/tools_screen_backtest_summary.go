@@ -49,13 +49,15 @@ func rankByText(rankBy string) string {
 		return "換股當天本益比"
 	case "pb_ratio":
 		return "換股當天股價淨值比"
+	case "magic_formula":
+		return "神奇公式名次合計"
 	}
 	return "相對強度分數"
 }
 
-// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比);其餘由高到低。
+// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比、神奇公式名次合計);其餘由高到低。
 func rankAscending(rankBy string) bool {
-	return rankBy == "pe_ratio" || rankBy == "pb_ratio"
+	return rankBy == "pe_ratio" || rankBy == "pb_ratio" || rankBy == "magic_formula"
 }
 
 // rankOrderText 是排序方向的中文:由低到高或由高到低。
