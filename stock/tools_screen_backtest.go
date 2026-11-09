@@ -204,6 +204,8 @@ type ScreenBacktestEnvelope struct {
 	// MaxVolatilityPercent、MaxBeta 是低波動條件;舊版 API 沒有這兩欄時為 nil。
 	MaxVolatilityPercent *float64 `json:"max_volatility_percent"`
 	MaxBeta              *float64 `json:"max_beta"`
+	// MaxBias240 是年線乖離率上限;舊版 API 沒有這欄時為 nil。
+	MaxBias240 *float64 `json:"max_bias240"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -416,6 +418,8 @@ type ScreenBacktestInput struct {
 	// MaxVolatilityPercent、MaxBeta 是近 240 日年化波動度(%)與 beta 上限。
 	MaxVolatilityPercent *float64 `json:"max_volatility_percent,omitempty"`
 	MaxBeta              *float64 `json:"max_beta,omitempty"`
+	// MaxBias240 是換股當天年線乖離率(%)上限。
+	MaxBias240 *float64 `json:"max_bias240,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`

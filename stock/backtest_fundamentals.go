@@ -38,6 +38,8 @@ type BacktestFundamentals struct {
 	// MaxVolatilityPercent、MaxBeta 是換股當天近 240 筆日線的年化波動度(%)與對加權指數 beta 上限;nil 為不篩選。
 	MaxVolatilityPercent *float64
 	MaxBeta              *float64
+	// MaxBias240 是換股當天年線乖離率(%)上限;nil 為不篩選。
+	MaxBias240 *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -163,6 +165,10 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "number", Minimum: ptr(-5.0), Maximum: ptr(5.0),
 			Description: "beta 上限(-5 至 5,選填;低波動):近 240 筆日線對加權指數日報酬的迴歸斜率;台股大盤由台積電主導,非電子股的 beta 常接近 0。用換股當天收盤後的指標,只用於新買進",
 		},
+		"max_bias240": {
+			Type: "number", Minimum: ptr(-90.0), Maximum: ptr(100.0),
+			Description: "年線乖離率上限(%,-90 至 100,選填;均值回歸):收盤 ÷ 240 日均線 − 1,例如 -15 只選跌破年線 15% 以上的股票;年線用未還原收盤計算(除權息後乖離偏低),上市未滿一年的不通過;建議搭配 min_f_score 或 min_roe_percent 避開體質變差的。用換股當天收盤,只用於新買進",
+		},
 		"min_eps_yoy_percent": {
 			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
 			Description: "換股當天已公布的最近一季單季 EPS 對去年同季的成長率至少這麼高(%,選填,-100 至 10000;CANSLIM 的 C)。" +
@@ -241,6 +247,7 @@ func (f BacktestFundamentals) validate() error {
 		{"max_peg", f.MaxPEG, 0.01, 10},
 		{"max_volatility_percent", f.MaxVolatilityPercent, 1, 200},
 		{"max_beta", f.MaxBeta, -5, 5},
+		{"max_bias240", f.MaxBias240, -90, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -286,6 +293,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_holder_400_change": f.MinHolder400Change, "max_margin_change_percent": f.MaxMarginChangePercent,
 		"max_peg":                f.MaxPEG,
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
+		"max_bias240":         f.MaxBias240,
 		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -351,6 +359,14 @@ func valuationCapTexts(maxPE, maxPB *float64) []string {
 		filters = append(filters, "換股當天股價淨值比 ≤ "+formatFloat(*maxPB)+" 倍")
 	}
 	return filters
+}
+
+// bias240Texts 描述年線乖離率上限;nil 代表不篩選。
+func bias240Texts(maxBias *float64) []string {
+	if maxBias == nil {
+		return nil
+	}
+	return []string{"年線乖離率 ≤ " + formatFloat(*maxBias) + "%"}
 }
 
 // lowVolatilityTexts 描述年化波動度與 beta 上限;nil 代表不篩選。
