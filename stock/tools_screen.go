@@ -66,6 +66,8 @@ type ScreenStocksInput struct {
 	MinHolder400Change *float64 `json:"min_holder_400_change,omitempty"`
 	// MaxMarginChangePercent 是融資餘額近 20 筆變化率上限(%)。
 	MaxMarginChangePercent *float64 `json:"max_margin_change_percent,omitempty"`
+	// MaxPEG 是 PEG 上限(本益比 ÷ 近四季 EPS 成長率)。
+	MaxPEG *float64 `json:"max_peg,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
 	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
@@ -178,6 +180,7 @@ func screenStocksSchema() *jsonschema.Schema {
 			"max_margin_change_percent": number(-100, 1000,
 				"融資餘額變化率上限(%,-100 至 1000;籌碼集中,例如 -5 代表近一個月融資至少減少 5%):查詢日前 10 天內最新一筆對往前第 20 筆;"+
 					"基期融資為 0(不能融資或沒有資料)的不列入,每檔附 margin_change_percent"),
+			"max_peg": number(0.01, 10, "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率 ≤ 0 的不通過,例如 1 代表本益比不高於成長率;每檔附 eps_ttm_growth_percent、peg_ratio"),
 			"range_breakout_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
 				Description: "只留最近 N 個交易日(含查詢日,1–20)出現區間突破、且突破後還沒跌回突破價的股票;" +
@@ -214,11 +217,13 @@ func screenStocksSchema() *jsonschema.Schema {
 			},
 			"sort_by": {
 				Type:    "string",
-				Enum:    []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth", "magic_formula"},
+				Enum:    []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth", "magic_formula", "peg"},
 				Default: []byte(`"stock_symbol"`),
 				Description: "固定白名單排序欄位;magic_formula 為神奇公式(Greenblatt)名次合計:盈餘殖利率(近四季營業利益 ÷ 企業價值)名次 + " +
 					"資本報酬率(÷ 淨營運資金 + 不動產廠房設備)名次,搭配 sort_order=asc 由好到差;每檔都附 earnings_yield_percent、" +
-					"return_on_capital_percent、magic_formula_rank(金融業沒有資料)",
+					"return_on_capital_percent、magic_formula_rank(名次只在本次篩選範圍內比較)、magic_formula_ranked_count(排名母體檔數)與分子分母 " +
+					"operating_income_ttm、invested_capital、enterprise_value(千元;金融業沒有資料);peg 為 PEG 由低到高(搭配 asc)。" +
+					"magic_formula 與 peg 單獨即可查詢(全市場排行),其他排序仍需篩選條件",
 			},
 			"sort_order": {
 				Type:        "string",
@@ -301,6 +306,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"min_major_change", in.MinMajorChange, -100, 100},
 		{"min_holder_400_change", in.MinHolder400Change, -100, 100},
 		{"max_margin_change_percent", in.MaxMarginChangePercent, -100, 1000},
+		{"max_peg", in.MaxPEG, 0.01, 10},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
@@ -355,12 +361,12 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
-		in.MinHolder400Change != nil || in.MaxMarginChangePercent != nil ||
+		in.MinHolder400Change != nil || in.MaxMarginChangePercent != nil || in.MaxPEG != nil || rankingSort(in.SortBy) ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
 		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
 	if !hasFilter {
-		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
+		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、limit 與 magic_formula／peg 以外的排序不算篩選條件")
 	}
 
 	sortBy := strings.ToLower(strings.TrimSpace(in.SortBy))
@@ -370,7 +376,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	validSort := map[string]bool{
 		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true, "operating_margin": true, "rs_score": true,
-		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true, "magic_formula": true,
+		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true, "magic_formula": true, "peg": true,
 	}
 	if !validSort[sortBy] {
 		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
@@ -398,7 +404,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
-		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent,
+		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent, MaxPEG: in.MaxPEG,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
@@ -429,6 +435,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenGrowthLine(first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenPEGLine(first); line != "" {
 			summary = line + "\n" + summary
 		}
 		if line := screenMagicFormulaLine(first); line != "" {
@@ -551,14 +560,42 @@ func screenDividendLine(first ScreenedStock) string {
 		displayPercent(first.FillRatePercent), displayFloat(first.AvgFillDays), displayInt(first.DividendYears), growth)
 }
 
-// screenMagicFormulaLine 描述首筆的神奇公式指標(盈餘殖利率、資本報酬率、名次合計);兩個比率都沒有時回空字串
-// (金融業、資料不足或舊版 API)。
+// extremeReturnOnCapital 是資本報酬率提示的門檻(%):超過時投入資本相對營業利益很小,比率容易失真。
+const extremeReturnOnCapital = 200.0
+
+// rankingSort 回報排序本身是否就是全市場排行(神奇公式、PEG),不必另設篩選條件。
+func rankingSort(sortBy string) bool {
+	switch strings.ToLower(strings.TrimSpace(sortBy)) {
+	case "magic_formula", "peg":
+		return true
+	}
+	return false
+}
+
+// screenMagicFormulaLine 描述首筆的神奇公式指標(盈餘殖利率、資本報酬率、名次合計與排名母體,以及分子分母);
+// 兩個比率都沒有時回空字串(金融業、資料不足或舊版 API)。資本報酬率超過 extremeReturnOnCapital 時附提示。
 func screenMagicFormulaLine(first ScreenedStock) string {
 	if first.EarningsYieldPercent == nil && first.ReturnOnCapitalPercent == nil {
 		return ""
 	}
-	return fmt.Sprintf("首筆神奇公式:盈餘殖利率 %s、資本報酬率 %s、名次合計 %s(越小越好)。",
-		displayPercent(first.EarningsYieldPercent), displayPercent(first.ReturnOnCapitalPercent), displayInt(first.MagicFormulaRank))
+	line := fmt.Sprintf("首筆神奇公式:盈餘殖利率 %s、資本報酬率 %s、名次合計 %s(越小越好,在本次篩選後 %s 檔有資料的股票中排名,"+
+		"放寬或收緊條件名次會變);近四季營業利益 %s、投入資本 %s、企業價值 %s。",
+		displayPercent(first.EarningsYieldPercent), displayPercent(first.ReturnOnCapitalPercent), displayInt(first.MagicFormulaRank),
+		displayInt(first.MagicFormulaRankedCount), thousandsToHundredMillion(first.OperatingIncomeTTM),
+		thousandsToHundredMillion(first.InvestedCapital), thousandsToHundredMillion(first.EnterpriseValue))
+	if roc := first.ReturnOnCapitalPercent; roc != nil && *roc > extremeReturnOnCapital {
+		line += "資本報酬率極高:投入資本(淨營運資金 + 不動產廠房設備)相對營業利益很小,比率容易失真,宜一併看盈餘殖利率。"
+	}
+	return line
+}
+
+// screenPEGLine 描述首筆的 PEG 與近四季 EPS 成長率;兩者都沒有時回空字串(資料不足或舊版 API)。
+func screenPEGLine(first ScreenedStock) string {
+	if first.PEGRatio == nil && first.EPSTTMGrowthPercent == nil {
+		return ""
+	}
+	return fmt.Sprintf("首筆 PEG:%s(本益比 %s ÷ 近四季 EPS 成長率 %s;虧損或衰退時無)。",
+		displayFloat(first.PEGRatio), displayFloat(first.PERatio), displayPercent(first.EPSTTMGrowthPercent))
 }
 
 // screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。

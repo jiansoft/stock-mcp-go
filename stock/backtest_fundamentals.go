@@ -33,6 +33,8 @@ type BacktestFundamentals struct {
 	MinHolder400Change *float64
 	// MaxMarginChangePercent 是融資餘額最近一筆對往前第 20 筆的變化率上限(%;換股日只用前一個交易日以前的資料);nil 為不篩選。
 	MaxMarginChangePercent *float64
+	// MaxPEG 是 PEG(換股當天本益比 ÷ 換股日已公布最近一季的近四季 EPS 成長率)上限;nil 為不篩選。
+	MaxPEG *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -146,6 +148,10 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Description: "融資餘額變化率上限(%,選填,-100 至 1000;籌碼集中,例如 -5 代表近一個月融資至少減少 5%):融資餘額最近一筆對同一檔往前第 20 筆," +
 				"融資收盤後才公布,換股日只用前一個交易日以前的資料;基期融資為 0(不能融資或沒有資料)的不通過。只用於新買進",
 		},
+		"max_peg": {
+			Type: "number", Minimum: ptr(0.01), Maximum: ptr(10.0),
+			Description: "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率 ≤ 0 的不通過,例如 1 代表本益比不高於成長率。換股日只用已過法定期限的那一季,只用於新買進",
+		},
 		"min_eps_yoy_percent": {
 			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
 			Description: "換股當天已公布的最近一季單季 EPS 對去年同季的成長率至少這麼高(%,選填,-100 至 10000;CANSLIM 的 C)。" +
@@ -221,6 +227,7 @@ func (f BacktestFundamentals) validate() error {
 		{"min_major_change", f.MinMajorChange, -100, 100},
 		{"min_holder_400_change", f.MinHolder400Change, -100, 100},
 		{"max_margin_change_percent", f.MaxMarginChangePercent, -100, 1000},
+		{"max_peg", f.MaxPEG, 0.01, 10},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -264,6 +271,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
 		"max_pe": f.MaxPE, "max_pb": f.MaxPB, "min_major_change": f.MinMajorChange,
 		"min_holder_400_change": f.MinHolder400Change, "max_margin_change_percent": f.MaxMarginChangePercent,
+		"max_peg":             f.MaxPEG,
 		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -329,6 +337,14 @@ func valuationCapTexts(maxPE, maxPB *float64) []string {
 		filters = append(filters, "換股當天股價淨值比 ≤ "+formatFloat(*maxPB)+" 倍")
 	}
 	return filters
+}
+
+// pegTexts 描述 PEG 上限;nil 代表不篩選。
+func pegTexts(maxPEG *float64) []string {
+	if maxPEG == nil {
+		return nil
+	}
+	return []string{"PEG(本益比 ÷ 近四季 EPS 成長率)≤ " + formatFloat(*maxPEG) + "(虧損或衰退不選)"}
 }
 
 // defaultMajorChangeWeeks 是 Data API 的 major_change_weeks 預設值。

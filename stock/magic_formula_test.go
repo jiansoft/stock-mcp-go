@@ -30,25 +30,40 @@ func TestMagicFormulaRankBy(t *testing.T) {
 	}
 }
 
-// TestScreenMagicFormula 驗證選股 sort_by=magic_formula 會傳給 Data API,以及首筆神奇公式指標摘要。
+// TestScreenMagicFormula 驗證選股 sort_by=magic_formula 單獨即可查、會傳給 Data API,以及首筆神奇公式摘要附排名母體、
+// 分子分母與極高資本報酬率提示。
 func TestScreenMagicFormula(t *testing.T) {
-	first := ScreenedStock{StockSymbol: "2451", Name: "創見", EarningsYieldPercent: ptr(33.0), ReturnOnCapitalPercent: ptr(199.5), MagicFormulaRank: ptr(26)}
+	first := ScreenedStock{StockSymbol: "6139", Name: "亞翔", EarningsYieldPercent: ptr(15.66), ReturnOnCapitalPercent: ptr(1753.73),
+		MagicFormulaRank: ptr(28), MagicFormulaRankedCount: ptr(636), OperatingIncomeTTM: ptr(5e6), InvestedCapital: ptr(285e3), EnterpriseValue: ptr(3.2e7)}
 	f := &fakeStockScreener{result: &Screening{Stocks: []ScreenedStock{first}}}
-	result, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{MinAvgTradeValue: ptr(50), SortBy: "magic_formula", SortOrder: "asc"})
+	result, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{SortBy: "magic_formula", SortOrder: "asc"})
 	if err != nil || f.gotOpt.SortBy != "magic_formula" {
-		t.Fatalf("magic_formula 排序應傳給 client:%v %+v", err, f.gotOpt)
+		t.Fatalf("只設 magic_formula 排序就應能查詢並傳給 client:%v %+v", err, f.gotOpt)
 	}
-	want := "首筆神奇公式:盈餘殖利率 33%、資本報酬率 199.5%、名次合計 26(越小越好)。"
-	if text := resultText(t, result); !strings.Contains(text, want) {
-		t.Fatalf("摘要缺少神奇公式指標:%s", text)
+	text := resultText(t, result)
+	for _, want := range []string{
+		"首筆神奇公式:盈餘殖利率 15.66%、資本報酬率 1753.73%、名次合計 28(越小越好,在本次篩選後 636 檔有資料的股票中排名",
+		"近四季營業利益 " + thousandsToHundredMillion(ptr(5e6)) + "、投入資本 " + thousandsToHundredMillion(ptr(285e3)),
+		"資本報酬率極高",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("摘要缺少 %q:%s", want, text)
+		}
+	}
+	normal := ScreenedStock{EarningsYieldPercent: ptr(33.0), ReturnOnCapitalPercent: ptr(199.5)}
+	if line := screenMagicFormulaLine(normal); strings.Contains(line, "資本報酬率極高") {
+		t.Fatalf("資本報酬率 200%% 以下不應提示:%s", line)
 	}
 	if screenMagicFormulaLine(ScreenedStock{StockSymbol: "2881"}) != "" {
 		t.Fatal("金融業沒有資料時不應輸出")
 	}
+	if _, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{SortBy: "eps"}); err == nil {
+		t.Fatal("其他排序單獨使用仍需篩選條件")
+	}
 	if !slices.Contains(screenStocksSchema().Properties["sort_by"].Enum, any("magic_formula")) {
 		t.Fatal("sort_by enum 缺少 magic_formula")
 	}
-	query := apiScreenQueryForTest(t, ScreenOptions{MinAvgTradeValue: ptr(50), SortBy: "magic_formula", SortOrder: "asc", Limit: 20})
+	query := apiScreenQueryForTest(t, ScreenOptions{SortBy: "magic_formula", SortOrder: "asc", Limit: 20})
 	if !strings.Contains(query, "sort_by=magic_formula") {
 		t.Fatalf("Data API query 缺少 sort_by:%s", query)
 	}

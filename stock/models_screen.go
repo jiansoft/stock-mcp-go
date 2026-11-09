@@ -93,6 +93,15 @@ type ScreenedStock struct {
 	EarningsYieldPercent   *float64 `json:"earnings_yield_percent"`
 	ReturnOnCapitalPercent *float64 `json:"return_on_capital_percent"`
 	MagicFormulaRank       *int     `json:"magic_formula_rank"`
+	// MagicFormulaRankedCount 是名次合計的排名母體(本次篩選後兩個比率都有資料的檔數);OperatingIncomeTTM、
+	// InvestedCapital、EnterpriseValue 是算式的分子分母(千元)。舊版 API 為 nil。
+	MagicFormulaRankedCount *int     `json:"magic_formula_ranked_count"`
+	OperatingIncomeTTM      *float64 `json:"operating_income_ttm"`
+	InvestedCapital         *float64 `json:"invested_capital"`
+	EnterpriseValue         *float64 `json:"enterprise_value"`
+	// EPSTTMGrowthPercent 是近四季 EPS 對前四季的成長率(%);PEGRatio 是本益比 ÷ 成長率(虧損或衰退時為 nil)。
+	EPSTTMGrowthPercent *float64 `json:"eps_ttm_growth_percent"`
+	PEGRatio            *float64 `json:"peg_ratio"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -143,6 +152,8 @@ type ScreenOptions struct {
 	// MinHolder400Change 是 400 張以上大戶持股比例變化下限(百分點);MaxMarginChangePercent 是融資餘額變化率上限(%)。
 	MinHolder400Change     *float64
 	MaxMarginChangePercent *float64
+	// MaxPEG 是 PEG 上限。
+	MaxPEG *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。
