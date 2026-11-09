@@ -337,6 +337,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MajorChangeWeeks > 0 {
 		values.Set("major_change_weeks", fmt.Sprint(opt.MajorChangeWeeks))
 	}
+	if opt.MinHolder400Change != nil {
+		values.Set("min_holder_400_change", formatFloat(*opt.MinHolder400Change))
+	}
+	if opt.MaxMarginChangePercent != nil {
+		values.Set("max_margin_change_percent", formatFloat(*opt.MaxMarginChangePercent))
+	}
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}
