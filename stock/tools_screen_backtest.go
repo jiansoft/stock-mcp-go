@@ -207,9 +207,11 @@ type ScreenBacktestEnvelope struct {
 	MinFillRatePercent      *float64 `json:"min_fill_rate_percent"`
 	MaxAvgFillDays          *float64 `json:"max_avg_fill_days"`
 	MinDividendYears        *int     `json:"min_dividend_years"`
-	Indicator               *string  `json:"indicator"`
-	Kind                    *string  `json:"kind"`
-	FeeDiscount             *float64 `json:"fee_discount"`
+	// MinRevenueAccelerationMonths 是營收加速月數下限;舊版 API 沒有這欄時為 nil。
+	MinRevenueAccelerationMonths *int     `json:"min_revenue_acceleration_months"`
+	Indicator                    *string  `json:"indicator"`
+	Kind                         *string  `json:"kind"`
+	FeeDiscount                  *float64 `json:"fee_discount"`
 	// ExecutionModel 是成交價模型(close 或 next_open);SlippageBps 是買賣各計的滑價(基點)。舊版 API 沒有這兩欄時為 nil。
 	ExecutionModel *string               `json:"execution_model"`
 	SlippageBps    *int                  `json:"slippage_bps"`
@@ -405,6 +407,8 @@ type ScreenBacktestInput struct {
 	MinFillRatePercent      *float64 `json:"min_fill_rate_percent,omitempty"`
 	MaxAvgFillDays          *float64 `json:"max_avg_fill_days,omitempty"`
 	MinDividendYears        int      `json:"min_dividend_years,omitempty"`
+	// MinRevenueAccelerationMonths 是營收加速月數下限(1 至 11):已公布的月營收年增率逐月提高的月數。
+	MinRevenueAccelerationMonths int `json:"min_revenue_acceleration_months,omitempty"`
 }
 
 // ScreenBacktestOutput 是回測 envelope 加上 MCP 分析中繼資料。

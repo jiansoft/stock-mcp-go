@@ -138,6 +138,9 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	filters = append(filters, canslimTexts(e.MinEPSYoYPercent, e.MinAnnualEPSGrowthPercent, newHighDays)...)
 	filters = append(filters, fScoreTexts(e.MinFScore)...)
+	if e.MinRevenueAccelerationMonths != nil {
+		filters = append(filters, revenueAccelerationTexts(*e.MinRevenueAccelerationMonths)...)
+	}
 	dividendYears := 0
 	if e.MinDividendYears != nil {
 		dividendYears = *e.MinDividendYears

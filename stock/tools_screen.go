@@ -74,9 +74,11 @@ type ScreenStocksInput struct {
 	MinFillRatePercent *float64 `json:"min_fill_rate_percent,omitempty"`
 	MaxAvgFillDays     *float64 `json:"max_avg_fill_days,omitempty"`
 	MinDividendYears   int      `json:"min_dividend_years,omitempty"`
-	SortBy             string   `json:"sort_by,omitempty"`
-	SortOrder          string   `json:"sort_order,omitempty"`
-	Limit              int      `json:"limit,omitempty"`
+	// MinRevenueAccelerationMonths 是營收加速月數下限(1–11);0 為不篩。
+	MinRevenueAccelerationMonths int    `json:"min_revenue_acceleration_months,omitempty"`
+	SortBy                       string `json:"sort_by,omitempty"`
+	SortOrder                    string `json:"sort_order,omitempty"`
+	Limit                        int    `json:"limit,omitempty"`
 }
 
 // screenStocksSchema 只公開固定條件與排序 enum，拒絕任意欄位、運算式或
@@ -171,6 +173,11 @@ func screenStocksSchema() *jsonschema.Schema {
 			"new_high_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(365.0),
 				Description: "只留最近 N 個日曆天(含查詢日,1–365)內創過 52 週新高的股票(CANSLIM 的 N);每檔附最近一次新高日",
+			},
+			"min_revenue_acceleration_months": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(11.0),
+				Description: "營收加速月數下限(1–11):從最新一個月往回,月營收年增率逐月高於前一個月(月份相連)的月數;例如 2 代表最近 3 個月" +
+					"的年增率一個比一個高。每檔附 revenue_acceleration_months;可搭配 min_revenue_yoy_percent 排除年增率仍為負的股票",
 			},
 			"min_fill_rate_percent": number(0, 100,
 				"近 5 年填息率下限(%,存股條件):除息日在查詢日前 5 年內、已觀察滿 120 個交易日的現金除息中,120 個交易日內收盤回到填息價的比例;"+
@@ -303,6 +310,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.NewHighDays != 0 && (in.NewHighDays < 1 || in.NewHighDays > 365) {
 		return nil, nil, fmt.Errorf("參數 new_high_days 必須介於 1 到 365 之間")
 	}
+	if in.MinRevenueAccelerationMonths != 0 && (in.MinRevenueAccelerationMonths < 1 || in.MinRevenueAccelerationMonths > 11) {
+		return nil, nil, fmt.Errorf("參數 min_revenue_acceleration_months 必須介於 1 到 11 之間")
+	}
 	if in.MinDividendYears != 0 && (in.MinDividendYears < 1 || in.MinDividendYears > 30) {
 		return nil, nil, fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -316,7 +326,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
-		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0
+		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
+		in.MinRevenueAccelerationMonths > 0
 	if !hasFilter {
 		return nil, nil, fmt.Errorf("至少需要一個實質篩選條件；market=all、排序與 limit 不算篩選條件")
 	}
@@ -358,7 +369,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
-		SortBy: sortBy, SortOrder: sortOrder, Limit: limit,
+		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
+		SortBy:                       sortBy, SortOrder: sortOrder, Limit: limit,
 	})
 	if err != nil {
 		ts.logf("工具 screen_stocks 執行失敗:%v", err)
