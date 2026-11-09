@@ -199,6 +199,8 @@ type ScreenBacktestEnvelope struct {
 	// MinHolder400Change、MaxMarginChangePercent 是籌碼集中條件;舊版 API 沒有這兩欄時為 nil。
 	MinHolder400Change     *float64 `json:"min_holder_400_change"`
 	MaxMarginChangePercent *float64 `json:"max_margin_change_percent"`
+	// MaxPEG 是 PEG 上限;舊版 API 沒有這欄時為 nil。
+	MaxPEG *float64 `json:"max_peg"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -406,6 +408,8 @@ type ScreenBacktestInput struct {
 	MinHolder400Change *float64 `json:"min_holder_400_change,omitempty"`
 	// MaxMarginChangePercent 是融資餘額近 20 筆變化率上限(%)。
 	MaxMarginChangePercent *float64 `json:"max_margin_change_percent,omitempty"`
+	// MaxPEG 是 PEG 上限(本益比 ÷ 近四季 EPS 成長率)。
+	MaxPEG *float64 `json:"max_peg,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`

@@ -84,7 +84,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 min_avg_trade_value 必須介於 1 到 100000(百萬元)之間")
 	}
 	if in.RankBy != "" && !slices.Contains(backtestRankBy, in.RankBy) {
-		return ScreenBacktestOptions{}, fmt.Errorf("參數 rank_by 必須為 rs_score、trade_value、foreign_streak、trust_streak、revenue_yoy、operating_margin、pe_ratio、pb_ratio 或 magic_formula")
+		return ScreenBacktestOptions{}, fmt.Errorf("參數 rank_by 必須為 rs_score、trade_value、foreign_streak、trust_streak、revenue_yoy、operating_margin、pe_ratio、pb_ratio、magic_formula 或 peg")
 	}
 	if in.EtfWeight < 0 || in.EtfWeight > 100 {
 		return ScreenBacktestOptions{}, fmt.Errorf("參數 etf_weight 必須介於 0 到 100 之間")
@@ -157,7 +157,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinMonthlyRevenue: in.MinMonthlyRevenue, PositiveFreeCashFlow: in.PositiveFreeCashFlow,
 		MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks,
-		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent,
+		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent, MaxPEG: in.MaxPEG,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent,
 		NewHighDays: in.NewHighDays, MinFScore: in.MinFScore,
 		MinDividendYieldPercent: in.MinDividendYieldPercent, MinFillRatePercent: in.MinFillRatePercent,
@@ -214,7 +214,7 @@ func validateBacktestSplit(split, from, to string) (string, error) {
 }
 
 // backtestRankBy 是候選股可用的排序方式,與 Data API 相同。
-var backtestRankBy = []string{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio", "magic_formula"}
+var backtestRankBy = []string{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio", "magic_formula", "peg"}
 
 // backtestWeighting 是策略部位可用的持股加權方式,與 Data API 相同。
 var backtestWeighting = []string{"equal", "trade_value", "sqrt_trade_value"}
