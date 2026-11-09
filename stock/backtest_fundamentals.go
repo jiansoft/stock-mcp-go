@@ -29,6 +29,10 @@ type BacktestFundamentals struct {
 	// nil 為不篩選,週數 0 代表沿用 Data API 預設的 4 週。
 	MinMajorChange   *float64
 	MajorChangeWeeks int
+	// MinHolder400Change 是 400 張以上大戶持股比例的同樣變化下限(百分點,回看週數同 MajorChangeWeeks);nil 為不篩選。
+	MinHolder400Change *float64
+	// MaxMarginChangePercent 是融資餘額最近一筆對往前第 20 筆的變化率上限(%;換股日只用前一個交易日以前的資料);nil 為不篩選。
+	MaxMarginChangePercent *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -130,7 +134,17 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 		},
 		"major_change_weeks": {
 			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
-			Description: "min_major_change 的回看週數(集保資料週,選填,1 至 12,預設 4);沒有設 min_major_change 時不影響結果",
+			Description: "min_major_change 與 min_holder_400_change 的回看週數(集保資料週,選填,1 至 12,預設 4);兩者都沒設時不影響結果",
+		},
+		"min_holder_400_change": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(100.0),
+			Description: "集保 400 張以上大戶持股比例的變化下限(百分點,選填,-100 至 100;籌碼集中):規則同 min_major_change," +
+				"取換股日之前已公布的最近一週減去往前第 major_change_weeks 週;大戶資料 2023-07-14 起,from 必須晚於 2023-07-14 加回看週數。只用於新買進",
+		},
+		"max_margin_change_percent": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(1000.0),
+			Description: "融資餘額變化率上限(%,選填,-100 至 1000;籌碼集中,例如 -5 代表近一個月融資至少減少 5%):融資餘額最近一筆對同一檔往前第 20 筆," +
+				"融資收盤後才公布,換股日只用前一個交易日以前的資料;基期融資為 0(不能融資或沒有資料)的不通過。只用於新買進",
 		},
 		"min_eps_yoy_percent": {
 			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
@@ -205,6 +219,8 @@ func (f BacktestFundamentals) validate() error {
 		{"max_pe", f.MaxPE, 0, 10000},
 		{"max_pb", f.MaxPB, 0, 1000},
 		{"min_major_change", f.MinMajorChange, -100, 100},
+		{"min_holder_400_change", f.MinHolder400Change, -100, 100},
+		{"max_margin_change_percent", f.MaxMarginChangePercent, -100, 1000},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -247,6 +263,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_gross_margin_percent": f.MinGrossMarginPercent, "min_operating_margin_percent": f.MinOperatingMarginPercent,
 		"max_debt_ratio_percent": f.MaxDebtRatioPercent, "min_monthly_revenue": f.MinMonthlyRevenue,
 		"max_pe": f.MaxPE, "max_pb": f.MaxPB, "min_major_change": f.MinMajorChange,
+		"min_holder_400_change": f.MinHolder400Change, "max_margin_change_percent": f.MaxMarginChangePercent,
 		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -326,6 +343,21 @@ func majorChangeTexts(minChange *float64, weeks int) []string {
 		weeks = defaultMajorChangeWeeks
 	}
 	return []string{fmt.Sprintf("千張大戶持股比例近 %d 週變化 ≥ %s 個百分點(換股前已公布的週)", weeks, formatFloat(*minChange))}
+}
+
+// chipConcentrationTexts 描述籌碼集中條件(400 張大戶比例變化下限、融資餘額變化上限);nil 代表不篩選,週數 0 為預設 4 週。
+func chipConcentrationTexts(holder400 *float64, weeks int, margin *float64) []string {
+	var filters []string
+	if holder400 != nil {
+		if weeks <= 0 {
+			weeks = defaultMajorChangeWeeks
+		}
+		filters = append(filters, fmt.Sprintf("400 張大戶持股比例近 %d 週變化 ≥ %s 個百分點(換股前已公布的週)", weeks, formatFloat(*holder400)))
+	}
+	if margin != nil {
+		filters = append(filters, fmt.Sprintf("融資餘額近 20 筆變化 ≤ %s%%(換股日前一個交易日以前)", formatFloat(*margin)))
+	}
+	return filters
 }
 
 // canslimTexts 描述 CANSLIM 的 C、A、N 條件;nil 與 0 代表不篩選。

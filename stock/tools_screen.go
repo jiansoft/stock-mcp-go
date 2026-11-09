@@ -62,6 +62,10 @@ type ScreenStocksInput struct {
 	// MinMajorChange 是集保千張大戶持股比例,最近一週相對 MajorChangeWeeks 週前的變化下限(百分點);週數 0 為預設 4 週。
 	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
 	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
+	// MinHolder400Change 是集保 400 張以上大戶持股比例的同樣變化下限(百分點)。
+	MinHolder400Change *float64 `json:"min_holder_400_change,omitempty"`
+	// MaxMarginChangePercent 是融資餘額近 20 筆變化率上限(%)。
+	MaxMarginChangePercent *float64 `json:"max_margin_change_percent,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
 	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
@@ -167,8 +171,13 @@ func screenStocksSchema() *jsonschema.Schema {
 					"取查詢日之前已公布的最近一週減去它往前第 major_change_weeks 週,沒有大戶資料的股票不列入"),
 			"major_change_weeks": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(12.0),
-				Description: "min_major_change 的回看週數(集保資料週,1–12,預設 4);沒有設 min_major_change 時不影響結果",
+				Description: "min_major_change 與 min_holder_400_change 的回看週數(集保資料週,1–12,預設 4);兩者都沒設時不影響結果",
 			},
+			"min_holder_400_change": number(-100, 100,
+				"集保 400 張以上大戶持股比例的變化下限(百分點,-100 至 100;籌碼集中):規則同 min_major_change,沒有資料的股票不列入"),
+			"max_margin_change_percent": number(-100, 1000,
+				"融資餘額變化率上限(%,-100 至 1000;籌碼集中,例如 -5 代表近一個月融資至少減少 5%):查詢日前 10 天內最新一筆對往前第 20 筆;"+
+					"基期融資為 0(不能融資或沒有資料)的不列入,每檔附 margin_change_percent"),
 			"range_breakout_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
 				Description: "只留最近 N 個交易日(含查詢日,1–20)出現區間突破、且突破後還沒跌回突破價的股票;" +
@@ -288,6 +297,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"max_pe", in.MaxPE, 0, 10000},
 		{"max_pb", in.MaxPB, 0, 1000},
 		{"min_major_change", in.MinMajorChange, -100, 100},
+		{"min_holder_400_change", in.MinHolder400Change, -100, 100},
+		{"max_margin_change_percent", in.MaxMarginChangePercent, -100, 1000},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
@@ -342,6 +353,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MinOperatingMarginPercent != nil || in.MarginsYoYUp || in.RevenueRecord ||
 		in.MinRSScore != nil || in.MinForeignStreak != nil || in.MinTrustStreak != nil || in.MinAvgTradeValue != nil ||
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
+		in.MinHolder400Change != nil || in.MaxMarginChangePercent != nil ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
 		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
@@ -384,6 +396,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinRSScore: in.MinRSScore, MinForeignStreak: in.MinForeignStreak, MinTrustStreak: in.MinTrustStreak,
 		MinAvgTradeValue: in.MinAvgTradeValue, MaxPE: in.MaxPE, MaxPB: in.MaxPB,
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
+		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,

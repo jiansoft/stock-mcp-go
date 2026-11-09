@@ -86,6 +86,8 @@ type ScreenedStock struct {
 	DividendGrowthYears *int `json:"dividend_growth_years"`
 	// TrendTemplate 是否符合 Minervini 趨勢模板;資料不足、日線過期或舊版 API 為 nil。
 	TrendTemplate *bool `json:"trend_template"`
+	// MarginChangePercent 是融資餘額近 20 筆變化率(%);沒設 max_margin_change_percent、基期為 0 或舊版 API 為 nil。
+	MarginChangePercent *float64 `json:"margin_change_percent"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -133,6 +135,9 @@ type ScreenOptions struct {
 	// MinMajorChange 是千張大戶持股比例變化下限(百分點);MajorChangeWeeks 為 0 時用 Data API 預設 4 週。
 	MinMajorChange   *float64
 	MajorChangeWeeks int
+	// MinHolder400Change 是 400 張以上大戶持股比例變化下限(百分點);MaxMarginChangePercent 是融資餘額變化率上限(%)。
+	MinHolder400Change     *float64
+	MaxMarginChangePercent *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。

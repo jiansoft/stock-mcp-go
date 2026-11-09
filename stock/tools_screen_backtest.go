@@ -196,6 +196,9 @@ type ScreenBacktestEnvelope struct {
 	// MinMajorChange、MajorChangeWeeks 是千張大戶持股比例變化條件;舊版 API 沒有這兩欄時為 nil。
 	MinMajorChange   *float64 `json:"min_major_change"`
 	MajorChangeWeeks *int     `json:"major_change_weeks"`
+	// MinHolder400Change、MaxMarginChangePercent 是籌碼集中條件;舊版 API 沒有這兩欄時為 nil。
+	MinHolder400Change     *float64 `json:"min_holder_400_change"`
+	MaxMarginChangePercent *float64 `json:"max_margin_change_percent"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -399,6 +402,10 @@ type ScreenBacktestInput struct {
 	// MinMajorChange 是千張大戶持股比例近 MajorChangeWeeks 週變化的下限(百分點);週數 0 為預設 4 週。
 	MinMajorChange   *float64 `json:"min_major_change,omitempty"`
 	MajorChangeWeeks int      `json:"major_change_weeks,omitempty"`
+	// MinHolder400Change 是 400 張以上大戶持股比例近 MajorChangeWeeks 週變化的下限(百分點)。
+	MinHolder400Change *float64 `json:"min_holder_400_change,omitempty"`
+	// MaxMarginChangePercent 是融資餘額近 20 筆變化率上限(%)。
+	MaxMarginChangePercent *float64 `json:"max_margin_change_percent,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`

@@ -132,6 +132,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		}
 		filters = append(filters, majorChangeTexts(e.MinMajorChange, weeks)...)
 	}
+	holderWeeks := 0
+	if e.MajorChangeWeeks != nil {
+		holderWeeks = *e.MajorChangeWeeks
+	}
+	filters = append(filters, chipConcentrationTexts(e.MinHolder400Change, holderWeeks, e.MaxMarginChangePercent)...)
 	newHighDays := 0
 	if e.NewHighDays != nil {
 		newHighDays = *e.NewHighDays
