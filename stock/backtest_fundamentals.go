@@ -45,6 +45,9 @@ type BacktestFundamentals struct {
 	// MinRevenueAccelerationMonths 是營收加速月數下限:已公布的月營收從最新月往回,年增率逐月高於前一個月(月份相連)
 	// 的月數(1 至 11);0 為不篩選。
 	MinRevenueAccelerationMonths int
+	// MinDividendGrowthYears 是股利成長年數下限:換股年以前的完整年度現金股利合計,從換股年前一年往回每年不低於
+	// 前一年(年度相連)的年數(1 至 30);0 為不篩選。
+	MinDividendGrowthYears int
 }
 
 // backtestFundamentalSchemas 回傳基本面門檻參數的 schema,加進回測類工具的輸入。
@@ -166,6 +169,11 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Description: "連續配發現金股利至少這麼多年(選填,1 至 30):以除息日年度計,從換股日以前最近一次除息的年度往回數;" +
 				"最近一次除息的年度早於換股年前一年的不通過。" + dividendRule,
 		},
+		"min_dividend_growth_years": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+			Description: "股利成長(股利貴族,選填,1 至 30):以除息日年度加總現金股利,只看換股年以前的完整年度;從換股年前一年往回," +
+				"每年現金股利都不低於前一年(年度相連)至少這麼多年。例如 5 代表連續 6 年配息且 5 次都沒減少;換股年前一年沒配息的不通過。" + dividendRule,
+		},
 	}
 }
 
@@ -215,6 +223,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.MinRevenueAccelerationMonths != 0 && (f.MinRevenueAccelerationMonths < 1 || f.MinRevenueAccelerationMonths > 11) {
 		return fmt.Errorf("參數 min_revenue_acceleration_months 必須介於 1 到 11 之間")
 	}
+	if f.MinDividendGrowthYears != 0 && (f.MinDividendGrowthYears < 1 || f.MinDividendGrowthYears > 30) {
+		return fmt.Errorf("參數 min_dividend_growth_years 必須介於 1 到 30 之間")
+	}
 	if f.MinDividendYears != 0 && (f.MinDividendYears < 1 || f.MinDividendYears > 30) {
 		return fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -254,6 +265,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinRevenueAccelerationMonths > 0 {
 		values.Set("min_revenue_acceleration_months", fmt.Sprint(f.MinRevenueAccelerationMonths))
+	}
+	if f.MinDividendGrowthYears > 0 {
+		values.Set("min_dividend_growth_years", fmt.Sprint(f.MinDividendGrowthYears))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -333,6 +347,14 @@ func revenueAccelerationTexts(months int) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("已公布的月營收年增率連續 %d 個月逐月提高", months)}
+}
+
+// dividendGrowthTexts 描述股利成長條件;0 代表不篩選。
+func dividendGrowthTexts(years int) []string {
+	if years <= 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("完整年度現金股利連續 %d 年不減少", years)}
 }
 
 // dividendTexts 描述存股條件(殖利率、填息率、平均填息天數、連續配息年數);nil 與 0 代表不篩選。
