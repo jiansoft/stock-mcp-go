@@ -213,10 +213,12 @@ func screenStocksSchema() *jsonschema.Schema {
 					"每年都不低於前一年(年度相連)的年數;例如 5 代表連續 6 年配息且 5 次都沒減少。每檔附 dividend_growth_years",
 			},
 			"sort_by": {
-				Type:        "string",
-				Enum:        []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth"},
-				Default:     []byte(`"stock_symbol"`),
-				Description: "固定白名單排序欄位",
+				Type:    "string",
+				Enum:    []any{"stock_symbol", "revenue_yoy", "revenue_yoy_streak", "revenue_yoy_3m", "monthly_revenue", "eps", "roe", "dividend_yield", "valuation_percentage", "f_score", "gross_margin", "debt_ratio", "operating_margin", "rs_score", "pe_ratio", "pb_ratio", "eps_yoy", "annual_eps_growth", "magic_formula"},
+				Default: []byte(`"stock_symbol"`),
+				Description: "固定白名單排序欄位;magic_formula 為神奇公式(Greenblatt)名次合計:盈餘殖利率(近四季營業利益 ÷ 企業價值)名次 + " +
+					"資本報酬率(÷ 淨營運資金 + 不動產廠房設備)名次,搭配 sort_order=asc 由好到差;每檔都附 earnings_yield_percent、" +
+					"return_on_capital_percent、magic_formula_rank(金融業沒有資料)",
 			},
 			"sort_order": {
 				Type:        "string",
@@ -368,7 +370,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	validSort := map[string]bool{
 		"stock_symbol": true, "revenue_yoy": true, "revenue_yoy_streak": true, "revenue_yoy_3m": true, "monthly_revenue": true, "eps": true, "roe": true, "dividend_yield": true, "valuation_percentage": true,
 		"f_score": true, "gross_margin": true, "debt_ratio": true, "operating_margin": true, "rs_score": true,
-		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true,
+		"pe_ratio": true, "pb_ratio": true, "eps_yoy": true, "annual_eps_growth": true, "magic_formula": true,
 	}
 	if !validSort[sortBy] {
 		return nil, nil, fmt.Errorf("參數 sort_by 不在允許的固定白名單內")
@@ -427,6 +429,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenGrowthLine(first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenMagicFormulaLine(first); line != "" {
 			summary = line + "\n" + summary
 		}
 		if line := screenDividendLine(first); line != "" {
@@ -544,6 +549,16 @@ func screenDividendLine(first ScreenedStock) string {
 	}
 	return fmt.Sprintf("首筆存股指標:近 5 年填息率 %s、平均填息 %s 個交易日、連續配息 %s 年%s。",
 		displayPercent(first.FillRatePercent), displayFloat(first.AvgFillDays), displayInt(first.DividendYears), growth)
+}
+
+// screenMagicFormulaLine 描述首筆的神奇公式指標(盈餘殖利率、資本報酬率、名次合計);兩個比率都沒有時回空字串
+// (金融業、資料不足或舊版 API)。
+func screenMagicFormulaLine(first ScreenedStock) string {
+	if first.EarningsYieldPercent == nil && first.ReturnOnCapitalPercent == nil {
+		return ""
+	}
+	return fmt.Sprintf("首筆神奇公式:盈餘殖利率 %s、資本報酬率 %s、名次合計 %s(越小越好)。",
+		displayPercent(first.EarningsYieldPercent), displayPercent(first.ReturnOnCapitalPercent), displayInt(first.MagicFormulaRank))
 }
 
 // screenBreakoutLine 是設了 range_breakout_days 時,摘要開頭說明條件與首筆的突破日;沒設或首筆沒有突破日時回空字串。

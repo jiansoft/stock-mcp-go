@@ -88,6 +88,11 @@ type ScreenedStock struct {
 	TrendTemplate *bool `json:"trend_template"`
 	// MarginChangePercent 是融資餘額近 20 筆變化率(%);沒設 max_margin_change_percent、基期為 0 或舊版 API 為 nil。
 	MarginChangePercent *float64 `json:"margin_change_percent"`
+	// EarningsYieldPercent、ReturnOnCapitalPercent 是神奇公式的盈餘殖利率與資本報酬率(%);MagicFormulaRank 是本次篩選結果中
+	// 兩者名次相加(越小越好)。金融業、資料不足或舊版 API 為 nil。
+	EarningsYieldPercent   *float64 `json:"earnings_yield_percent"`
+	ReturnOnCapitalPercent *float64 `json:"return_on_capital_percent"`
+	MagicFormulaRank       *int     `json:"magic_formula_rank"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。

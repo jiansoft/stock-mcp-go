@@ -48,9 +48,9 @@ func screenBacktestSchema() *jsonschema.Schema {
 			},
 			"rank_by": {
 				Type:        "string",
-				Enum:        []any{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio"},
+				Enum:        []any{"rs_score", "trade_value", "foreign_streak", "trust_streak", "revenue_yoy", "operating_margin", "pe_ratio", "pb_ratio", "magic_formula"},
 				Default:     []byte(`"rs_score"`),
-				Description: "符合條件者依什麼排序取前 limit 檔(選填,預設 rs_score):rs_score 相對強度分數;trade_value 近 20 個交易日平均成交金額(偏向大型股);foreign_streak／trust_streak 外資／投信連續買超天數;revenue_yoy 換股日已公布的最新月營收年增率;operating_margin 換股日已公布的最近一季營業利益率;pe_ratio／pb_ratio 換股當天官方本益比／股價淨值比由低到高(虧損或沒有資料的排最後)。同值或查不到時再依 RS 排序(查不到的排最後),keep_rank 的名次也依此排序",
+				Description: "符合條件者依什麼排序取前 limit 檔(選填,預設 rs_score):rs_score 相對強度分數;trade_value 近 20 個交易日平均成交金額(偏向大型股);foreign_streak／trust_streak 外資／投信連續買超天數;revenue_yoy 換股日已公布的最新月營收年增率;operating_margin 換股日已公布的最近一季營業利益率;pe_ratio／pb_ratio 換股當天官方本益比／股價淨值比由低到高(虧損或沒有資料的排最後);magic_formula 神奇公式(Greenblatt):換股日已公布最近一季的近四季營業利益 ÷ 企業價值(盈餘殖利率)名次 + ÷(淨營運資金 + 不動產廠房設備)(資本報酬率)名次,合計由小到大(金融業與資料不足的排最後)。同值或查不到時再依 RS 排序(查不到的排最後),keep_rank 的名次也依此排序",
 			},
 			"etf_weight": {
 				Type:        "integer",
