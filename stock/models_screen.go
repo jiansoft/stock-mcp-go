@@ -99,7 +99,7 @@ type ScreenedStock struct {
 	OperatingIncomeTTM      *float64 `json:"operating_income_ttm"`
 	InvestedCapital         *float64 `json:"invested_capital"`
 	EnterpriseValue         *float64 `json:"enterprise_value"`
-	// EPSTTMGrowthPercent 是近四季 EPS 對前四季的成長率(%);PEGRatio 是本益比 ÷ 成長率(虧損或衰退時為 nil)。
+	// EPSTTMGrowthPercent 是近四季 EPS 對前四季的成長率(%);PEGRatio 是本益比 ÷ 成長率(虧損、衰退或成長逾 100% 時為 nil)。
 	EPSTTMGrowthPercent *float64 `json:"eps_ttm_growth_percent"`
 	PEGRatio            *float64 `json:"peg_ratio"`
 }

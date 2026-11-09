@@ -180,7 +180,7 @@ func screenStocksSchema() *jsonschema.Schema {
 			"max_margin_change_percent": number(-100, 1000,
 				"融資餘額變化率上限(%,-100 至 1000;籌碼集中,例如 -5 代表近一個月融資至少減少 5%):查詢日前 10 天內最新一筆對往前第 20 筆;"+
 					"基期融資為 0(不能融資或沒有資料)的不列入,每檔附 margin_change_percent"),
-			"max_peg": number(0.01, 10, "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率 ≤ 0 的不通過,例如 1 代表本益比不高於成長率;每檔附 eps_ttm_growth_percent、peg_ratio"),
+			"max_peg": number(0.01, 10, "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率不在 0～100%(超過 100% 多為低基期轉盈,PEG 失真)的不通過,例如 1 代表本益比不高於成長率;每檔附 eps_ttm_growth_percent、peg_ratio"),
 			"range_breakout_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
 				Description: "只留最近 N 個交易日(含查詢日,1–20)出現區間突破、且突破後還沒跌回突破價的股票;" +
@@ -594,7 +594,7 @@ func screenPEGLine(first ScreenedStock) string {
 	if first.PEGRatio == nil && first.EPSTTMGrowthPercent == nil {
 		return ""
 	}
-	return fmt.Sprintf("首筆 PEG:%s(本益比 %s ÷ 近四季 EPS 成長率 %s;虧損或衰退時無)。",
+	return fmt.Sprintf("首筆 PEG:%s(本益比 %s ÷ 近四季 EPS 成長率 %s;虧損、衰退或成長逾 100%% 時無)。",
 		displayFloat(first.PEGRatio), displayFloat(first.PERatio), displayPercent(first.EPSTTMGrowthPercent))
 }
 

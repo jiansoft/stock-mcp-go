@@ -50,7 +50,7 @@ func TestScreenPEG(t *testing.T) {
 	if err != nil || f.gotOpt.MaxPEG == nil || *f.gotOpt.MaxPEG != 1 {
 		t.Fatalf("max_peg 單獨即可篩選且傳給 client:%v %+v", err, f.gotOpt)
 	}
-	if text := resultText(t, result); !strings.Contains(text, "首筆 PEG:0.47(本益比 24.75 ÷ 近四季 EPS 成長率 53.22%;虧損或衰退時無)。") {
+	if text := resultText(t, result); !strings.Contains(text, "首筆 PEG:0.47(本益比 24.75 ÷ 近四季 EPS 成長率 53.22%;虧損、衰退或成長逾 100% 時無)。") {
 		t.Fatalf("摘要缺少 PEG:%s", text)
 	}
 	if _, _, err := newScreenToolset(f).screenStocks(t.Context(), nil, ScreenStocksInput{SortBy: "peg"}); err != nil {
