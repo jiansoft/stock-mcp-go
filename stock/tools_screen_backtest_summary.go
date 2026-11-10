@@ -61,6 +61,8 @@ func rankByText(rankBy string) string {
 		return "股價淨值比近 5 年百分位"
 	case "rd_ratio":
 		return "近四季研發費用率"
+	case "pe_pb_product":
+		return "本益比 × 股價淨值比"
 	}
 	return "相對強度分數"
 }
@@ -69,7 +71,7 @@ func rankByText(rankBy string) string {
 // 其餘由高到低。
 func rankAscending(rankBy string) bool {
 	switch rankBy {
-	case "pe_ratio", "pb_ratio", "magic_formula", "peg", "low_volatility", "bias240", "pb_percentile":
+	case "pe_ratio", "pb_ratio", "magic_formula", "peg", "low_volatility", "bias240", "pb_percentile", "pe_pb_product":
 		return true
 	}
 	return false
@@ -152,6 +154,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	filters = append(filters, steadyTexts(e.MinMarketCap, profitYears)...)
 	filters = append(filters, pbPercentileTexts(e.MaxPBPercentile)...)
 	filters = append(filters, rdRatioTexts(e.MinRDRatioPercent)...)
+	filters = append(filters, grahamTexts(e.MaxPEPBProduct, e.MinCurrentRatio)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {
