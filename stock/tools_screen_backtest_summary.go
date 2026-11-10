@@ -59,6 +59,8 @@ func rankByText(rankBy string) string {
 		return "年線乖離率"
 	case "pb_percentile":
 		return "股價淨值比近 5 年百分位"
+	case "rd_ratio":
+		return "近四季研發費用率"
 	}
 	return "相對強度分數"
 }
@@ -149,6 +151,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	}
 	filters = append(filters, steadyTexts(e.MinMarketCap, profitYears)...)
 	filters = append(filters, pbPercentileTexts(e.MaxPBPercentile)...)
+	filters = append(filters, rdRatioTexts(e.MinRDRatioPercent)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {

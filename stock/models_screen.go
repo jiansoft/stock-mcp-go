@@ -112,6 +112,8 @@ type ScreenedStock struct {
 	ProfitYears *int     `json:"profit_years"`
 	// PBPercentile 是查詢日前 10 天內最新的股價淨值比近 5 年百分位(0 為 5 年最低);樣本不足或舊版 API 為 nil。
 	PBPercentile *float64 `json:"pb_percentile"`
+	// RDRatioPercent 是最近 4 季研發費用率(%);資料不足或舊版 API 為 nil。
+	RDRatioPercent *float64 `json:"rd_ratio_percent"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -174,6 +176,8 @@ type ScreenOptions struct {
 	MinProfitYears int
 	// MaxPBPercentile 是股價淨值比近 5 年百分位上限。
 	MaxPBPercentile *float64
+	// MinRDRatioPercent 是近四季研發費用率(%)下限。
+	MinRDRatioPercent *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。
