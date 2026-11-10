@@ -46,6 +46,8 @@ type BacktestFundamentals struct {
 	MinProfitYears int
 	// MaxPBPercentile 是換股當天股價淨值比在自身近 5 年的百分位上限(0 至 100,0 為 5 年最低);nil 為不篩選。
 	MaxPBPercentile *float64
+	// MinRDRatioPercent 是換股日已公布的近四季研發費用率(%)下限;nil 為不篩選。
+	MinRDRatioPercent *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -183,6 +185,10 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
 			Description: "連續獲利年數下限(1 至 30,選填;安心存股):已公布(隔年 4/1 起)的年度 EPS 從最新年度往回連續大於 0(年度相連)的年數;最新年度須是換股日看得到的那一年。年度 EPS 2015 年起才完整,2019 年的換股日最多只數得到 3～4 年;只用於新買進",
 		},
+		"min_rd_ratio_percent": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "研發費用率下限(%,0 至 100,選填;研發成長股):換股日已公布最近一季往回四季(季別須相連、最新一季在 3 季內)的研發費用合計 ÷ 營收合計,例如 5 只選研發投入至少營收 5% 的股票;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1),資料不足的不通過;建議搭配 EPS 或營收成長條件。只用於新買進",
+		},
 		"max_pb_percentile": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "股價淨值比歷史分位上限(0 至 100,選填;便宜價):換股當天官方股價淨值比在自身近 5 年每日股價淨值比中的百分位(0 為 5 年最低、100 為最高),例如 20 只選位在自己 5 年河流圖低檔的股票;近 5 年樣本不足 480 筆(約 2 年)的不通過;配股除權後官方淨值比的每股淨值要到下次財報才更新,期間百分位偏低。用換股當天收盤後的資料,只用於新買進",
@@ -269,6 +275,7 @@ func (f BacktestFundamentals) validate() error {
 		{"max_bias240", f.MaxBias240, -90, 100},
 		{"min_market_cap", f.MinMarketCap, 1, 1000000},
 		{"max_pb_percentile", f.MaxPBPercentile, 0, 100},
+		{"min_rd_ratio_percent", f.MinRDRatioPercent, 0, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -318,7 +325,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_peg":                f.MaxPEG,
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
 		"max_bias240": f.MaxBias240, "min_market_cap": f.MinMarketCap, "max_pb_percentile": f.MaxPBPercentile,
-		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
+		"min_rd_ratio_percent": f.MinRDRatioPercent, "min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
 	} {
@@ -402,6 +409,14 @@ func pbPercentileTexts(maxPercentile *float64) []string {
 		return nil
 	}
 	return []string{"股價淨值比位於近 5 年第 " + formatFloat(*maxPercentile) + " 百分位以下"}
+}
+
+// rdRatioTexts 描述近四季研發費用率下限;nil 代表不篩選。
+func rdRatioTexts(minRatio *float64) []string {
+	if minRatio == nil {
+		return nil
+	}
+	return []string{"近四季研發費用率 ≥ " + formatFloat(*minRatio) + "%"}
 }
 
 // steadyTexts 描述安心存股的市值下限與連續獲利年數;nil 與 0 代表不篩選。
