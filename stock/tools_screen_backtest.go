@@ -209,6 +209,8 @@ type ScreenBacktestEnvelope struct {
 	// MinMarketCap、MinProfitYears 是安心存股條件;舊版 API 沒有這兩欄時為 nil。
 	MinMarketCap   *float64 `json:"min_market_cap"`
 	MinProfitYears *int     `json:"min_profit_years"`
+	// MaxPBPercentile 是股價淨值比近 5 年百分位上限;舊版 API 沒有這欄時為 nil。
+	MaxPBPercentile *float64 `json:"max_pb_percentile"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -426,6 +428,8 @@ type ScreenBacktestInput struct {
 	// MinMarketCap 是換股當天市值(億元)下限;MinProfitYears 是連續獲利年數下限(1 至 30)。
 	MinMarketCap   *float64 `json:"min_market_cap,omitempty"`
 	MinProfitYears int      `json:"min_profit_years,omitempty"`
+	// MaxPBPercentile 是換股當天股價淨值比近 5 年百分位上限(0 至 100)。
+	MaxPBPercentile *float64 `json:"max_pb_percentile,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`

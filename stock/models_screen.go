@@ -110,6 +110,8 @@ type ScreenedStock struct {
 	// MarketCap 是市值(億元,最新收盤 × 目前發行股數);ProfitYears 是已公布年度 EPS 連續大於 0 的年數。舊版 API 為 nil。
 	MarketCap   *float64 `json:"market_cap"`
 	ProfitYears *int     `json:"profit_years"`
+	// PBPercentile 是查詢日前 10 天內最新的股價淨值比近 5 年百分位(0 為 5 年最低);樣本不足或舊版 API 為 nil。
+	PBPercentile *float64 `json:"pb_percentile"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -170,6 +172,8 @@ type ScreenOptions struct {
 	// MinMarketCap 是市值(億元)下限;MinProfitYears 是連續獲利年數下限(0 為不篩)。
 	MinMarketCap   *float64
 	MinProfitYears int
+	// MaxPBPercentile 是股價淨值比近 5 年百分位上限。
+	MaxPBPercentile *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。
