@@ -57,14 +57,17 @@ func rankByText(rankBy string) string {
 		return "近 240 日年化波動度"
 	case "bias240":
 		return "年線乖離率"
+	case "pb_percentile":
+		return "股價淨值比近 5 年百分位"
 	}
 	return "相對強度分數"
 }
 
-// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比、神奇公式名次合計、PEG、波動度、年線乖離);其餘由高到低。
+// rankAscending 回報排序方式是否由低到高(本益比、股價淨值比、神奇公式名次合計、PEG、波動度、年線乖離、淨值比分位);
+// 其餘由高到低。
 func rankAscending(rankBy string) bool {
 	switch rankBy {
-	case "pe_ratio", "pb_ratio", "magic_formula", "peg", "low_volatility", "bias240":
+	case "pe_ratio", "pb_ratio", "magic_formula", "peg", "low_volatility", "bias240", "pb_percentile":
 		return true
 	}
 	return false
@@ -145,6 +148,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		profitYears = *e.MinProfitYears
 	}
 	filters = append(filters, steadyTexts(e.MinMarketCap, profitYears)...)
+	filters = append(filters, pbPercentileTexts(e.MaxPBPercentile)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {
