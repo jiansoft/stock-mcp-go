@@ -107,6 +107,9 @@ type ScreenedStock struct {
 	Beta              *float64 `json:"beta"`
 	// Bias240Percent 是查詢日前 10 天內最新一筆日線的年線乖離率(%);上市未滿一年或舊版 API 為 nil。
 	Bias240Percent *float64 `json:"bias240_percent"`
+	// MarketCap 是市值(億元,最新收盤 × 目前發行股數);ProfitYears 是已公布年度 EPS 連續大於 0 的年數。舊版 API 為 nil。
+	MarketCap   *float64 `json:"market_cap"`
+	ProfitYears *int     `json:"profit_years"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -164,6 +167,9 @@ type ScreenOptions struct {
 	MaxBeta              *float64
 	// MaxBias240 是年線乖離率(%)上限。
 	MaxBias240 *float64
+	// MinMarketCap 是市值(億元)下限;MinProfitYears 是連續獲利年數下限(0 為不篩)。
+	MinMarketCap   *float64
+	MinProfitYears int
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。

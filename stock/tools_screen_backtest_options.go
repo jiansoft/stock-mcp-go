@@ -159,6 +159,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks,
 		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent, MaxPEG: in.MaxPEG,
 		MaxVolatilityPercent: in.MaxVolatilityPercent, MaxBeta: in.MaxBeta, MaxBias240: in.MaxBias240,
+		MinMarketCap: in.MinMarketCap, MinProfitYears: in.MinProfitYears,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent,
 		NewHighDays: in.NewHighDays, MinFScore: in.MinFScore,
 		MinDividendYieldPercent: in.MinDividendYieldPercent, MinFillRatePercent: in.MinFillRatePercent,

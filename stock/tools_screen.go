@@ -73,6 +73,9 @@ type ScreenStocksInput struct {
 	MaxBeta              *float64 `json:"max_beta,omitempty"`
 	// MaxBias240 是年線乖離率(%)上限。
 	MaxBias240 *float64 `json:"max_bias240,omitempty"`
+	// MinMarketCap 是市值(億元)下限;MinProfitYears 是連續獲利年數下限(1–30,0 為不篩)。
+	MinMarketCap   *float64 `json:"min_market_cap,omitempty"`
+	MinProfitYears int      `json:"min_profit_years,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
 	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
@@ -188,6 +191,7 @@ func screenStocksSchema() *jsonschema.Schema {
 			"max_volatility_percent": number(1, 200, "年化波動度上限(%,1 至 200,選填;低波動):近 240 筆日線漲跌幅的樣本標準差 × √240,樣本不足 200 筆的不通過(0050 約 20～30%);每檔附 volatility_percent"),
 			"max_beta":               number(-5, 5, "beta 上限(-5 至 5,選填;低波動):近 240 筆日線對加權指數日報酬的迴歸斜率;台股大盤由台積電主導,非電子股的 beta 常接近 0;每檔附 beta"),
 			"max_bias240":            number(-90, 100, "年線乖離率上限(%,-90 至 100,選填;均值回歸):收盤 ÷ 240 日均線 − 1,例如 -15 只選跌破年線 15% 以上的股票;年線用未還原收盤計算(除權息後乖離偏低),上市未滿一年的不通過;建議搭配 min_f_score 或 min_roe_percent 避開體質變差的;每檔附 bias240_percent"),
+			"min_market_cap":         number(1, 1000000, "市值下限(億元,1 至 1000000,選填;安心存股):收盤 × 股數,例如 100 只選市值 100 億元以上的股票(最新收盤 × 目前發行股數);每檔附 market_cap"),
 			"max_peg":                number(0.01, 10, "PEG 上限(0.01 至 10,選填;GARP):本益比 ÷ 近四季 EPS 成長率(%,近四季 Yahoo 單季 EPS 合計對前四季合計,須 8 季相連、前四季合計 > 0);虧損或成長率不在 0～100%(超過 100% 多為低基期轉盈,PEG 失真)的不通過,例如 1 代表本益比不高於成長率;每檔附 eps_ttm_growth_percent、peg_ratio"),
 			"range_breakout_days": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(20.0),
@@ -217,6 +221,11 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
 				Description: "連續配發現金股利的年數下限(1–30,存股條件),以除息日年度計;最近一次除息早於查詢年前一年的不符合。" +
 					"可搭配 min_dividend_yield_percent、min_fill_rate_percent 找高殖利率又常填息的股票",
+			},
+			"min_profit_years": {
+				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+				Description: "連續獲利年數下限(1 至 30,選填;安心存股):已公布(隔年 4/1 起)的年度 EPS 從最新年度往回連續大於 0(年度相連)的年數;最新年度落後查詢年超過 2 年的為 0。" +
+					"可搭配 min_market_cap、min_dividend_yield_percent、min_dividend_years 找安心存股;每檔附 profit_years",
 			},
 			"min_dividend_growth_years": {
 				Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
@@ -318,6 +327,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"max_volatility_percent", in.MaxVolatilityPercent, 1, 200},
 		{"max_beta", in.MaxBeta, -5, 5},
 		{"max_bias240", in.MaxBias240, -90, 100},
+		{"min_market_cap", in.MinMarketCap, 1, 1000000},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
@@ -360,6 +370,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 	if in.MinDividendGrowthYears != 0 && (in.MinDividendGrowthYears < 1 || in.MinDividendGrowthYears > 30) {
 		return nil, nil, fmt.Errorf("參數 min_dividend_growth_years 必須介於 1 到 30 之間")
 	}
+	if in.MinProfitYears != 0 && (in.MinProfitYears < 1 || in.MinProfitYears > 30) {
+		return nil, nil, fmt.Errorf("參數 min_profit_years 必須介於 1 到 30 之間")
+	}
 	if in.MinDividendYears != 0 && (in.MinDividendYears < 1 || in.MinDividendYears > 30) {
 		return nil, nil, fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -374,6 +387,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MaxPE != nil || in.MaxPB != nil || in.MinMajorChange != nil || in.RangeBreakoutDays > 0 ||
 		in.MinHolder400Change != nil || in.MaxMarginChangePercent != nil || in.MaxPEG != nil || rankingSort(in.SortBy) ||
 		in.MaxVolatilityPercent != nil || in.MaxBeta != nil || in.MaxBias240 != nil ||
+		in.MinMarketCap != nil || in.MinProfitYears > 0 ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
 		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
@@ -418,6 +432,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinMajorChange: in.MinMajorChange, MajorChangeWeeks: in.MajorChangeWeeks, RangeBreakoutDays: in.RangeBreakoutDays,
 		MinHolder400Change: in.MinHolder400Change, MaxMarginChangePercent: in.MaxMarginChangePercent, MaxPEG: in.MaxPEG,
 		MaxVolatilityPercent: in.MaxVolatilityPercent, MaxBeta: in.MaxBeta, MaxBias240: in.MaxBias240,
+		MinMarketCap: in.MinMarketCap, MinProfitYears: in.MinProfitYears,
 		MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
@@ -448,6 +463,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenGrowthLine(first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenSteadyLine(first); line != "" {
 			summary = line + "\n" + summary
 		}
 		if line := screenBias240Line(first); line != "" {
@@ -606,6 +624,14 @@ func screenMagicFormulaLine(first ScreenedStock) string {
 		line += "資本報酬率極高:投入資本(淨營運資金 + 不動產廠房設備)相對營業利益很小,比率容易失真,宜一併看盈餘殖利率。"
 	}
 	return line
+}
+
+// screenSteadyLine 描述首筆的市值與連續獲利年數;兩者都沒有資料時回空字串(舊版 API)。
+func screenSteadyLine(first ScreenedStock) string {
+	if first.MarketCap == nil && first.ProfitYears == nil {
+		return ""
+	}
+	return "首筆市值 " + displayFloat(first.MarketCap) + " 億元、年度 EPS 連續 " + displayInt(first.ProfitYears) + " 年為正。"
 }
 
 // screenBias240Line 描述首筆的年線乖離率;沒有資料時回空字串(上市未滿一年或舊版 API)。
