@@ -209,7 +209,8 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 		"min_dividend_yield_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "換股當天的現金殖利率至少這麼高(%,選填,0 至 100;存股常用 5):最近一次除息往回 350 天的現金股利合計 ÷ 換股日收盤," +
-				"季配、月配會算到一年份;最近一次除息早於換股日 400 天以上(已停止配息)或換股日沒有收盤的不通過。" + dividendRule,
+				"季配、月配會算到一年份;除息後到換股日之間有配股除權時,每股現金股利依股數倍數(1 + 股票股利 ÷ 10)攤薄;" +
+				"最近一次除息早於換股日 400 天以上(已停止配息)或換股日沒有收盤的不通過。" + dividendRule,
 		},
 		"min_fill_rate_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
