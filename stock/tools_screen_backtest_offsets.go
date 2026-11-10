@@ -166,6 +166,7 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	filters = append(filters, pegTexts(fundamentals.MaxPEG)...)
 	filters = append(filters, lowVolatilityTexts(fundamentals.MaxVolatilityPercent, fundamentals.MaxBeta)...)
 	filters = append(filters, bias240Texts(fundamentals.MaxBias240)...)
+	filters = append(filters, steadyTexts(fundamentals.MinMarketCap, fundamentals.MinProfitYears)...)
 	filters = append(filters, majorChangeTexts(fundamentals.MinMajorChange, fundamentals.MajorChangeWeeks)...)
 	filters = append(filters, chipConcentrationTexts(fundamentals.MinHolder400Change, fundamentals.MajorChangeWeeks,
 		fundamentals.MaxMarginChangePercent)...)

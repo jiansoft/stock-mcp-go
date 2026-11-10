@@ -140,6 +140,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	filters = append(filters, pegTexts(e.MaxPEG)...)
 	filters = append(filters, lowVolatilityTexts(e.MaxVolatilityPercent, e.MaxBeta)...)
 	filters = append(filters, bias240Texts(e.MaxBias240)...)
+	profitYears := 0
+	if e.MinProfitYears != nil {
+		profitYears = *e.MinProfitYears
+	}
+	filters = append(filters, steadyTexts(e.MinMarketCap, profitYears)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {

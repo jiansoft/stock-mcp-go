@@ -355,6 +355,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MaxBias240 != nil {
 		values.Set("max_bias240", formatFloat(*opt.MaxBias240))
 	}
+	if opt.MinMarketCap != nil {
+		values.Set("min_market_cap", formatFloat(*opt.MinMarketCap))
+	}
+	if opt.MinProfitYears > 0 {
+		values.Set("min_profit_years", fmt.Sprint(opt.MinProfitYears))
+	}
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}

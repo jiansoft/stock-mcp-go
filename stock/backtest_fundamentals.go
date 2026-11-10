@@ -40,6 +40,10 @@ type BacktestFundamentals struct {
 	MaxBeta              *float64
 	// MaxBias240 是換股當天年線乖離率(%)上限;nil 為不篩選。
 	MaxBias240 *float64
+	// MinMarketCap 是換股當天市值(億元)下限:收盤 × 換股日已公布最近一季的股數(沒有時用目前發行股數);nil 為不篩選。
+	MinMarketCap *float64
+	// MinProfitYears 是連續獲利年數下限:換股當天已公布的年度 EPS 從最新年度往回連續大於 0 的年數(1 至 30);0 為不篩選。
+	MinProfitYears int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -169,6 +173,14 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "number", Minimum: ptr(-90.0), Maximum: ptr(100.0),
 			Description: "年線乖離率上限(%,-90 至 100,選填;均值回歸):收盤 ÷ 240 日均線 − 1,例如 -15 只選跌破年線 15% 以上的股票;年線用未還原收盤計算(除權息後乖離偏低),上市未滿一年的不通過;建議搭配 min_f_score 或 min_roe_percent 避開體質變差的。用換股當天收盤,只用於新買進",
 		},
+		"min_market_cap": {
+			Type: "number", Minimum: ptr(1.0), Maximum: ptr(1000000.0),
+			Description: "市值下限(億元,1 至 1000000,選填;安心存股):收盤 × 股數,例如 100 只選市值 100 億元以上的股票;股數用換股日已公布最近一季的 Yahoo 股本推算,沒有該季資料時改用目前發行股數。用換股當天收盤,只用於新買進",
+		},
+		"min_profit_years": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
+			Description: "連續獲利年數下限(1 至 30,選填;安心存股):已公布(隔年 4/1 起)的年度 EPS 從最新年度往回連續大於 0(年度相連)的年數;最新年度須是換股日看得到的那一年。年度 EPS 2015 年起才完整,2019 年的換股日最多只數得到 3～4 年;只用於新買進",
+		},
 		"min_eps_yoy_percent": {
 			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(10000.0),
 			Description: "換股當天已公布的最近一季單季 EPS 對去年同季的成長率至少這麼高(%,選填,-100 至 10000;CANSLIM 的 C)。" +
@@ -248,6 +260,7 @@ func (f BacktestFundamentals) validate() error {
 		{"max_volatility_percent", f.MaxVolatilityPercent, 1, 200},
 		{"max_beta", f.MaxBeta, -5, 5},
 		{"max_bias240", f.MaxBias240, -90, 100},
+		{"min_market_cap", f.MinMarketCap, 1, 1000000},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -276,6 +289,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.MinDividendGrowthYears != 0 && (f.MinDividendGrowthYears < 1 || f.MinDividendGrowthYears > 30) {
 		return fmt.Errorf("參數 min_dividend_growth_years 必須介於 1 到 30 之間")
 	}
+	if f.MinProfitYears != 0 && (f.MinProfitYears < 1 || f.MinProfitYears > 30) {
+		return fmt.Errorf("參數 min_profit_years 必須介於 1 到 30 之間")
+	}
 	if f.MinDividendYears != 0 && (f.MinDividendYears < 1 || f.MinDividendYears > 30) {
 		return fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -293,7 +309,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"min_holder_400_change": f.MinHolder400Change, "max_margin_change_percent": f.MaxMarginChangePercent,
 		"max_peg":                f.MaxPEG,
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
-		"max_bias240":         f.MaxBias240,
+		"max_bias240": f.MaxBias240, "min_market_cap": f.MinMarketCap,
 		"min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -322,6 +338,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinDividendGrowthYears > 0 {
 		values.Set("min_dividend_growth_years", fmt.Sprint(f.MinDividendGrowthYears))
+	}
+	if f.MinProfitYears > 0 {
+		values.Set("min_profit_years", fmt.Sprint(f.MinProfitYears))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -367,6 +386,18 @@ func bias240Texts(maxBias *float64) []string {
 		return nil
 	}
 	return []string{"年線乖離率 ≤ " + formatFloat(*maxBias) + "%"}
+}
+
+// steadyTexts 描述安心存股的市值下限與連續獲利年數;nil 與 0 代表不篩選。
+func steadyTexts(minMarketCap *float64, minProfitYears int) []string {
+	var filters []string
+	if minMarketCap != nil {
+		filters = append(filters, "市值 ≥ "+formatFloat(*minMarketCap)+" 億元")
+	}
+	if minProfitYears > 0 {
+		filters = append(filters, fmt.Sprintf("已公布的年度 EPS 連續 %d 年為正", minProfitYears))
+	}
+	return filters
 }
 
 // lowVolatilityTexts 描述年化波動度與 beta 上限;nil 代表不篩選。
