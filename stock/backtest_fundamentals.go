@@ -48,6 +48,10 @@ type BacktestFundamentals struct {
 	MaxPBPercentile *float64
 	// MinRDRatioPercent 是換股日已公布的近四季研發費用率(%)下限;nil 為不篩選。
 	MinRDRatioPercent *float64
+	// MaxPEPBProduct 是換股當天本益比 × 股價淨值比上限(葛拉漢);nil 為不篩選。
+	MaxPEPBProduct *float64
+	// MinCurrentRatio 是換股日已公布最新一季的流動比率(倍)下限;nil 為不篩選。
+	MinCurrentRatio *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -185,6 +189,14 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(30.0),
 			Description: "連續獲利年數下限(1 至 30,選填;安心存股):已公布(隔年 4/1 起)的年度 EPS 從最新年度往回連續大於 0(年度相連)的年數;最新年度須是換股日看得到的那一年。年度 EPS 2015 年起才完整,2019 年的換股日最多只數得到 3～4 年;只用於新買進",
 		},
+		"max_pe_pb_product": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(1000.0),
+			Description: "本益比 × 股價淨值比上限(0 至 1000,選填;葛拉漢):換股當天官方本益比乘上股價淨值比,葛拉漢的標準是 22.5(例如本益比 15 × 淨值比 1.5);虧損或沒有資料的不通過;建議搭配 min_current_ratio 與 min_profit_years。只用於新買進",
+		},
+		"min_current_ratio": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "流動比率下限(倍,0 至 100,選填;葛拉漢):換股日已公布最新一季(3 季內)的流動資產 ÷ 流動負債,葛拉漢的標準是 2;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1);金融業沒有流動資產／負債分類,設了就不通過。只用於新買進",
+		},
 		"min_rd_ratio_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "研發費用率下限(%,0 至 100,選填;研發成長股):換股日已公布最近一季往回四季(季別須相連、最新一季在 3 季內)的研發費用合計 ÷ 營收合計,例如 5 只選研發投入至少營收 5% 的股票;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1),資料不足的不通過;建議搭配 EPS 或營收成長條件。只用於新買進",
@@ -276,6 +288,8 @@ func (f BacktestFundamentals) validate() error {
 		{"min_market_cap", f.MinMarketCap, 1, 1000000},
 		{"max_pb_percentile", f.MaxPBPercentile, 0, 100},
 		{"min_rd_ratio_percent", f.MinRDRatioPercent, 0, 100},
+		{"max_pe_pb_product", f.MaxPEPBProduct, 0, 1000},
+		{"min_current_ratio", f.MinCurrentRatio, 0, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -325,6 +339,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_peg":                f.MaxPEG,
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
 		"max_bias240": f.MaxBias240, "min_market_cap": f.MinMarketCap, "max_pb_percentile": f.MaxPBPercentile,
+		"max_pe_pb_product": f.MaxPEPBProduct, "min_current_ratio": f.MinCurrentRatio,
 		"min_rd_ratio_percent": f.MinRDRatioPercent, "min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -409,6 +424,18 @@ func pbPercentileTexts(maxPercentile *float64) []string {
 		return nil
 	}
 	return []string{"股價淨值比位於近 5 年第 " + formatFloat(*maxPercentile) + " 百分位以下"}
+}
+
+// grahamTexts 描述葛拉漢的本益比 × 股價淨值比上限與流動比率下限;nil 代表不篩選。
+func grahamTexts(maxProduct, minCurrentRatio *float64) []string {
+	var texts []string
+	if maxProduct != nil {
+		texts = append(texts, "本益比 × 股價淨值比 ≤ "+formatFloat(*maxProduct))
+	}
+	if minCurrentRatio != nil {
+		texts = append(texts, "流動比率 ≥ "+formatFloat(*minCurrentRatio)+" 倍")
+	}
+	return texts
 }
 
 // rdRatioTexts 描述近四季研發費用率下限;nil 代表不篩選。

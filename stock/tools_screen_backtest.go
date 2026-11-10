@@ -213,6 +213,10 @@ type ScreenBacktestEnvelope struct {
 	MaxPBPercentile *float64 `json:"max_pb_percentile"`
 	// MinRDRatioPercent 是近四季研發費用率下限;舊版 API 沒有這欄時為 nil。
 	MinRDRatioPercent *float64 `json:"min_rd_ratio_percent"`
+	// MaxPEPBProduct 是本益比 × 股價淨值比上限;舊版 API 沒有這欄時為 nil。
+	MaxPEPBProduct *float64 `json:"max_pe_pb_product"`
+	// MinCurrentRatio 是流動比率下限(倍);舊版 API 沒有這欄時為 nil。
+	MinCurrentRatio *float64 `json:"min_current_ratio"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -434,6 +438,10 @@ type ScreenBacktestInput struct {
 	MaxPBPercentile *float64 `json:"max_pb_percentile,omitempty"`
 	// MinRDRatioPercent 是換股日已公布的近四季研發費用率(%)下限(0 至 100)。
 	MinRDRatioPercent *float64 `json:"min_rd_ratio_percent,omitempty"`
+	// MaxPEPBProduct 是換股當天本益比 × 股價淨值比上限(0 至 1000)。
+	MaxPEPBProduct *float64 `json:"max_pe_pb_product,omitempty"`
+	// MinCurrentRatio 是換股日已公布最新一季的流動比率(倍)下限(0 至 100)。
+	MinCurrentRatio *float64 `json:"min_current_ratio,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
