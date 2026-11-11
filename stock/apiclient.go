@@ -373,6 +373,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinCurrentRatio != nil {
 		values.Set("min_current_ratio", formatFloat(*opt.MinCurrentRatio))
 	}
+	if opt.MinAnnualROEPercent != nil {
+		values.Set("min_annual_roe_percent", formatFloat(*opt.MinAnnualROEPercent))
+	}
+	if opt.MinROEYears > 0 {
+		values.Set("min_roe_years", fmt.Sprint(opt.MinROEYears))
+	}
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}

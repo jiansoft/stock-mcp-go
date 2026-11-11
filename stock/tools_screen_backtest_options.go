@@ -161,6 +161,7 @@ func screenBacktestOptions(in ScreenBacktestInput) (ScreenBacktestOptions, error
 		MaxVolatilityPercent: in.MaxVolatilityPercent, MaxBeta: in.MaxBeta, MaxBias240: in.MaxBias240,
 		MinMarketCap: in.MinMarketCap, MinProfitYears: in.MinProfitYears, MaxPBPercentile: in.MaxPBPercentile,
 		MaxPEPBProduct: in.MaxPEPBProduct, MinCurrentRatio: in.MinCurrentRatio,
+		MinROEYears: in.MinROEYears, MinAnnualROEPercent: in.MinAnnualROEPercent,
 		MinRDRatioPercent: in.MinRDRatioPercent, MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent,
 		NewHighDays: in.NewHighDays, MinFScore: in.MinFScore,
 		MinDividendYieldPercent: in.MinDividendYieldPercent, MinFillRatePercent: in.MinFillRatePercent,

@@ -155,6 +155,11 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 	filters = append(filters, pbPercentileTexts(e.MaxPBPercentile)...)
 	filters = append(filters, rdRatioTexts(e.MinRDRatioPercent)...)
 	filters = append(filters, grahamTexts(e.MaxPEPBProduct, e.MinCurrentRatio)...)
+	roeYears := 0
+	if e.MinROEYears != nil {
+		roeYears = *e.MinROEYears
+	}
+	filters = append(filters, roeTexts(roeYears, e.MinAnnualROEPercent)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {

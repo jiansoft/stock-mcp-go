@@ -170,6 +170,7 @@ func backtestOptionsText(opt ScreenBacktestOptions) string {
 	filters = append(filters, pbPercentileTexts(fundamentals.MaxPBPercentile)...)
 	filters = append(filters, rdRatioTexts(fundamentals.MinRDRatioPercent)...)
 	filters = append(filters, grahamTexts(fundamentals.MaxPEPBProduct, fundamentals.MinCurrentRatio)...)
+	filters = append(filters, roeTexts(fundamentals.MinROEYears, fundamentals.MinAnnualROEPercent)...)
 	filters = append(filters, majorChangeTexts(fundamentals.MinMajorChange, fundamentals.MajorChangeWeeks)...)
 	filters = append(filters, chipConcentrationTexts(fundamentals.MinHolder400Change, fundamentals.MajorChangeWeeks,
 		fundamentals.MaxMarginChangePercent)...)
