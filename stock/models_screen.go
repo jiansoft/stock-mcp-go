@@ -120,6 +120,10 @@ type ScreenedStock struct {
 	CurrentRatio *float64 `json:"current_ratio"`
 	// ROEYears 是年度 ROE 連續達標年數;沒設 min_annual_roe_percent 或舊版 API 為 nil。
 	ROEYears *int `json:"roe_years"`
+	// PSR 是最新收盤 × 目前發行股數 ÷ 最近 12 個月營收(倍);資料不足或舊版 API 為 nil。
+	PSR *float64 `json:"psr"`
+	// AvgNetMargin3YPercent 是近 3 年平均稅後淨利率(%);資料不足或舊版 API 為 nil。
+	AvgNetMargin3YPercent *float64 `json:"avg_net_margin_3y_percent"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -191,6 +195,9 @@ type ScreenOptions struct {
 	// MinROEYears 是年度 ROE 連續達標年數下限(0 為不指定);MinAnnualROEPercent 是年度 ROE 門檻(%)。
 	MinROEYears         int
 	MinAnnualROEPercent *float64
+	// MaxPSR 是 PSR 上限(倍);MinAvgNetMargin3Y 是近 3 年平均稅後淨利率下限(%)。
+	MaxPSR            *float64
+	MinAvgNetMargin3Y *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。

@@ -56,6 +56,10 @@ type BacktestFundamentals struct {
 	MinROEYears int
 	// MinAnnualROEPercent 是年度 ROE 門檻(%);nil 為不篩選。
 	MinAnnualROEPercent *float64
+	// MaxPSR 是 PSR(市值 ÷ 近 12 個月營收)上限(倍);nil 為不篩選。
+	MaxPSR *float64
+	// MinAvgNetMargin3Y 是近 3 年平均稅後淨利率下限(%);nil 為不篩選。
+	MinAvgNetMargin3Y *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -209,6 +213,14 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "年度 ROE 門檻(%,0 至 100,選填;巴菲特長期高 ROE):搭配 min_roe_years;只設門檻時看換股日已公布的最新一個年度。建議搭配 max_debt_ratio_percent 與 positive_free_cash_flow。只用於新買進",
 		},
+		"max_psr": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "PSR 上限(倍,0 至 100,選填;肯尼斯費雪):換股當天市值(收盤 × 股數,同 min_market_cap)÷ 換股日已公布的近 12 個月營收合計(月份須相連,公布規則同 min_revenue_yoy_percent),費雪常用 1～3;虧損股也可能 PSR 很低,建議搭配 min_avg_net_margin_3y。只用於新買進",
+		},
+		"min_avg_net_margin_3y": {
+			Type: "number", Minimum: ptr(-100.0), Maximum: ptr(100.0),
+			Description: "近 3 年平均稅後淨利率下限(%,-100 至 100,選填;肯尼斯費雪):換股當天已公布(隔年 4/1 起)最近 3 個年度損益表的稅後淨利 ÷ 營收平均,年度須相連、最新年度落後換股年 1～2 年;年度損益表 2015 年起才有。只用於新買進",
+		},
 		"min_rd_ratio_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "研發費用率下限(%,0 至 100,選填;研發成長股):換股日已公布最近一季往回四季(季別須相連、最新一季在 3 季內)的研發費用合計 ÷ 營收合計,例如 5 只選研發投入至少營收 5% 的股票;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1),資料不足的不通過;建議搭配 EPS 或營收成長條件。只用於新買進",
@@ -303,6 +315,8 @@ func (f BacktestFundamentals) validate() error {
 		{"max_pe_pb_product", f.MaxPEPBProduct, 0, 1000},
 		{"min_current_ratio", f.MinCurrentRatio, 0, 100},
 		{"min_annual_roe_percent", f.MinAnnualROEPercent, 0, 100},
+		{"max_psr", f.MaxPSR, 0, 100},
+		{"min_avg_net_margin_3y", f.MinAvgNetMargin3Y, -100, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -356,6 +370,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
 		"max_bias240": f.MaxBias240, "min_market_cap": f.MinMarketCap, "max_pb_percentile": f.MaxPBPercentile,
 		"max_pe_pb_product": f.MaxPEPBProduct, "min_current_ratio": f.MinCurrentRatio, "min_annual_roe_percent": f.MinAnnualROEPercent,
+		"max_psr": f.MaxPSR, "min_avg_net_margin_3y": f.MinAvgNetMargin3Y,
 		"min_rd_ratio_percent": f.MinRDRatioPercent, "min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -453,6 +468,18 @@ func grahamTexts(maxProduct, minCurrentRatio *float64) []string {
 	}
 	if minCurrentRatio != nil {
 		texts = append(texts, "流動比率 ≥ "+formatFloat(*minCurrentRatio)+" 倍")
+	}
+	return texts
+}
+
+// fisherTexts 描述 PSR 上限與近 3 年平均稅後淨利率下限;nil 代表不篩選。
+func fisherTexts(maxPSR, minNetMargin *float64) []string {
+	var texts []string
+	if maxPSR != nil {
+		texts = append(texts, "PSR ≤ "+formatFloat(*maxPSR)+" 倍")
+	}
+	if minNetMargin != nil {
+		texts = append(texts, "近 3 年平均稅後淨利率 ≥ "+formatFloat(*minNetMargin)+"%")
 	}
 	return texts
 }

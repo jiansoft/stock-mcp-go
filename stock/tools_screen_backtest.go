@@ -220,6 +220,9 @@ type ScreenBacktestEnvelope struct {
 	// MinROEYears、MinAnnualROEPercent 是年度 ROE 連續達標年數下限與門檻;未指定或舊版 API 為 nil。
 	MinROEYears         *int     `json:"min_roe_years"`
 	MinAnnualROEPercent *float64 `json:"min_annual_roe_percent"`
+	// MaxPSR、MinAvgNetMargin3Y 是 PSR 上限與近 3 年平均稅後淨利率下限;未篩選或舊版 API 為 nil。
+	MaxPSR            *float64 `json:"max_psr"`
+	MinAvgNetMargin3Y *float64 `json:"min_avg_net_margin_3y"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -448,6 +451,9 @@ type ScreenBacktestInput struct {
 	// MinROEYears 是年度 ROE 連續達標年數下限(1 至 10);MinAnnualROEPercent 是年度 ROE 門檻(%,0 至 100)。
 	MinROEYears         int      `json:"min_roe_years,omitempty"`
 	MinAnnualROEPercent *float64 `json:"min_annual_roe_percent,omitempty"`
+	// MaxPSR 是 PSR 上限(倍,0 至 100);MinAvgNetMargin3Y 是近 3 年平均稅後淨利率下限(%,-100 至 100)。
+	MaxPSR            *float64 `json:"max_psr,omitempty"`
+	MinAvgNetMargin3Y *float64 `json:"min_avg_net_margin_3y,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`
