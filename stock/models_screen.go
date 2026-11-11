@@ -118,6 +118,8 @@ type ScreenedStock struct {
 	PEPBProduct *float64 `json:"pe_pb_product"`
 	// CurrentRatio 是最新一季流動比率(倍);金融業、資料不足或舊版 API 為 nil。
 	CurrentRatio *float64 `json:"current_ratio"`
+	// ROEYears 是年度 ROE 連續達標年數;沒設 min_annual_roe_percent 或舊版 API 為 nil。
+	ROEYears *int `json:"roe_years"`
 }
 
 // Screening 是 stocks/screen endpoint 的完整 envelope。
@@ -186,6 +188,9 @@ type ScreenOptions struct {
 	MaxPEPBProduct *float64
 	// MinCurrentRatio 是流動比率(倍)下限。
 	MinCurrentRatio *float64
+	// MinROEYears 是年度 ROE 連續達標年數下限(0 為不指定);MinAnnualROEPercent 是年度 ROE 門檻(%)。
+	MinROEYears         int
+	MinAnnualROEPercent *float64
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回;0 為不篩。
 	RangeBreakoutDays int
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent 是 CANSLIM 的 C、A 門檻(nil 為不篩);NewHighDays 為 0 不篩。

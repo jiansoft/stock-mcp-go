@@ -217,6 +217,9 @@ type ScreenBacktestEnvelope struct {
 	MaxPEPBProduct *float64 `json:"max_pe_pb_product"`
 	// MinCurrentRatio 是流動比率下限(倍);舊版 API 沒有這欄時為 nil。
 	MinCurrentRatio *float64 `json:"min_current_ratio"`
+	// MinROEYears、MinAnnualROEPercent 是年度 ROE 連續達標年數下限與門檻;未指定或舊版 API 為 nil。
+	MinROEYears         *int     `json:"min_roe_years"`
+	MinAnnualROEPercent *float64 `json:"min_annual_roe_percent"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 條件;舊版 API 沒有這些欄位時為 nil。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent"`
@@ -442,6 +445,9 @@ type ScreenBacktestInput struct {
 	MaxPEPBProduct *float64 `json:"max_pe_pb_product,omitempty"`
 	// MinCurrentRatio 是換股日已公布最新一季的流動比率(倍)下限(0 至 100)。
 	MinCurrentRatio *float64 `json:"min_current_ratio,omitempty"`
+	// MinROEYears 是年度 ROE 連續達標年數下限(1 至 10);MinAnnualROEPercent 是年度 ROE 門檻(%,0 至 100)。
+	MinROEYears         int      `json:"min_roe_years,omitempty"`
+	MinAnnualROEPercent *float64 `json:"min_annual_roe_percent,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N 條件。
 	MinEPSYoYPercent          *float64 `json:"min_eps_yoy_percent,omitempty"`
 	MinAnnualEPSGrowthPercent *float64 `json:"min_annual_eps_growth_percent,omitempty"`

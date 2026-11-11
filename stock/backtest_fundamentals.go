@@ -52,6 +52,10 @@ type BacktestFundamentals struct {
 	MaxPEPBProduct *float64
 	// MinCurrentRatio 是換股日已公布最新一季的流動比率(倍)下限;nil 為不篩選。
 	MinCurrentRatio *float64
+	// MinROEYears 是年度 ROE 連續達標年數下限(1 至 10,0 為不指定;須搭配 MinAnnualROEPercent,只設門檻時 Data API 看 1 年)。
+	MinROEYears int
+	// MinAnnualROEPercent 是年度 ROE 門檻(%);nil 為不篩選。
+	MinAnnualROEPercent *float64
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:已公布的最近一季單季 EPS
 	// 年增率下限、已公布的近 3 年每年 EPS 年增率下限,以及換股日往前幾個日曆天內創過 52 週新高(0 為不篩)。
 	MinEPSYoYPercent          *float64
@@ -197,6 +201,14 @@ func backtestFundamentalSchemas() map[string]*jsonschema.Schema {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "流動比率下限(倍,0 至 100,選填;葛拉漢):換股日已公布最新一季(3 季內)的流動資產 ÷ 流動負債,葛拉漢的標準是 2;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1);金融業沒有流動資產／負債分類,設了就不通過。只用於新買進",
 		},
+		"min_roe_years": {
+			Type: "integer", Minimum: ptr(1.0), Maximum: ptr(10.0),
+			Description: "年度 ROE 連續達標年數下限(1 至 10,選填;巴菲特長期高 ROE,須搭配 min_annual_roe_percent):換股當天已公布(隔年 4/1 起)的年度 ROE 從最新年度往回連續不低於門檻(年度相連)的年數,例如 5 年皆 ≥ 15%;年度 ROE 2015 年起才完整,2019 年的換股日最多只數得到 3～4 年。只用於新買進",
+		},
+		"min_annual_roe_percent": {
+			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+			Description: "年度 ROE 門檻(%,0 至 100,選填;巴菲特長期高 ROE):搭配 min_roe_years;只設門檻時看換股日已公布的最新一個年度。建議搭配 max_debt_ratio_percent 與 positive_free_cash_flow。只用於新買進",
+		},
 		"min_rd_ratio_percent": {
 			Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 			Description: "研發費用率下限(%,0 至 100,選填;研發成長股):換股日已公布最近一季往回四季(季別須相連、最新一季在 3 季內)的研發費用合計 ÷ 營收合計,例如 5 只選研發投入至少營收 5% 的股票;公布時點同三率(Q1～Q3 季後 45 天、Q4 隔年 4/1),資料不足的不通過;建議搭配 EPS 或營收成長條件。只用於新買進",
@@ -290,6 +302,7 @@ func (f BacktestFundamentals) validate() error {
 		{"min_rd_ratio_percent", f.MinRDRatioPercent, 0, 100},
 		{"max_pe_pb_product", f.MaxPEPBProduct, 0, 1000},
 		{"min_current_ratio", f.MinCurrentRatio, 0, 100},
+		{"min_annual_roe_percent", f.MinAnnualROEPercent, 0, 100},
 		{"min_eps_yoy_percent", f.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", f.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_dividend_yield_percent", f.MinDividendYieldPercent, 0, 100},
@@ -321,6 +334,9 @@ func (f BacktestFundamentals) validate() error {
 	if f.MinProfitYears != 0 && (f.MinProfitYears < 1 || f.MinProfitYears > 30) {
 		return fmt.Errorf("參數 min_profit_years 必須介於 1 到 30 之間")
 	}
+	if err := validateROEYears(f.MinROEYears, f.MinAnnualROEPercent); err != nil {
+		return err
+	}
 	if f.MinDividendYears != 0 && (f.MinDividendYears < 1 || f.MinDividendYears > 30) {
 		return fmt.Errorf("參數 min_dividend_years 必須介於 1 到 30 之間")
 	}
@@ -339,7 +355,7 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 		"max_peg":                f.MaxPEG,
 		"max_volatility_percent": f.MaxVolatilityPercent, "max_beta": f.MaxBeta,
 		"max_bias240": f.MaxBias240, "min_market_cap": f.MinMarketCap, "max_pb_percentile": f.MaxPBPercentile,
-		"max_pe_pb_product": f.MaxPEPBProduct, "min_current_ratio": f.MinCurrentRatio,
+		"max_pe_pb_product": f.MaxPEPBProduct, "min_current_ratio": f.MinCurrentRatio, "min_annual_roe_percent": f.MinAnnualROEPercent,
 		"min_rd_ratio_percent": f.MinRDRatioPercent, "min_eps_yoy_percent": f.MinEPSYoYPercent, "min_annual_eps_growth_percent": f.MinAnnualEPSGrowthPercent,
 		"min_dividend_yield_percent": f.MinDividendYieldPercent, "min_fill_rate_percent": f.MinFillRatePercent,
 		"max_avg_fill_days": f.MaxAvgFillDays,
@@ -371,6 +387,9 @@ func (f BacktestFundamentals) set(values interface{ Set(key, value string) }) {
 	}
 	if f.MinProfitYears > 0 {
 		values.Set("min_profit_years", fmt.Sprint(f.MinProfitYears))
+	}
+	if f.MinROEYears > 0 {
+		values.Set("min_roe_years", fmt.Sprint(f.MinROEYears))
 	}
 	if f.MarginsYoYUp {
 		values.Set("margins_yoy_up", "true")
@@ -436,6 +455,28 @@ func grahamTexts(maxProduct, minCurrentRatio *float64) []string {
 		texts = append(texts, "流動比率 ≥ "+formatFloat(*minCurrentRatio)+" 倍")
 	}
 	return texts
+}
+
+// validateROEYears 檢查年度 ROE 連續達標年數(0 為不指定)的範圍,且有年數時必須有門檻。
+func validateROEYears(years int, threshold *float64) error {
+	if years != 0 && (years < 1 || years > 10) {
+		return fmt.Errorf("參數 min_roe_years 必須介於 1 到 10 之間")
+	}
+	if years != 0 && threshold == nil {
+		return fmt.Errorf("參數 min_roe_years 需搭配 min_annual_roe_percent")
+	}
+	return nil
+}
+
+// roeTexts 描述年度 ROE 連續達標條件;沒有門檻時回 nil,沒有年數時為最新一個年度。
+func roeTexts(years int, threshold *float64) []string {
+	if threshold == nil {
+		return nil
+	}
+	if years <= 1 {
+		return []string{"最新年度 ROE ≥ " + formatFloat(*threshold) + "%"}
+	}
+	return []string{"年度 ROE 連續 " + fmt.Sprint(years) + " 年 ≥ " + formatFloat(*threshold) + "%"}
 }
 
 // rdRatioTexts 描述近四季研發費用率下限;nil 代表不篩選。
