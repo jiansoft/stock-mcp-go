@@ -379,6 +379,12 @@ func (c *APIClient) ScreenStocks(ctx context.Context, opt ScreenOptions) (*Scree
 	if opt.MinROEYears > 0 {
 		values.Set("min_roe_years", fmt.Sprint(opt.MinROEYears))
 	}
+	if opt.MaxPSR != nil {
+		values.Set("max_psr", formatFloat(*opt.MaxPSR))
+	}
+	if opt.MinAvgNetMargin3Y != nil {
+		values.Set("min_avg_net_margin_3y", formatFloat(*opt.MinAvgNetMargin3Y))
+	}
 	if opt.RangeBreakoutDays > 0 {
 		values.Set("range_breakout_days", fmt.Sprint(opt.RangeBreakoutDays))
 	}

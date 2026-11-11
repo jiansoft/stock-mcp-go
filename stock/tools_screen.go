@@ -87,6 +87,9 @@ type ScreenStocksInput struct {
 	// MinROEYears 是年度 ROE 連續達標年數下限(1–10,0 為不指定);MinAnnualROEPercent 是年度 ROE 門檻(%,0–100)。
 	MinROEYears         int      `json:"min_roe_years,omitempty"`
 	MinAnnualROEPercent *float64 `json:"min_annual_roe_percent,omitempty"`
+	// MaxPSR 是 PSR 上限(倍,0–100);MinAvgNetMargin3Y 是近 3 年平均稅後淨利率下限(%,-100–100)。
+	MaxPSR            *float64 `json:"max_psr,omitempty"`
+	MinAvgNetMargin3Y *float64 `json:"min_avg_net_margin_3y,omitempty"`
 	// RangeBreakoutDays 是近幾個交易日內出現區間突破且還沒跌回突破價(1–20);0 為不篩。
 	RangeBreakoutDays int `json:"range_breakout_days,omitempty"`
 	// MinEPSYoYPercent、MinAnnualEPSGrowthPercent、NewHighDays 是 CANSLIM 的 C、A、N:最新一季單季 EPS 年增率下限、
@@ -249,6 +252,14 @@ func screenStocksSchema() *jsonschema.Schema {
 				Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 				Description: "年度 ROE 門檻(%,0 至 100,選填;巴菲特長期高 ROE):搭配 min_roe_years,只設門檻時看最新一個已公布年度,單獨使用即可查詢;與 min_roe_percent(最新一季 ROE)不同。建議搭配 max_debt_ratio_percent 與 positive_free_cash_flow",
 			},
+			"max_psr": {
+				Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
+				Description: "PSR 上限(倍,0 至 100,選填;肯尼斯費雪):最新收盤 × 目前發行股數 ÷ 最近 12 個月營收合計(月份須相連),費雪常用 1～3;虧損股也可能 PSR 很低,建議搭配 min_avg_net_margin_3y;每檔附 psr",
+			},
+			"min_avg_net_margin_3y": {
+				Type: "number", Minimum: ptr(-100.0), Maximum: ptr(100.0),
+				Description: "近 3 年平均稅後淨利率下限(%,-100 至 100,選填;肯尼斯費雪):已公布(隔年 4/1 起)最近 3 個年度損益表的稅後淨利 ÷ 營收平均,年度須相連;每檔附 avg_net_margin_3y_percent",
+			},
 			"min_rd_ratio_percent": {
 				Type: "number", Minimum: ptr(0.0), Maximum: ptr(100.0),
 				Description: "研發費用率下限(%,0 至 100,選填;研發成長股):最近 4 季(須相連、最新一季在兩季內)研發費用合計 ÷ 營收合計,例如 5 只留研發投入至少營收 5% 的股票;建議搭配 EPS 或營收成長條件;每檔附 rd_ratio_percent",
@@ -371,6 +382,8 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		{"max_pe_pb_product", in.MaxPEPBProduct, 0, 1000},
 		{"min_current_ratio", in.MinCurrentRatio, 0, 100},
 		{"min_annual_roe_percent", in.MinAnnualROEPercent, 0, 100},
+		{"max_psr", in.MaxPSR, 0, 100},
+		{"min_avg_net_margin_3y", in.MinAvgNetMargin3Y, -100, 100},
 		{"min_eps_yoy_percent", in.MinEPSYoYPercent, -100, 10000},
 		{"min_annual_eps_growth_percent", in.MinAnnualEPSGrowthPercent, -100, 10000},
 		{"min_fill_rate_percent", in.MinFillRatePercent, 0, 100},
@@ -435,6 +448,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		in.MaxVolatilityPercent != nil || in.MaxBeta != nil || in.MaxBias240 != nil ||
 		in.MinMarketCap != nil || in.MinProfitYears > 0 || in.MaxPBPercentile != nil || in.MinRDRatioPercent != nil ||
 		in.MaxPEPBProduct != nil || in.MinCurrentRatio != nil || in.MinAnnualROEPercent != nil ||
+		in.MaxPSR != nil || in.MinAvgNetMargin3Y != nil ||
 		in.MinEPSYoYPercent != nil || in.MinAnnualEPSGrowthPercent != nil || in.NewHighDays > 0 ||
 		in.MinFillRatePercent != nil || in.MaxAvgFillDays != nil || in.MinDividendYears > 0 ||
 		in.MinRevenueAccelerationMonths > 0 || in.MinDividendGrowthYears > 0 || in.TrendTemplate
@@ -483,6 +497,7 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 		MinMarketCap: in.MinMarketCap, MinProfitYears: in.MinProfitYears, MaxPBPercentile: in.MaxPBPercentile,
 		MaxPEPBProduct: in.MaxPEPBProduct, MinCurrentRatio: in.MinCurrentRatio,
 		MinROEYears: in.MinROEYears, MinAnnualROEPercent: in.MinAnnualROEPercent,
+		MaxPSR: in.MaxPSR, MinAvgNetMargin3Y: in.MinAvgNetMargin3Y,
 		MinRDRatioPercent: in.MinRDRatioPercent, MinEPSYoYPercent: in.MinEPSYoYPercent, MinAnnualEPSGrowthPercent: in.MinAnnualEPSGrowthPercent, NewHighDays: in.NewHighDays,
 		MinFillRatePercent: in.MinFillRatePercent, MaxAvgFillDays: in.MaxAvgFillDays, MinDividendYears: in.MinDividendYears,
 		MinRevenueAccelerationMonths: in.MinRevenueAccelerationMonths,
@@ -522,6 +537,9 @@ func (ts *screenToolset) screenStocks(ctx context.Context, _ *mcp.CallToolReques
 			summary = line + "\n" + summary
 		}
 		if line := screenROELine(in, first); line != "" {
+			summary = line + "\n" + summary
+		}
+		if line := screenFisherLine(in, first); line != "" {
 			summary = line + "\n" + summary
 		}
 		if line := screenRDRatioLine(first); line != "" {
@@ -721,6 +739,24 @@ func screenROELine(in ScreenStocksInput, first ScreenedStock) string {
 		return ""
 	}
 	return "首筆年度 ROE 連續 " + displayInt(first.ROEYears) + " 年 ≥ " + formatFloat(*in.MinAnnualROEPercent) + "%。"
+}
+
+// screenFisherLine 在有設 PSR 或近 3 年平均稅後淨利率條件時描述首筆的兩個數值;其他查詢或沒有資料時回空字串。
+func screenFisherLine(in ScreenStocksInput, first ScreenedStock) string {
+	if in.MaxPSR == nil && in.MinAvgNetMargin3Y == nil {
+		return ""
+	}
+	var parts []string
+	if first.PSR != nil {
+		parts = append(parts, "PSR "+displayFloat(first.PSR)+" 倍")
+	}
+	if first.AvgNetMargin3YPercent != nil {
+		parts = append(parts, "近 3 年平均稅後淨利率 "+displayFloat(first.AvgNetMargin3YPercent)+"%")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "首筆" + strings.Join(parts, "、") + "。"
 }
 
 // screenRDRatioLine 描述首筆的近四季研發費用率;沒有資料時回空字串(資料不足或舊版 API)。

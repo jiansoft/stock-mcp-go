@@ -160,6 +160,7 @@ func screenBacktestSummary(e *ScreenBacktestEnvelope) string {
 		roeYears = *e.MinROEYears
 	}
 	filters = append(filters, roeTexts(roeYears, e.MinAnnualROEPercent)...)
+	filters = append(filters, fisherTexts(e.MaxPSR, e.MinAvgNetMargin3Y)...)
 	if e.MinMajorChange != nil {
 		weeks := 0
 		if e.MajorChangeWeeks != nil {
