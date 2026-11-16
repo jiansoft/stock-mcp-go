@@ -99,7 +99,10 @@ type Config struct {
 	// StockRustAPIBaseURL、StockRustAPIKey、APITimeout 是唯一資料來源 stock_rust Data API 的設定。
 	StockRustAPIBaseURL string
 	StockRustAPIKey     string
-	APITimeout          time.Duration
+	// StockRustAPIPersonalKey 是持股類端點專用的 DATA_API_PERSONAL_KEY（STOCK_RUST_API_PERSONAL_KEY，選填；
+	// 未設定時沿用 StockRustAPIKey，僅適用 stock_rust 的 DATA_API_STRICT_SCOPE=false 相容期）。
+	StockRustAPIPersonalKey string
+	APITimeout              time.Duration
 
 	// APIKey 是 MCP 對外驗證用的金鑰,屬敏感資訊,不可寫入 log。
 	// 它只用於空 API key 資料庫的首次相容性匯入；完成後以 SQLite 為準。
@@ -203,6 +206,7 @@ func Load() (*Config, error) {
 	}
 	cfg.StockRustAPIBaseURL = os.Getenv("STOCK_RUST_API_BASE_URL")
 	cfg.StockRustAPIKey = os.Getenv("STOCK_RUST_API_KEY")
+	cfg.StockRustAPIPersonalKey = os.Getenv("STOCK_RUST_API_PERSONAL_KEY")
 	if cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
 	}

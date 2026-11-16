@@ -19,10 +19,11 @@ type fakeHoldingChipQuerier struct {
 	envelope *HoldingChipEnvelope
 	err      error
 	got      string
+	member   int64
 }
 
-func (f *fakeHoldingChipQuerier) HoldingChip(_ context.Context, date string) (*HoldingChipEnvelope, error) {
-	f.got = date
+func (f *fakeHoldingChipQuerier) HoldingChip(_ context.Context, date string, memberID int64) (*HoldingChipEnvelope, error) {
+	f.got, f.member = date, memberID
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -78,7 +79,7 @@ func TestAPIClientHoldingChip(t *testing.T) {
 	defer server.Close()
 	client := NewAPIClient(server.URL, "secret", time.Second)
 
-	envelope, err := client.HoldingChip(t.Context(), "")
+	envelope, err := client.HoldingChip(t.Context(), "", 0)
 	if err != nil || envelope.Date == nil || *envelope.Date != "2026-10-20" || envelope.NextDate != nil || len(envelope.Items) != 1 {
 		t.Fatalf("HoldingChip() = %#v, %v", envelope, err)
 	}
@@ -89,11 +90,14 @@ func TestAPIClientHoldingChip(t *testing.T) {
 	if gotPath != "/api/v1/portfolio/chip" || gotRaw != "" {
 		t.Fatalf("未指定日期不應帶參數:%s?%s", gotPath, gotRaw)
 	}
-	empty, err := client.HoldingChip(t.Context(), "1990-01-01")
+	if _, err := client.HoldingChip(t.Context(), "", 3); err != nil || gotRaw != "member_id=3" {
+		t.Fatalf("指定會員應帶 member_id:%v %s", err, gotRaw)
+	}
+	empty, err := client.HoldingChip(t.Context(), "1990-01-01", 0)
 	if err != nil || gotRaw != "date=1990-01-01" || empty.Date != nil || empty.Items == nil {
 		t.Fatalf("沒有資料時 items 應是空清單:%#v, %v, %s", empty, err, gotRaw)
 	}
-	if _, err := client.HoldingChip(t.Context(), "2000-01-01"); err == nil {
+	if _, err := client.HoldingChip(t.Context(), "2000-01-01", 0); err == nil {
 		t.Fatal("500 應回錯誤")
 	}
 }
@@ -123,6 +127,12 @@ func TestHoldingChipTool(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("摘要缺少 %q:%s", want, text)
 		}
+	}
+	if _, _, err := newToolset(f).holdingChip(t.Context(), nil, HoldingChipInput{MemberID: 2}); err != nil || f.member != 2 {
+		t.Fatalf("應傳遞會員編號:%v %d", err, f.member)
+	}
+	if _, _, err := newToolset(f).holdingChip(t.Context(), nil, HoldingChipInput{MemberID: -1}); err == nil {
+		t.Error("負數會員應回錯誤")
 	}
 	if _, _, err := newToolset(f).holdingChip(t.Context(), nil, HoldingChipInput{Date: "2026-13-01"}); err == nil {
 		t.Error("不合法日期應回錯誤")

@@ -164,7 +164,10 @@ func run(ctx context.Context) error {
 	}()
 
 	// 唯一的資料來源是 stock_rust Data API(直連資料庫的 db 模式已於 2026-10 移除)。
-	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout)
+	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout).WithPersonalKey(cfg.StockRustAPIPersonalKey)
+	if cfg.StockRustAPIPersonalKey == "" {
+		logger.Warn("未設定 STOCK_RUST_API_PERSONAL_KEY：持股類端點沿用 STOCK_RUST_API_KEY，stock_rust 開啟 DATA_API_STRICT_SCOPE 後會被拒")
+	}
 
 	// mcp.NewServer 建立一個空的 MCP server 實例(此時還沒有註冊任何
 	// 工具),Implementation 這個欄位是給 MCP 用戶端在初始化交握

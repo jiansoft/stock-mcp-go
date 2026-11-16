@@ -217,6 +217,7 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | `TRUSTED_PROXY_HOPS` | `1` | Number of trusted proxies that append `X-Forwarded-For` |
 | `STOCK_RUST_API_BASE_URL` | required | Upstream Data API base URL |
 | `STOCK_RUST_API_KEY` | required | Dedicated upstream bearer key |
+| `STOCK_RUST_API_PERSONAL_KEY` | recommended | Upstream key for holdings endpoints (`/api/v1/portfolio/*`, stock_rust `DATA_API_PERSONAL_KEY`); falls back to `STOCK_RUST_API_KEY`, which stock_rust rejects once `DATA_API_STRICT_SCOPE=true` |
 | `API_TIMEOUT_MS` | `30000` | Upstream HTTP timeout (multi-year statistics such as `get_institutional_streak_performance` can take several seconds on the Pi) |
 | `MCP_API_KEY` | empty | One-time compatibility bootstrap key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | SQLite API-key database path |

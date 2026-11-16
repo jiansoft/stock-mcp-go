@@ -3,6 +3,7 @@ package stock
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -178,6 +179,10 @@ func registerTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.T
 	if !ok {
 		panic(fmt.Sprintf("工具 %s 沒有宣告政策（stock/policy.go 的 toolPolicies）", tool.Name))
 	}
+	field, hasMember := memberIDField(reflect.TypeFor[In]())
+	if policy.Personal && !hasMember {
+		panic(fmt.Sprintf("Personal 工具 %s 的輸入缺少 int64 的 member_id 欄位", tool.Name))
+	}
 	mcp.AddTool(server, tool, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		var zero Out
 		principal, found := requestPrincipal(req)
@@ -186,6 +191,12 @@ func registerTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler mcp.T
 		}
 		if found {
 			ctx = context.WithValue(ctx, principalContextKey{}, principal)
+		}
+		if policy.Personal {
+			var err error
+			if ctx, err = scopePersonal(ctx, req, &in, field, policy.Permission, principal, found); err != nil {
+				return nil, zero, err
+			}
 		}
 		return handler(ctx, req, in)
 	})

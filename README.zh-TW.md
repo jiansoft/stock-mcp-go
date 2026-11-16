@@ -202,6 +202,7 @@ claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
 | `TRUSTED_PROXY_HOPS` | `1` | 會附加 `X-Forwarded-For` 的受信任代理層數 |
 | `STOCK_RUST_API_BASE_URL` | 必填 | 上游 Data API base URL |
 | `STOCK_RUST_API_KEY` | 必填 | 上游專用 Bearer Key |
+| `STOCK_RUST_API_PERSONAL_KEY` | 建議 | 持股類端點（`/api/v1/portfolio/*`）用的上游金鑰，即 stock_rust 的 `DATA_API_PERSONAL_KEY`；未設定時沿用 `STOCK_RUST_API_KEY`，stock_rust 改為 `DATA_API_STRICT_SCOPE=true` 後會被拒 |
 | `API_TIMEOUT_MS` | `30000` | 上游 HTTP timeout（如 `get_institutional_streak_performance` 等多年期統計，在 Pi 上可能需要數秒） |
 | `MCP_API_KEY` | 空 | 一次性相容 bootstrap Key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | API Key SQLite 路徑 |

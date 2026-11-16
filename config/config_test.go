@@ -22,7 +22,7 @@ func setRequired(t *testing.T) {
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
-		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN",
+		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN", "STOCK_RUST_API_PERSONAL_KEY",
 	} {
 		t.Setenv(name, "")
 	}
@@ -267,4 +267,18 @@ func TestTrustedOrigins(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestLoadPersonalDataAPIKey：持股類端點的個人金鑰為選填，有設定時載入。
+func TestLoadPersonalDataAPIKey(t *testing.T) {
+	setRequired(t)
+	cfg, err := Load()
+	if err != nil || cfg.StockRustAPIPersonalKey != "" {
+		t.Fatalf("未設定時應為空：%+v %v", cfg, err)
+	}
+	t.Setenv("STOCK_RUST_API_PERSONAL_KEY", "personal-secret")
+	cfg, err = Load()
+	if err != nil || cfg.StockRustAPIPersonalKey != "personal-secret" {
+		t.Fatalf("應載入個人金鑰：%v", err)
+	}
 }
