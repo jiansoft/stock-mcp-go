@@ -118,6 +118,9 @@ type Config struct {
 	// 並在記憶體驗證。兩者都設定才啟用；MCPSyncToken 屬敏感資訊，不可寫入 log。
 	StockGoAPIBaseURL string
 	MCPSyncToken      string
+	// MCPQuotaToken 是向 stock_go 請領重運算租約的服務金鑰（MCP_QUOTA_TOKEN，2.3）；須搭配 STOCK_GO_API_BASE_URL。
+	// 未設定時回測請求不帶租約（僅適用 stock_rust 的 DATA_API_STRICT_SCOPE=false）。屬敏感資訊，不可寫入 log。
+	MCPQuotaToken string
 
 	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
 	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
@@ -223,6 +226,10 @@ func Load() (*Config, error) {
 	}
 	cfg.StockGoAPIBaseURL = os.Getenv("STOCK_GO_API_BASE_URL")
 	cfg.MCPSyncToken = os.Getenv("MCP_SYNC_TOKEN")
+	cfg.MCPQuotaToken = os.Getenv("MCP_QUOTA_TOKEN")
+	if cfg.MCPQuotaToken != "" && cfg.StockGoAPIBaseURL == "" {
+		return nil, fmt.Errorf("設定 MCP_QUOTA_TOKEN 時也必須設定 STOCK_GO_API_BASE_URL")
+	}
 	if (cfg.StockGoAPIBaseURL == "") != (cfg.MCPSyncToken == "") {
 		return nil, fmt.Errorf("STOCK_GO_API_BASE_URL 與 MCP_SYNC_TOKEN 必須同時設定（啟用個人 MCP Token）或同時留空")
 	}

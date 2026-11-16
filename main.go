@@ -165,6 +165,15 @@ func run(ctx context.Context) error {
 
 	// 唯一的資料來源是 stock_rust Data API(直連資料庫的 db 模式已於 2026-10 移除)。
 	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout).WithPersonalKey(cfg.StockRustAPIPersonalKey)
+	if cfg.MCPQuotaToken != "" {
+		leases, err := stock.NewStockGoLeases(cfg.StockGoAPIBaseURL, cfg.MCPQuotaToken, cfg.APITimeout)
+		if err != nil {
+			return err
+		}
+		repo.WithLeases(leases)
+	} else {
+		logger.Warn("未設定 MCP_QUOTA_TOKEN：回測不請領重運算租約，stock_rust 開啟 DATA_API_STRICT_SCOPE 後會被拒")
+	}
 	if cfg.StockRustAPIPersonalKey == "" {
 		logger.Warn("未設定 STOCK_RUST_API_PERSONAL_KEY：持股類端點沿用 STOCK_RUST_API_KEY，stock_rust 開啟 DATA_API_STRICT_SCOPE 後會被拒")
 	}

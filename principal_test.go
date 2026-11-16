@@ -196,3 +196,71 @@ func TestPersonalToolsScopeOverHTTP(t *testing.T) {
 		t.Fatalf("寫入應強制綁定本人並帶 household_id、actor_*：%+v", calls[0])
 	}
 }
+
+// TestBacktestLeaseOverHTTP（4-04 驗收）：沒有 analysis.run 的 Token 被拒；有則先向 stock_go 請領租約（會員取自
+// Token），以三個標頭帶給 Data API；配額用完回可辨識的錯誤且不執行。
+func TestBacktestLeaseOverHTTP(t *testing.T) {
+	upstream, takeCalls := fakeDataAPI(t)
+	var leaseMu sync.Mutex
+	quotaExceeded := false
+	var leaseMember any
+	stockGo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		leaseMu.Lock()
+		defer leaseMu.Unlock()
+		leaseMember = body["member_id"]
+		if quotaExceeded {
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"quota_exceeded","reason":"daily"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"lease_id":"0190a000-0000-7000-8000-000000000001","lease_secret":"c2VjcmV0","expires_at":"2026-11-16T10:00:00Z"}`))
+	}))
+	t.Cleanup(stockGo.Close)
+	leases, err := stock.NewStockGoLeases(stockGo.URL, "quota-token", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Host: "127.0.0.1", MCPPath: "/mcp",
+		RateLimitWindow: time.Minute, RateLimitMax: 1_000_000,
+		TrustedProxyHops: 1, LogLevel: slog.LevelError,
+	}
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "stock-mcp", Version: "test"}, nil)
+	stock.AddTools(mcpSrv, stock.NewAPIClient(upstream, "market-key", time.Second).WithLeases(leases), nil)
+	auth := grantsAuthenticator{
+		"tok-analysis": {"analysis.run": "granted"},
+		"tok-market":   {"market.view": "granted"},
+	}
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	handler := web.NewHandlerWithAPIKeys(cfg, logger, withPrincipalTokenInfo(newMCPHandler(mcpSrv)), nil, nil, web.WithAuthenticator(auth))
+	base, srv := startTestServer(t, handler)
+	t.Cleanup(func() { _ = srv.Close() })
+	url := base + "/mcp"
+
+	if out := callTool(t, url, "tok-market", "get_screen_backtest", `{}`); !strings.Contains(out, "analysis.run") {
+		t.Fatalf("沒有 analysis.run 應被拒：%s", out)
+	}
+	if calls := takeCalls(); len(calls) != 0 {
+		t.Fatalf("被拒的回測不應打到 Data API：%+v", calls)
+	}
+
+	callTool(t, url, "tok-analysis", "get_screen_backtest", `{}`)
+	calls := takeCalls()
+	if len(calls) != 1 || calls[0].path != "/api/v1/stocks/screen/backtest" || leaseMember != float64(2) {
+		t.Fatalf("應先請領租約再呼叫 Data API：%+v member=%v", calls, leaseMember)
+	}
+
+	leaseMu.Lock()
+	quotaExceeded = true
+	leaseMu.Unlock()
+	if out := callTool(t, url, "tok-analysis", "get_screen_backtest", `{}`); !strings.Contains(out, "今日回測次數已用完") {
+		t.Fatalf("配額用完應回可辨識的錯誤：%s", out)
+	}
+	if calls := takeCalls(); len(calls) != 0 {
+		t.Fatalf("未取得租約不應執行：%+v", calls)
+	}
+}

@@ -210,6 +210,7 @@ claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
 | `MCP_ADMIN_TOKEN` | 必填 | 至少 32 bytes 的獨立管理密鑰 |
 | `STOCK_GO_API_BASE_URL` | 選填 | stock_go API 位址；與 `MCP_SYNC_TOKEN` 同時設定時啟用個人 `smcp_` Token，以 stock_go 的快照驗證（每 30 秒刷新，超過 15 分鐘未刷新即拒絕） |
 | `MCP_SYNC_TOKEN` | 選填 | 取得 stock_go Token 快照的服務金鑰；須與 `STOCK_GO_API_BASE_URL` 同時設定 |
+| `MCP_QUOTA_TOKEN` | 建議 | 向 stock_go 請領回測租約的服務金鑰（須設定 `STOCK_GO_API_BASE_URL`）；未設定時回測不帶租約，stock_rust 改為 `DATA_API_STRICT_SCOPE=true` 後會被拒 |
 | `MCP_TRUSTED_ORIGINS` | 空 | 逗號分隔的允許瀏覽器 Origin |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit 視窗 |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | 每組 API Key ID＋來源 IP 在視窗內的請求上限；超額回 HTTP 429 |
