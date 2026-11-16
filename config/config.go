@@ -111,6 +111,11 @@ type Config struct {
 	// AdminToken 是管理 API 專用的獨立 Bearer token，不可與 MCP key 共用。
 	AdminToken string
 
+	// StockGoAPIBaseURL 與 MCPSyncToken 啟用個人 MCP Token（會員系統計畫 6.1）：向 stock_go 取 Token 快照
+	// 並在記憶體驗證。兩者都設定才啟用；MCPSyncToken 屬敏感資訊，不可寫入 log。
+	StockGoAPIBaseURL string
+	MCPSyncToken      string
+
 	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
 	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
 	// "https://a.example,https://b.example"。
@@ -211,6 +216,11 @@ func Load() (*Config, error) {
 	cfg.APIKeyPepper = os.Getenv("MCP_API_KEY_PEPPER")
 	if len(cfg.APIKeyPepper) < 32 {
 		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
+	}
+	cfg.StockGoAPIBaseURL = os.Getenv("STOCK_GO_API_BASE_URL")
+	cfg.MCPSyncToken = os.Getenv("MCP_SYNC_TOKEN")
+	if (cfg.StockGoAPIBaseURL == "") != (cfg.MCPSyncToken == "") {
+		return nil, fmt.Errorf("STOCK_GO_API_BASE_URL 與 MCP_SYNC_TOKEN 必須同時設定（啟用個人 MCP Token）或同時留空")
 	}
 	cfg.AdminToken = os.Getenv("MCP_ADMIN_TOKEN")
 	if len(cfg.AdminToken) < 32 {

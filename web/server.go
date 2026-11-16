@@ -44,7 +44,14 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler
 type Option func(*handlerOptions)
 
 type handlerOptions struct {
-	openAPI []byte
+	openAPI       []byte
+	authenticator Authenticator
+}
+
+// WithAuthenticator 以 authenticator 驗證 MCP 請求（例如個人 Token 與舊金鑰分流的 apikey.Composite）；
+// 管理 API 仍使用 API key service。
+func WithAuthenticator(authenticator Authenticator) Option {
+	return func(o *handlerOptions) { o.authenticator = authenticator }
 }
 
 // WithOpenAPI 提供 /openapi.json 的內容,並啟用 /docs 的 Swagger UI。
@@ -62,11 +69,11 @@ func NewHandlerWithAPIKeys(
 	keys *apikey.Service,
 	opts ...Option,
 ) http.Handler {
-	var options handlerOptions
+	options := handlerOptions{authenticator: keys}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return newHandler(cfg, logger, mcpHandler, readiness, keys, keys, options.openAPI)
+	return newHandler(cfg, logger, mcpHandler, readiness, options.authenticator, keys, options.openAPI)
 }
 
 func newHandler(

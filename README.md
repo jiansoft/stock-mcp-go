@@ -222,6 +222,8 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | SQLite API-key database path |
 | `MCP_API_KEY_PEPPER` | required | HMAC pepper of at least 32 bytes |
 | `MCP_ADMIN_TOKEN` | required | Separate administration secret of at least 32 bytes |
+| `STOCK_GO_API_BASE_URL` | optional | stock_go API address; with `MCP_SYNC_TOKEN`, enables personal `smcp_` tokens verified against stock_go's snapshot (refreshed every 30 s, rejected after 15 min without a refresh) |
+| `MCP_SYNC_TOKEN` | optional | Service key for stock_go's token snapshot; set together with `STOCK_GO_API_BASE_URL` |
 | `MCP_TRUSTED_ORIGINS` | empty | Comma-separated allowed browser origins |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per API-key ID + source-IP combination per window; excess requests return HTTP 429 |

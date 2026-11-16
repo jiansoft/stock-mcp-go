@@ -210,7 +210,20 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("產生 OpenAPI 文件:%w", err)
 	}
 
-	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService, web.WithOpenAPI(openAPI)))
+	// 個人 MCP Token（會員系統計畫 6.1）：smcp_ 開頭的 Token 由 stock_go 快照驗證，其餘仍走 SQLite 舊金鑰。
+	authenticator := apikey.Composite{Legacy: keyService}
+	if cfg.StockGoAPIBaseURL != "" {
+		remote, err := apikey.NewRemoteTokens(cfg.StockGoAPIBaseURL, cfg.MCPSyncToken, logger)
+		if err != nil {
+			return err
+		}
+		remote.Start(ctx)
+		defer remote.Close()
+		authenticator.Remote = remote
+	}
+
+	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService,
+		web.WithOpenAPI(openAPI), web.WithAuthenticator(authenticator)))
 
 	// 這裡用一個「容量為 1 的 channel」搭配一個獨立的 goroutine 啟動
 	// HTTP 伺服器,而不是直接在目前這個 goroutine 呼叫

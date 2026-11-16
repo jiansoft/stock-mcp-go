@@ -22,6 +22,7 @@ func setRequired(t *testing.T) {
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
+		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN",
 	} {
 		t.Setenv(name, "")
 	}
@@ -59,6 +60,11 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 			name: "API_TIMEOUT_MS",
 			env:  "API_TIMEOUT_MS", value: "0",
 			needle: "API_TIMEOUT_MS",
+		},
+		{
+			name: "個人 Token 同步設定只設一半",
+			env:  "STOCK_GO_API_BASE_URL", value: "http://127.0.0.1:8000",
+			needle: "MCP_SYNC_TOKEN",
 		},
 		{
 			name: "admin token equals bootstrap key",
