@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"stockmcp/apikey"
@@ -180,6 +181,8 @@ func run(ctx context.Context) error {
 	// 的錯誤訊息當成一般文字格式化後,用結構化 log 的 Error 等級記錄
 	// 下來。
 	server.AddReceivingMiddleware(toolCallLogging(logger))
+	// 正式環境的工具呼叫一律要有通過驗證的呼叫端身分（經 auth.TokenInfo 帶入），沒有就拒絕。
+	stock.RequirePrincipal()
 	stock.AddTools(server, repo, func(format string, args ...any) {
 		// 先問 logger 這個等級是否會被輸出,再決定要不要做字串格式化:
 		// 如果 LOG_LEVEL 設得比 error 高,Sprintf 的成本就完全省下來了。
@@ -195,7 +198,7 @@ func run(ctx context.Context) error {
 		logger.Error("MCP 工具執行失敗", "detail", fmt.Sprintf(format, args...))
 	})
 
-	mcpHandler := newMCPHandler(server)
+	mcpHandler := withPrincipalTokenInfo(newMCPHandler(server))
 
 	// /readyz 以 Data API 的健康檢查判斷本服務能否正常回應查詢。
 	readiness := repo.Health
@@ -336,6 +339,19 @@ func runHealthCheck(ctx context.Context) error {
 // 「一問一答」的唯讀查詢,不需要 server 主動推送,因此不受影響;舊協定
 // (2025-11-25 以前)的用戶端仍可照常用 POST 送 initialize 與 tools/call,
 // 只是拿不到 session id,也開不了 SSE 長連線。
+// withPrincipalTokenInfo 把外層 API key 驗證得到的呼叫端身分放進 auth.TokenInfo，工具處理函式由
+// req.Extra.TokenInfo 取得（會員系統計畫 6.3）。不重新驗證 Token；沒有身分的請求回 401。
+func withPrincipalTokenInfo(next http.Handler) http.Handler {
+	verifier := func(_ context.Context, _ string, req *http.Request) (*auth.TokenInfo, error) {
+		principal, ok := web.PrincipalFromContext(req.Context())
+		if !ok {
+			return nil, auth.ErrInvalidToken
+		}
+		return &auth.TokenInfo{UserID: principal.KeyID, Extra: map[string]any{stock.TokenInfoPrincipal: principal}}, nil
+	}
+	return auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(next)
+}
+
 func newMCPHandler(server *mcp.Server) http.Handler {
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },

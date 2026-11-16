@@ -52,7 +52,7 @@ func (a staticAuthenticator) Authenticate(_ context.Context, token string) (apik
 	expected := string(a)
 	ok := token != "" && len(token) == len(expected) &&
 		subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
-	return apikey.Principal{KeyID: "legacy-static"}, ok
+	return apikey.Principal{KeyID: "legacy-static", Legacy: true}, ok
 }
 
 type principalContextKey struct{}

@@ -342,10 +342,13 @@ func (c Composite) Authenticate(ctx context.Context, token string) (Principal, b
 		if !ok {
 			return Principal{}, false
 		}
-		return Principal{KeyID: item.ID, Prefix: item.KeyPrefix}, true
+		return Principal{KeyID: item.ID, Prefix: item.KeyPrefix, MemberID: item.MemberID, HouseholdID: item.HouseholdID,
+			Household: item.HouseholdMemberIDs, Account: item.Account, Grants: item.Grants}, true
 	}
 	if c.Legacy == nil {
 		return Principal{}, false
 	}
-	return c.Legacy.Authenticate(ctx, token)
+	principal, ok := c.Legacy.Authenticate(ctx, token)
+	principal.Legacy = true
+	return principal, ok
 }

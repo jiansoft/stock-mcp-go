@@ -102,7 +102,7 @@ func addDeepDiveTool(server *mcp.Server, q Querier, logf func(string, ...any)) {
 	if !ok {
 		return
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "analyze_stock_deep_dive", Description: "一次查詢個股完整分析：報價與基本面、五年估值區間、五日籌碼、營收、三率、三大財報、財務體質、技術與股利。部分缺資料會列警示。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+	registerTool(server, &mcp.Tool{Name: "analyze_stock_deep_dive", Description: "一次查詢個股完整分析：報價與基本面、五年估值區間、五日籌碼、營收、三率、三大財報、財務體質、技術與股利。部分缺資料會列警示。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in SymbolInput) (*mcp.CallToolResult, any, error) {
 			symbol, err := normalizeSymbol(in.Symbol)
 			if err != nil {
