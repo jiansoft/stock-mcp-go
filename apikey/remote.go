@@ -327,9 +327,49 @@ func (r *RemoteTokens) flushUsed() {
 
 // Composite 依 Token 格式分流：smcp_ 開頭的個人 Token 由 stock_go 快照驗證，其餘交給本機 SQLite 舊金鑰。
 // Remote 為 nil 時只用 SQLite（stock_go 同步未設定）。
+//
+// SQLite 舊金鑰的過渡（4-05）：Legacy 為 nil（MCP_LEGACY_SQLITE_FALLBACK=false）或過了 LegacyUntil
+// （MCP_LEGACY_SQLITE_UNTIL）即不再接受。有 stock_go 快照時，舊金鑰視為 legacy_principal 那位會員（Eddie），
+// 授權為 6.1 所列六項權限與 Eddie 當下有效權限的交集；Eddie 停用（legacy_principal 為 null）或快照過期即失效，
+// 不能成為繞過權限的後門。沒有設定 stock_go 時（會員系統上線前）沿用改版前的行為。
 type Composite struct {
 	Remote *RemoteTokens
 	Legacy *Service
+	// LegacyUntil 非零時，從該時間起不再接受 SQLite 舊金鑰。
+	LegacyUntil time.Time
+	// now 供測試注入時間；nil 時用 time.Now。
+	now func() time.Time
+}
+
+// legacyPermissions 是舊金鑰的授權上限：等同勾選 market:read、analysis:run、portfolio:read、portfolio:write、
+// money_history:read、inventory:read（規格 6.1）。
+var legacyPermissions = []string{"market.view", "analysis.run", "portfolio.view", "portfolio.edit", "money_history.view", "inventory.view"}
+
+// legacyGrants 取 legacyPermissions 與 legacy_principal 授權的交集；其餘權限一律 none。
+func legacyGrants(current map[string]string) map[string]string {
+	grants := make(map[string]string, len(legacyPermissions))
+	for _, permission := range legacyPermissions {
+		grants[permission] = "none"
+		if scope := current[permission]; scope != "" {
+			grants[permission] = scope
+		}
+	}
+	return grants
+}
+
+// legacyAllowed 判斷目前是否仍接受 SQLite 舊金鑰。
+func (c Composite) legacyAllowed() bool {
+	if c.Legacy == nil {
+		return false
+	}
+	if c.LegacyUntil.IsZero() {
+		return true
+	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	return now().Before(c.LegacyUntil)
 }
 
 // Authenticate 實作 web.Authenticator。
@@ -345,10 +385,25 @@ func (c Composite) Authenticate(ctx context.Context, token string) (Principal, b
 		return Principal{KeyID: item.ID, Prefix: item.KeyPrefix, MemberID: item.MemberID, HouseholdID: item.HouseholdID,
 			Household: item.HouseholdMemberIDs, Account: item.Account, Grants: item.Grants}, true
 	}
-	if c.Legacy == nil {
+	if !c.legacyAllowed() {
 		return Principal{}, false
 	}
 	principal, ok := c.Legacy.Authenticate(ctx, token)
+	if !ok {
+		return Principal{}, false
+	}
 	principal.Legacy = true
-	return principal, ok
+	if c.Remote == nil {
+		return principal, true
+	}
+	legacy := c.Remote.Legacy()
+	if legacy == nil {
+		return Principal{}, false
+	}
+	principal.MemberID = legacy.MemberID
+	principal.HouseholdID = legacy.HouseholdID
+	principal.Household = legacy.HouseholdMemberIDs
+	principal.Account = legacy.Account
+	principal.Grants = legacyGrants(legacy.Grants)
+	return principal, true
 }

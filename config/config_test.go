@@ -23,6 +23,7 @@ func setRequired(t *testing.T) {
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
 		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN", "STOCK_RUST_API_PERSONAL_KEY", "MCP_QUOTA_TOKEN",
+		"MCP_LEGACY_SQLITE_FALLBACK", "MCP_LEGACY_SQLITE_UNTIL",
 	} {
 		t.Setenv(name, "")
 	}
@@ -70,6 +71,16 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 			name: "租約金鑰缺 stock_go 位址",
 			env:  "MCP_QUOTA_TOKEN", value: "quota-secret",
 			needle: "STOCK_GO_API_BASE_URL",
+		},
+		{
+			name: "舊金鑰開關不合法",
+			env:  "MCP_LEGACY_SQLITE_FALLBACK", value: "yes",
+			needle: "MCP_LEGACY_SQLITE_FALLBACK",
+		},
+		{
+			name: "舊金鑰截止日格式錯誤",
+			env:  "MCP_LEGACY_SQLITE_UNTIL", value: "2026/12/31",
+			needle: "MCP_LEGACY_SQLITE_UNTIL",
 		},
 		{
 			name: "admin token equals bootstrap key",
@@ -288,5 +299,21 @@ func TestLoadPersonalDataAPIKey(t *testing.T) {
 	cfg, err = Load()
 	if err != nil || cfg.StockRustAPIPersonalKey != "personal-secret" || cfg.MCPQuotaToken != "quota-secret" {
 		t.Fatalf("應載入個人金鑰與租約金鑰：%v", err)
+	}
+}
+
+// TestLoadLegacySQLiteSettings：舊金鑰預設啟用、沒有截止日；截止日為台北時間該日結束（隔日 00:00）。
+func TestLoadLegacySQLiteSettings(t *testing.T) {
+	setRequired(t)
+	cfg, err := Load()
+	if err != nil || !cfg.LegacySQLiteFallback || !cfg.LegacySQLiteUntil.IsZero() {
+		t.Fatalf("預設應啟用且無截止日：%+v %v", cfg, err)
+	}
+	t.Setenv("MCP_LEGACY_SQLITE_FALLBACK", "false")
+	t.Setenv("MCP_LEGACY_SQLITE_UNTIL", "2026-12-31")
+	cfg, err = Load()
+	want := time.Date(2026, 12, 31, 16, 0, 0, 0, time.UTC)
+	if err != nil || cfg.LegacySQLiteFallback || !cfg.LegacySQLiteUntil.Equal(want) {
+		t.Fatalf("應停用並在 2027-01-01 00:00（+08）截止：%v %v", cfg.LegacySQLiteUntil, err)
 	}
 }

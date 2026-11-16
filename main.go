@@ -226,7 +226,12 @@ func run(ctx context.Context) error {
 	}
 
 	// 個人 MCP Token（會員系統計畫 6.1）：smcp_ 開頭的 Token 由 stock_go 快照驗證，其餘仍走 SQLite 舊金鑰。
-	authenticator := apikey.Composite{Legacy: keyService}
+	// SQLite 舊金鑰的過渡（4-05）：MCP_LEGACY_SQLITE_FALLBACK=false 時完全不接受，MCP_LEGACY_SQLITE_UNTIL 之後亦同。
+	authenticator := apikey.Composite{Legacy: keyService, LegacyUntil: cfg.LegacySQLiteUntil}
+	if !cfg.LegacySQLiteFallback {
+		authenticator.Legacy = nil
+		logger.Info("已停用 SQLite 舊金鑰（MCP_LEGACY_SQLITE_FALLBACK=false）")
+	}
 	if cfg.StockGoAPIBaseURL != "" {
 		remote, err := apikey.NewRemoteTokens(cfg.StockGoAPIBaseURL, cfg.MCPSyncToken, logger)
 		if err != nil {

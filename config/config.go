@@ -122,6 +122,11 @@ type Config struct {
 	// 未設定時回測請求不帶租約（僅適用 stock_rust 的 DATA_API_STRICT_SCOPE=false）。屬敏感資訊，不可寫入 log。
 	MCPQuotaToken string
 
+	// LegacySQLiteFallback（MCP_LEGACY_SQLITE_FALLBACK，預設 true）與 LegacySQLiteUntil（MCP_LEGACY_SQLITE_UNTIL，
+	// YYYY-MM-DD，台北時間當天結束為止）控制 SQLite 舊金鑰的過渡期（會員系統計畫 6.1）；LegacySQLiteUntil 為零值時不設截止。
+	LegacySQLiteFallback bool
+	LegacySQLiteUntil    time.Time
+
 	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
 	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
 	// "https://a.example,https://b.example"。
@@ -227,6 +232,19 @@ func Load() (*Config, error) {
 	cfg.StockGoAPIBaseURL = os.Getenv("STOCK_GO_API_BASE_URL")
 	cfg.MCPSyncToken = os.Getenv("MCP_SYNC_TOKEN")
 	cfg.MCPQuotaToken = os.Getenv("MCP_QUOTA_TOKEN")
+	switch value := getEnv("MCP_LEGACY_SQLITE_FALLBACK", "true"); value {
+	case "true", "false":
+		cfg.LegacySQLiteFallback = value == "true"
+	default:
+		return nil, fmt.Errorf("MCP_LEGACY_SQLITE_FALLBACK 必須是 true 或 false")
+	}
+	if value := os.Getenv("MCP_LEGACY_SQLITE_UNTIL"); value != "" {
+		day, err := time.ParseInLocation("2006-01-02", value, time.FixedZone("Asia/Taipei", 8*60*60))
+		if err != nil {
+			return nil, fmt.Errorf("MCP_LEGACY_SQLITE_UNTIL 必須是 YYYY-MM-DD 日期")
+		}
+		cfg.LegacySQLiteUntil = day.AddDate(0, 0, 1)
+	}
 	if cfg.MCPQuotaToken != "" && cfg.StockGoAPIBaseURL == "" {
 		return nil, fmt.Errorf("設定 MCP_QUOTA_TOKEN 時也必須設定 STOCK_GO_API_BASE_URL")
 	}
