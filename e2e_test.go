@@ -61,7 +61,7 @@ func (e2eQuerier) StockProfile(context.Context, string) (*stock.Profile, error) 
 // web 路由),回傳 MCP endpoint 的 URL。
 func e2eServer(t *testing.T) string {
 	t.Helper()
-	cfg := &config.Config{
+	cfg := &config.Config{LegacySQLiteFallback: true,
 		Host: "127.0.0.1", MCPPath: "/mcp", APIKey: "test-key",
 		RateLimitWindow: time.Minute, RateLimitMax: 1_000_000,
 		TrustedProxyHops: 1, LogLevel: slog.LevelError,

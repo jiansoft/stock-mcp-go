@@ -37,7 +37,7 @@ import (
 // readiness 由呼叫端注入,用來檢查資料來源是否可用;傳 nil 代表不檢查,
 // 此時 /readyz 的行為與 /healthz 相同。
 func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, readiness func(context.Context) error) http.Handler {
-	return newHandler(cfg, logger, mcpHandler, readiness, staticAuthenticator(cfg.APIKey), nil, nil)
+	return newHandler(cfg, logger, mcpHandler, readiness, legacyOnlyAuthenticator{cfg: cfg, next: staticAuthenticator(cfg.APIKey)}, nil, nil)
 }
 
 // Option 調整 NewHandlerWithAPIKeys 組出的路由。
@@ -69,7 +69,10 @@ func NewHandlerWithAPIKeys(
 	keys *apikey.Service,
 	opts ...Option,
 ) http.Handler {
-	options := handlerOptions{authenticator: keys}
+	options := handlerOptions{}
+	if keys != nil {
+		options.authenticator = legacyOnlyAuthenticator{cfg: cfg, next: keys}
+	}
 	for _, opt := range opts {
 		opt(&options)
 	}
@@ -104,7 +107,7 @@ func newHandler(
 	// mcpHandler。
 	limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
 	authFailures := NewRateLimiter(time.Minute, 20)
-	protected := requireAuthenticator(authenticator, authFailures, cfg.TrustProxy, cfg.TrustedProxyHops,
+	protected := requireAuthenticator(configuredAuthenticator{cfg: cfg, next: authenticator}, authFailures, cfg.TrustProxy, cfg.TrustedProxyHops,
 		rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops,
 			limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))))
 	mux.Handle(cfg.MCPPath, protected)
@@ -113,7 +116,7 @@ func newHandler(
 	}
 	registerDocs(mux, openAPI)
 
-	return withRequestLog(logger, mux)
+	return withRequestLog(logger, gateLegacyAdmin(cfg, time.Now, mux))
 }
 
 const (

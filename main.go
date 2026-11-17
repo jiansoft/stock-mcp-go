@@ -137,31 +137,11 @@ func run(ctx context.Context) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
-	keyRepo, err := apikey.OpenSQLite(ctx, cfg.APIKeyDBPath)
+	keyService, closeLegacy, err := openLegacyKeys(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	// 這兩個 Close 的 error 值得記錄而不是丟棄:關閉 SQLite 可能因為
-	// 寫入 flush 失敗而出錯,那代表 API key 資料可能沒有完整落盤,是排查
-	// 資料異常時的重要線索。但刻意只記錄、不改變 run 的回傳值——此時
-	// 主要的關閉流程已經走完,用一個次要的清理錯誤去覆蓋(或無中生有)
-	// 程式的結束狀態,只會讓真正的結束原因更難判讀。
-	defer func() {
-		if err := keyRepo.Close(); err != nil {
-			logger.Error("關閉 API key 資料庫失敗", "error", err)
-		}
-	}()
-	keyService, err := apikey.NewService(
-		ctx, keyRepo, []byte(cfg.APIKeyPepper), cfg.APIKey, logger,
-	)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := keyService.Close(); err != nil {
-			logger.Error("關閉 API key 服務失敗", "error", err)
-		}
-	}()
+	defer closeLegacy()
 
 	// 唯一的資料來源是 stock_rust Data API(直連資料庫的 db 模式已於 2026-10 移除)。
 	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout).WithPersonalKey(cfg.StockRustAPIPersonalKey)

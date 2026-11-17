@@ -13,7 +13,7 @@
 // 不需要再處理「這個環境變數到底有沒有設定」「格式對不對」這些細節。
 //
 // ## 設計原則
-//   - 缺少必要變數(DATABASE_URL、MCP_API_KEY_PEPPER、MCP_ADMIN_TOKEN)時拒絕啟動,且錯誤訊息
+//   - 缺少必要變數時拒絕啟動；MCP_API_KEY_PEPPER、MCP_ADMIN_TOKEN 只在 SQLite 舊通道開啟期間必填,且錯誤訊息
 //     只包含「變數名稱」,絕不包含變數的「值」——避免資料庫密碼、API key
 //     不小心被印到終端機、log 檔或監控系統裡。
 //   - 所有選填變數都有安全的預設值,未設定時程式仍可正常啟動。
@@ -226,9 +226,6 @@ func Load() (*Config, error) {
 	cfg.APIKey = os.Getenv("MCP_API_KEY")
 	cfg.APIKeyDBPath = getEnv("MCP_API_KEY_DB_PATH", "data/mcp-api-keys.db")
 	cfg.APIKeyPepper = os.Getenv("MCP_API_KEY_PEPPER")
-	if len(cfg.APIKeyPepper) < 32 {
-		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
-	}
 	cfg.StockGoAPIBaseURL = os.Getenv("STOCK_GO_API_BASE_URL")
 	cfg.MCPSyncToken = os.Getenv("MCP_SYNC_TOKEN")
 	cfg.MCPQuotaToken = os.Getenv("MCP_QUOTA_TOKEN")
@@ -252,10 +249,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("STOCK_GO_API_BASE_URL 與 MCP_SYNC_TOKEN 必須同時設定（啟用個人 MCP Token）或同時留空")
 	}
 	cfg.AdminToken = os.Getenv("MCP_ADMIN_TOKEN")
-	if len(cfg.AdminToken) < 32 {
+	if cfg.LegacySQLiteOpen(time.Now()) && len(cfg.APIKeyPepper) < 32 {
+		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
+	}
+	if cfg.LegacySQLiteOpen(time.Now()) && len(cfg.AdminToken) < 32 {
 		return nil, fmt.Errorf("缺少必要的環境變數 MCP_ADMIN_TOKEN，或長度少於 32 bytes")
 	}
-	if cfg.APIKey != "" && subtleConstantStringEqual(cfg.APIKey, cfg.AdminToken) {
+	if cfg.LegacySQLiteOpen(time.Now()) && cfg.APIKey != "" && subtleConstantStringEqual(cfg.APIKey, cfg.AdminToken) {
 		return nil, fmt.Errorf("MCP_ADMIN_TOKEN 不可與 MCP_API_KEY 相同")
 	}
 
@@ -366,4 +366,9 @@ func intEnv(name string, fallback, min, max int) (int, error) {
 		return 0, fmt.Errorf("環境變數 %s 的值格式不正確:必須介於 %d 到 %d 之間", name, min, max)
 	}
 	return n, nil
+}
+
+// LegacySQLiteOpen 是舊金鑰及其管理入口共用的開關；零截止時間維持既有無期限設定。
+func (c *Config) LegacySQLiteOpen(at time.Time) bool {
+	return c.LegacySQLiteFallback && (c.LegacySQLiteUntil.IsZero() || at.Before(c.LegacySQLiteUntil))
 }

@@ -59,18 +59,18 @@ func TestToolPolicyOverHTTP(t *testing.T) {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "stock-mcp", Version: "test"}, nil)
 	stock.AddTools(mcpSrv, e2eQuerier{}, nil)
 	auth := grantsAuthenticator{
-		"tok-market": {"market.view": "granted"},
-		"tok-none":   {"market.view": "none"},
+		"smcp_tok-market": {"market.view": "granted"},
+		"smcp_tok-none":   {"market.view": "none"},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	handler := web.NewHandlerWithAPIKeys(cfg, logger, withPrincipalTokenInfo(newMCPHandler(mcpSrv)), nil, nil, web.WithAuthenticator(auth))
 	base, srv := startTestServer(t, handler)
 	t.Cleanup(func() { _ = srv.Close() })
 
-	if out := callSearchStock(t, base+"/mcp", "tok-market"); !strings.Contains(out, "台積電") || strings.Contains(out, `"isError":true`) {
+	if out := callSearchStock(t, base+"/mcp", "smcp_tok-market"); !strings.Contains(out, "台積電") || strings.Contains(out, `"isError":true`) {
 		t.Fatalf("有 market.view 應正常執行：%s", out)
 	}
-	if out := callSearchStock(t, base+"/mcp", "tok-none"); !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "market.view") {
+	if out := callSearchStock(t, base+"/mcp", "smcp_tok-none"); !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "market.view") {
 		t.Fatalf("沒有 market.view 應回權限錯誤：%s", out)
 	}
 }
@@ -141,8 +141,8 @@ func TestPersonalToolsScopeOverHTTP(t *testing.T) {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "stock-mcp", Version: "test"}, nil)
 	stock.AddTools(mcpSrv, stock.NewAPIClient(upstream, "market-key", time.Second).WithPersonalKey("personal-key"), nil)
 	auth := grantsAuthenticator{
-		"tok-own":       {"portfolio.view": "own", "portfolio.edit": "own"},
-		"tok-household": {"portfolio.view": "household", "portfolio.edit": "none", "market.view": "granted"},
+		"smcp_tok-own":       {"portfolio.view": "own", "portfolio.edit": "own"},
+		"smcp_tok-household": {"portfolio.view": "household", "portfolio.edit": "none", "market.view": "granted"},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	handler := web.NewHandlerWithAPIKeys(cfg, logger, withPrincipalTokenInfo(newMCPHandler(mcpSrv)), nil, nil, web.WithAuthenticator(auth))
@@ -150,13 +150,13 @@ func TestPersonalToolsScopeOverHTTP(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	url := base + "/mcp"
 
-	callTool(t, url, "tok-own", "get_portfolio_summary", `{}`)
+	callTool(t, url, "smcp_tok-own", "get_portfolio_summary", `{}`)
 	calls := takeCalls()
 	if len(calls) != 1 || calls[0].path != "/api/v1/portfolio/summary" || calls[0].query != "member_id=2&household_id=1" || calls[0].auth != "Bearer personal-key" {
 		t.Fatalf("本人範圍未傳 member_id 應帶入本人、household_id 與個人金鑰：%+v", calls)
 	}
 	for _, args := range []string{`{"member_id":0}`, `{"member_id":1}`} {
-		if out := callTool(t, url, "tok-own", "get_portfolio_summary", args); !strings.Contains(out, "此 Token 僅限查詢本人資料") {
+		if out := callTool(t, url, "smcp_tok-own", "get_portfolio_summary", args); !strings.Contains(out, "此 Token 僅限查詢本人資料") {
 			t.Errorf("本人範圍傳 %s 應回權限錯誤：%s", args, out)
 		}
 	}
@@ -164,35 +164,35 @@ func TestPersonalToolsScopeOverHTTP(t *testing.T) {
 		t.Fatalf("被拒的呼叫不應打到 Data API：%+v", calls)
 	}
 
-	callTool(t, url, "tok-household", "get_portfolio_summary", `{"member_id":1}`)
-	callTool(t, url, "tok-household", "get_portfolio_summary", `{}`)
+	callTool(t, url, "smcp_tok-household", "get_portfolio_summary", `{"member_id":1}`)
+	callTool(t, url, "smcp_tok-household", "get_portfolio_summary", `{}`)
 	calls = takeCalls()
 	if len(calls) != 2 || calls[0].query != "member_id=1&household_id=1" || calls[1].query != "member_id=0&household_id=1" {
 		t.Fatalf("家庭範圍可查同家庭成員與合計：%+v", calls)
 	}
-	if out := callTool(t, url, "tok-household", "get_portfolio_summary", `{"member_id":9}`); !strings.Contains(out, "不屬於此 Token 的家庭") {
+	if out := callTool(t, url, "smcp_tok-household", "get_portfolio_summary", `{"member_id":9}`); !strings.Contains(out, "不屬於此 Token 的家庭") {
 		t.Fatalf("其他家庭的成員應被拒：%s", out)
 	}
 
-	callTool(t, url, "tok-household", "get_latest_daily_quote", `{"symbol":"2330"}`)
+	callTool(t, url, "smcp_tok-household", "get_latest_daily_quote", `{"symbol":"2330"}`)
 	if calls := takeCalls(); len(calls) != 1 || calls[0].auth != "Bearer market-key" || strings.Contains(calls[0].query, "household_id") {
 		t.Fatalf("市場類端點應用市場金鑰且不帶 household_id：%+v", calls)
 	}
 
 	setArgs := `{"dimension":"stock","targets":[{"target_key":"2330","target_percent":50}]}`
-	if out := callTool(t, url, "tok-household", "set_portfolio_targets", setArgs); !strings.Contains(out, "portfolio.edit") {
+	if out := callTool(t, url, "smcp_tok-household", "set_portfolio_targets", setArgs); !strings.Contains(out, "portfolio.edit") {
 		t.Fatalf("沒有 portfolio.edit 的寫入應被拒：%s", out)
 	}
 	if calls := takeCalls(); len(calls) != 0 {
 		t.Fatalf("被拒的寫入不應打到 Data API：%+v", calls)
 	}
-	callTool(t, url, "tok-own", "set_portfolio_targets", setArgs)
+	callTool(t, url, "smcp_tok-own", "set_portfolio_targets", setArgs)
 	calls = takeCalls()
 	if len(calls) == 0 || calls[0].method != http.MethodPut {
 		t.Fatalf("寫入應送出 PUT：%+v", calls)
 	}
 	body := calls[0].body
-	if body["member_id"] != float64(2) || body["household_id"] != float64(1) || body["actor_source"] != "mcp" || body["actor_ref"] != "tok-own" || calls[0].auth != "Bearer personal-key" {
+	if body["member_id"] != float64(2) || body["household_id"] != float64(1) || body["actor_source"] != "mcp" || body["actor_ref"] != "smcp_tok-own" || calls[0].auth != "Bearer personal-key" {
 		t.Fatalf("寫入應強制綁定本人並帶 household_id、actor_*：%+v", calls[0])
 	}
 }
@@ -232,8 +232,8 @@ func TestBacktestLeaseOverHTTP(t *testing.T) {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "stock-mcp", Version: "test"}, nil)
 	stock.AddTools(mcpSrv, stock.NewAPIClient(upstream, "market-key", time.Second).WithLeases(leases), nil)
 	auth := grantsAuthenticator{
-		"tok-analysis": {"analysis.run": "granted"},
-		"tok-market":   {"market.view": "granted"},
+		"smcp_tok-analysis": {"analysis.run": "granted"},
+		"smcp_tok-market":   {"market.view": "granted"},
 	}
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	handler := web.NewHandlerWithAPIKeys(cfg, logger, withPrincipalTokenInfo(newMCPHandler(mcpSrv)), nil, nil, web.WithAuthenticator(auth))
@@ -241,14 +241,14 @@ func TestBacktestLeaseOverHTTP(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	url := base + "/mcp"
 
-	if out := callTool(t, url, "tok-market", "get_screen_backtest", `{}`); !strings.Contains(out, "analysis.run") {
+	if out := callTool(t, url, "smcp_tok-market", "get_screen_backtest", `{}`); !strings.Contains(out, "analysis.run") {
 		t.Fatalf("沒有 analysis.run 應被拒：%s", out)
 	}
 	if calls := takeCalls(); len(calls) != 0 {
 		t.Fatalf("被拒的回測不應打到 Data API：%+v", calls)
 	}
 
-	callTool(t, url, "tok-analysis", "get_screen_backtest", `{}`)
+	callTool(t, url, "smcp_tok-analysis", "get_screen_backtest", `{}`)
 	calls := takeCalls()
 	if len(calls) != 1 || calls[0].path != "/api/v1/stocks/screen/backtest" || leaseMember != float64(2) {
 		t.Fatalf("應先請領租約再呼叫 Data API：%+v member=%v", calls, leaseMember)
@@ -257,7 +257,7 @@ func TestBacktestLeaseOverHTTP(t *testing.T) {
 	leaseMu.Lock()
 	quotaExceeded = true
 	leaseMu.Unlock()
-	if out := callTool(t, url, "tok-analysis", "get_screen_backtest", `{}`); !strings.Contains(out, "今日回測次數已用完") {
+	if out := callTool(t, url, "smcp_tok-analysis", "get_screen_backtest", `{}`); !strings.Contains(out, "今日回測次數已用完") {
 		t.Fatalf("配額用完應回可辨識的錯誤：%s", out)
 	}
 	if calls := takeCalls(); len(calls) != 0 {
