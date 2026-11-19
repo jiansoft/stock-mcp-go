@@ -146,8 +146,10 @@ type Config struct {
 
 	// RateLimitWindow、RateLimitMax:每個 API key 與來源 IP 在
 	// RateLimitWindow 這段時間內,最多允許 RateLimitMax 次請求。
-	RateLimitWindow time.Duration
-	RateLimitMax    int
+	RateLimitWindow         time.Duration
+	RateLimitMax            int
+	MemberRequestsPerMinute int
+	MemberRequestBurst      int
 
 	// LogLevel 控制 log 輸出的詳細程度(debug/info/warn/error)。
 	LogLevel slog.Level
@@ -276,6 +278,23 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.RateLimitMax = rateMax
+
+	const memberRateEnv = "MCP_MEMBER_REQUESTS_PER_MINUTE"
+	const memberBurstEnv = "MCP_MEMBER_REQUEST_BURST"
+	cfg.MemberRequestsPerMinute, err = intEnv(memberRateEnv, 0, 1, 1_000_000)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MemberRequestBurst, err = intEnv(memberBurstEnv, 0, 1, 1_000_000)
+	if err != nil {
+		return nil, err
+	}
+	mode := strings.TrimSpace(os.Getenv("REGISTRATION_MODE"))
+	requiresMemberLimits := (mode != "" && !strings.EqualFold(mode, "closed")) ||
+		cfg.MemberRequestsPerMinute > 0 || cfg.MemberRequestBurst > 0
+	if requiresMemberLimits && (cfg.MemberRequestsPerMinute == 0 || cfg.MemberRequestBurst == 0) {
+		return nil, fmt.Errorf("須一併設定 %s 與 %s", memberRateEnv, memberBurstEnv)
+	}
 
 	switch getEnv("LOG_LEVEL", "info") {
 	case "debug":

@@ -105,11 +105,16 @@ func newHandler(
 	// requireAPIKey(驗證失敗就在這裡被攔下),驗證通過才會進入
 	// rateLimit(超過額度就在這裡被攔下),兩者都通過才會真正呼叫
 	// mcpHandler。
-	limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
+	handler := limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))
+	if cfg.MemberRequestsPerMinute > 0 && cfg.MemberRequestBurst > 0 {
+		handler = rateLimitMemberRequests(cfg.MemberRequestsPerMinute, cfg.MemberRequestBurst, handler)
+	} else {
+		limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
+		handler = rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops, handler)
+	}
 	authFailures := NewRateLimiter(time.Minute, 20)
 	protected := requireAuthenticator(configuredAuthenticator{cfg: cfg, next: authenticator}, authFailures, cfg.TrustProxy, cfg.TrustedProxyHops,
-		rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops,
-			limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))))
+		handler)
 	mux.Handle(cfg.MCPPath, protected)
 	if keys != nil {
 		registerAPIKeyAdmin(mux, cfg, keys)

@@ -24,6 +24,7 @@ func setRequired(t *testing.T) {
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
 		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN", "STOCK_RUST_API_PERSONAL_KEY", "MCP_QUOTA_TOKEN",
 		"MCP_LEGACY_SQLITE_FALLBACK", "MCP_LEGACY_SQLITE_UNTIL",
+		"REGISTRATION_MODE", "MCP_MEMBER_REQUESTS_PER_MINUTE", "MCP_MEMBER_REQUEST_BURST",
 	} {
 		t.Setenv(name, "")
 	}
@@ -32,6 +33,26 @@ func setRequired(t *testing.T) {
 	t.Setenv("MCP_API_KEY", "test-key")
 	t.Setenv("MCP_API_KEY_PEPPER", "test-pepper-32-bytes-minimum-value")
 	t.Setenv("MCP_ADMIN_TOKEN", "test-admin-token-32-bytes-minimum")
+}
+
+func TestLoadMemberLimits(t *testing.T) {
+	setRequired(t)
+	if _, err := Load(); err != nil {
+		t.Fatalf("closed 允許保留舊限流設定：%v", err)
+	}
+	t.Setenv("REGISTRATION_MODE", "invite")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_MEMBER_REQUESTS_PER_MINUTE") {
+		t.Fatalf("邀請模式須設定會員限流：%v", err)
+	}
+	t.Setenv("MCP_MEMBER_REQUESTS_PER_MINUTE", "30")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_MEMBER_REQUEST_BURST") {
+		t.Fatalf("須明確設定突發上限：%v", err)
+	}
+	t.Setenv("MCP_MEMBER_REQUEST_BURST", "5")
+	got, err := Load()
+	if err != nil || got.MemberRequestsPerMinute != 30 || got.MemberRequestBurst != 5 {
+		t.Fatalf("載入限流設定失敗：%v", err)
+	}
 }
 
 func TestLoadRejectsInvalidSettings(t *testing.T) {
