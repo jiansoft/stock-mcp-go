@@ -50,6 +50,17 @@ func TestEveryToolDeclaresPolicy(t *testing.T) {
 			t.Errorf("%s 沒有政策", tool.Name)
 			continue
 		}
+		if err := authorizeTool(tool.Name, policy, apikey.Principal{}, true); err == nil {
+			t.Errorf("%s 不可接受缺少權限的會員 Token", tool.Name)
+		}
+		scope := "granted"
+		if policy.Personal {
+			scope = "household"
+		}
+		p := apikey.Principal{Grants: map[string]string{policy.Permission: scope}}
+		if err := authorizeTool(tool.Name, policy, p, true); err != nil {
+			t.Errorf("%s 應接受具備工具政策權限的會員 Token：%v", tool.Name, err)
+		}
 		schema, _ := json.Marshal(tool.InputSchema)
 		if strings.Contains(string(schema), `"member_id"`) && !policy.Personal {
 			t.Errorf("%s 帶 member_id 參數，應標示 Personal", tool.Name)
