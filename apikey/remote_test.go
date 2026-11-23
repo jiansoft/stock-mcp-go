@@ -15,13 +15,15 @@ import (
 
 // fakeStockGo 模擬 stock_go 的 Token 快照與回寫端點。
 type fakeStockGo struct {
-	mu       sync.Mutex
-	tokens   []RemoteToken
-	legacy   *LegacyPrincipal
-	fail     bool
-	fetches  int
-	touched  []map[string]any
-	authSeen string
+	mu        sync.Mutex
+	tokens    []RemoteToken
+	legacy    *LegacyPrincipal
+	fail      bool
+	badJSON   bool
+	touchFail bool
+	fetches   int
+	touched   []map[string]any
+	authSeen  string
 }
 
 func (f *fakeStockGo) handler() http.Handler {
@@ -35,6 +37,10 @@ func (f *fakeStockGo) handler() http.Handler {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		if f.badJSON {
+			_, _ = w.Write([]byte("{not json"))
+			return
+		}
 		_ = json.NewEncoder(w).Encode(RemoteSnapshot{Tokens: f.tokens, LegacyPrincipal: f.legacy})
 	})
 	mux.HandleFunc("POST /stock/v1/internal/mcp-tokens/touch", func(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +48,11 @@ func (f *fakeStockGo) handler() http.Handler {
 		var uses []map[string]any
 		_ = json.Unmarshal(body, &uses)
 		f.mu.Lock()
+		if f.touchFail {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		f.touched = append(f.touched, uses...)
 		f.mu.Unlock()
 		_, _ = w.Write([]byte(`{"updated":1}`))

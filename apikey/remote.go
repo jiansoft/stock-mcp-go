@@ -82,6 +82,9 @@ type RemoteTokens struct {
 	client  *http.Client
 	logger  *slog.Logger
 	now     func() time.Time
+	// refreshEvery、touchEvery 是背景刷新與回寫的週期（預設 RemoteRefreshEvery、remoteTouchEvery；測試可縮短）。
+	refreshEvery time.Duration
+	touchEvery   time.Duration
 
 	state atomic.Pointer[remoteState]
 
@@ -107,15 +110,17 @@ func NewRemoteTokens(baseURL, syncToken string, logger *slog.Logger) (*RemoteTok
 		logger = slog.Default()
 	}
 	return &RemoteTokens{
-		baseURL:     baseURL,
-		key:         syncToken,
-		client:      &http.Client{Timeout: remoteHTTPTimeout},
-		logger:      logger,
-		now:         time.Now,
-		pendingUsed: map[string]time.Time{},
-		lastTouched: map[string]time.Time{},
-		stop:        make(chan struct{}),
-		done:        make(chan struct{}),
+		baseURL:      baseURL,
+		key:          syncToken,
+		client:       &http.Client{Timeout: remoteHTTPTimeout},
+		logger:       logger,
+		now:          time.Now,
+		refreshEvery: RemoteRefreshEvery,
+		touchEvery:   remoteTouchEvery,
+		pendingUsed:  map[string]time.Time{},
+		lastTouched:  map[string]time.Time{},
+		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
 	}, nil
 }
 
@@ -137,8 +142,8 @@ func (r *RemoteTokens) Close() {
 
 func (r *RemoteTokens) loop() {
 	defer close(r.done)
-	refresh := time.NewTicker(RemoteRefreshEvery)
-	touch := time.NewTicker(remoteTouchEvery)
+	refresh := time.NewTicker(r.refreshEvery)
+	touch := time.NewTicker(r.touchEvery)
 	defer refresh.Stop()
 	defer touch.Stop()
 	for {

@@ -131,6 +131,10 @@ var requirePrincipal atomic.Bool
 // RequirePrincipal 開啟「沒有呼叫端身分即拒絕」。
 func RequirePrincipal() { requirePrincipal.Store(true) }
 
+// SetRequirePrincipal 設定「沒有呼叫端身分即拒絕」並回傳原本的值。
+// 這是行程層級的開關；測試以記憶體傳輸直接呼叫工具時用它關閉，結束時還原，避免受其他測試執行順序影響。
+func SetRequirePrincipal(on bool) bool { return requirePrincipal.Swap(on) }
+
 // principalExtraKey 是 auth.TokenInfo.Extra 中存放呼叫端 Principal 的鍵。
 const principalExtraKey = "principal"
 
