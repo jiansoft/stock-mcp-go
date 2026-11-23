@@ -40,7 +40,7 @@ func addEtfTrackingTool(server *mcp.Server, q Querier, logf func(string, ...any)
 	if !ok {
 		return
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "get_etf_proxy_tracking", Description: "查詢 ETF 相對 0050 的近一年代理基準報酬差異及年化報酬差波動；至少 120 組樣本，並非相對實際指數的追蹤誤差。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+	registerTool(server, &mcp.Tool{Name: "get_etf_proxy_tracking", Description: "查詢 ETF 相對 0050 的近一年代理基準報酬差異及年化報酬差波動；至少 120 組樣本，並非相對實際指數的追蹤誤差。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in SymbolInput) (*mcp.CallToolResult, any, error) {
 			symbol, err := normalizeSymbol(in.Symbol)
 			if err != nil {

@@ -23,12 +23,13 @@ import (
 // 之間共用同一個 *Config 實例而互相干擾。
 func testConfig() *config.Config {
 	return &config.Config{
-		Host:            "127.0.0.1",
-		Port:            3000,
-		MCPPath:         "/mcp",
-		APIKey:          "test-key",
-		RateLimitWindow: time.Minute,
-		RateLimitMax:    60,
+		LegacySQLiteFallback: true,
+		Host:                 "127.0.0.1",
+		Port:                 3000,
+		MCPPath:              "/mcp",
+		APIKey:               "test-key",
+		RateLimitWindow:      time.Minute,
+		RateLimitMax:         60,
 	}
 }
 

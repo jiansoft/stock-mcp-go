@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"stockmcp/apikey"
@@ -136,34 +137,26 @@ func run(ctx context.Context) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
-	keyRepo, err := apikey.OpenSQLite(ctx, cfg.APIKeyDBPath)
+	keyService, closeLegacy, err := openLegacyKeys(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	// 這兩個 Close 的 error 值得記錄而不是丟棄:關閉 SQLite 可能因為
-	// 寫入 flush 失敗而出錯,那代表 API key 資料可能沒有完整落盤,是排查
-	// 資料異常時的重要線索。但刻意只記錄、不改變 run 的回傳值——此時
-	// 主要的關閉流程已經走完,用一個次要的清理錯誤去覆蓋(或無中生有)
-	// 程式的結束狀態,只會讓真正的結束原因更難判讀。
-	defer func() {
-		if err := keyRepo.Close(); err != nil {
-			logger.Error("關閉 API key 資料庫失敗", "error", err)
-		}
-	}()
-	keyService, err := apikey.NewService(
-		ctx, keyRepo, []byte(cfg.APIKeyPepper), cfg.APIKey, logger,
-	)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := keyService.Close(); err != nil {
-			logger.Error("關閉 API key 服務失敗", "error", err)
-		}
-	}()
+	defer closeLegacy()
 
 	// 唯一的資料來源是 stock_rust Data API(直連資料庫的 db 模式已於 2026-10 移除)。
-	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout)
+	repo := stock.NewAPIClient(cfg.StockRustAPIBaseURL, cfg.StockRustAPIKey, cfg.APITimeout).WithPersonalKey(cfg.StockRustAPIPersonalKey)
+	if cfg.MCPQuotaToken != "" {
+		leases, err := stock.NewStockGoLeases(cfg.StockGoAPIBaseURL, cfg.MCPQuotaToken, cfg.APITimeout)
+		if err != nil {
+			return err
+		}
+		repo.WithLeases(leases)
+	} else {
+		logger.Warn("未設定 MCP_QUOTA_TOKEN：回測不請領重運算租約，stock_rust 開啟 DATA_API_STRICT_SCOPE 後會被拒")
+	}
+	if cfg.StockRustAPIPersonalKey == "" {
+		logger.Warn("未設定 STOCK_RUST_API_PERSONAL_KEY：持股類端點沿用 STOCK_RUST_API_KEY，stock_rust 開啟 DATA_API_STRICT_SCOPE 後會被拒")
+	}
 
 	// mcp.NewServer 建立一個空的 MCP server 實例(此時還沒有註冊任何
 	// 工具),Implementation 這個欄位是給 MCP 用戶端在初始化交握
@@ -180,6 +173,8 @@ func run(ctx context.Context) error {
 	// 的錯誤訊息當成一般文字格式化後,用結構化 log 的 Error 等級記錄
 	// 下來。
 	server.AddReceivingMiddleware(toolCallLogging(logger))
+	// 正式環境的工具呼叫一律要有通過驗證的呼叫端身分（經 auth.TokenInfo 帶入），沒有就拒絕。
+	stock.RequirePrincipal()
 	stock.AddTools(server, repo, func(format string, args ...any) {
 		// 先問 logger 這個等級是否會被輸出,再決定要不要做字串格式化:
 		// 如果 LOG_LEVEL 設得比 error 高,Sprintf 的成本就完全省下來了。
@@ -195,7 +190,7 @@ func run(ctx context.Context) error {
 		logger.Error("MCP 工具執行失敗", "detail", fmt.Sprintf(format, args...))
 	})
 
-	mcpHandler := newMCPHandler(server)
+	mcpHandler := withPrincipalTokenInfo(newMCPHandler(server))
 
 	// /readyz 以 Data API 的健康檢查判斷本服務能否正常回應查詢。
 	readiness := repo.Health
@@ -210,7 +205,25 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("產生 OpenAPI 文件:%w", err)
 	}
 
-	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService, web.WithOpenAPI(openAPI)))
+	// 個人 MCP Token（會員系統計畫 6.1）：smcp_ 開頭的 Token 由 stock_go 快照驗證，其餘仍走 SQLite 舊金鑰。
+	// SQLite 舊金鑰的過渡（4-05）：MCP_LEGACY_SQLITE_FALLBACK=false 時完全不接受，MCP_LEGACY_SQLITE_UNTIL 之後亦同。
+	authenticator := apikey.Composite{Legacy: keyService, LegacyUntil: cfg.LegacySQLiteUntil}
+	if !cfg.LegacySQLiteFallback {
+		authenticator.Legacy = nil
+		logger.Info("已停用 SQLite 舊金鑰（MCP_LEGACY_SQLITE_FALLBACK=false）")
+	}
+	if cfg.StockGoAPIBaseURL != "" {
+		remote, err := apikey.NewRemoteTokens(cfg.StockGoAPIBaseURL, cfg.MCPSyncToken, logger)
+		if err != nil {
+			return err
+		}
+		remote.Start(ctx)
+		defer remote.Close()
+		authenticator.Remote = remote
+	}
+
+	srv := web.NewServer(cfg, web.NewHandlerWithAPIKeys(cfg, logger, mcpHandler, readiness, keyService,
+		web.WithOpenAPI(openAPI), web.WithAuthenticator(authenticator)))
 
 	// 這裡用一個「容量為 1 的 channel」搭配一個獨立的 goroutine 啟動
 	// HTTP 伺服器,而不是直接在目前這個 goroutine 呼叫
@@ -323,6 +336,19 @@ func runHealthCheck(ctx context.Context) error {
 // 「一問一答」的唯讀查詢,不需要 server 主動推送,因此不受影響;舊協定
 // (2025-11-25 以前)的用戶端仍可照常用 POST 送 initialize 與 tools/call,
 // 只是拿不到 session id,也開不了 SSE 長連線。
+// withPrincipalTokenInfo 把外層 API key 驗證得到的呼叫端身分放進 auth.TokenInfo，工具處理函式由
+// req.Extra.TokenInfo 取得（會員系統計畫 6.3）。不重新驗證 Token；沒有身分的請求回 401。
+func withPrincipalTokenInfo(next http.Handler) http.Handler {
+	verifier := func(_ context.Context, _ string, req *http.Request) (*auth.TokenInfo, error) {
+		principal, ok := web.PrincipalFromContext(req.Context())
+		if !ok {
+			return nil, auth.ErrInvalidToken
+		}
+		return &auth.TokenInfo{UserID: principal.KeyID, Extra: map[string]any{stock.TokenInfoPrincipal: principal}}, nil
+	}
+	return auth.RequireBearerToken(verifier, &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})(next)
+}
+
 func newMCPHandler(server *mcp.Server) http.Handler {
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },

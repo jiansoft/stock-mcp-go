@@ -217,11 +217,17 @@ The server uses stateless Streamable HTTP. It does not provide stdio transport, 
 | `TRUSTED_PROXY_HOPS` | `1` | Number of trusted proxies that append `X-Forwarded-For` |
 | `STOCK_RUST_API_BASE_URL` | required | Upstream Data API base URL |
 | `STOCK_RUST_API_KEY` | required | Dedicated upstream bearer key |
+| `STOCK_RUST_API_PERSONAL_KEY` | recommended | Upstream key for holdings endpoints (`/api/v1/portfolio/*`, stock_rust `DATA_API_PERSONAL_KEY`); falls back to `STOCK_RUST_API_KEY`, which stock_rust rejects once `DATA_API_STRICT_SCOPE=true` |
 | `API_TIMEOUT_MS` | `30000` | Upstream HTTP timeout (multi-year statistics such as `get_institutional_streak_performance` can take several seconds on the Pi) |
 | `MCP_API_KEY` | empty | One-time compatibility bootstrap key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | SQLite API-key database path |
 | `MCP_API_KEY_PEPPER` | required | HMAC pepper of at least 32 bytes |
 | `MCP_ADMIN_TOKEN` | required | Separate administration secret of at least 32 bytes |
+| `STOCK_GO_API_BASE_URL` | optional | stock_go API address; with `MCP_SYNC_TOKEN`, enables personal `smcp_` tokens verified against stock_go's snapshot (refreshed every 30 s, rejected after 15 min without a refresh) |
+| `MCP_SYNC_TOKEN` | optional | Service key for stock_go's token snapshot; set together with `STOCK_GO_API_BASE_URL` |
+| `MCP_LEGACY_SQLITE_FALLBACK` | optional | `true` (default) keeps accepting the SQLite keys during the member-system transition; with stock_go configured they act as the legacy member, limited to that member's current permissions. `false` rejects them |
+| `MCP_LEGACY_SQLITE_UNTIL` | optional | Cut-off date `YYYY-MM-DD` (Taipei); SQLite keys are rejected from the next day |
+| `MCP_QUOTA_TOKEN` | recommended | Service key for requesting backtest leases from stock_go (requires `STOCK_GO_API_BASE_URL`); without it backtests send no lease, which stock_rust rejects once `DATA_API_STRICT_SCOPE=true` |
 | `MCP_TRUSTED_ORIGINS` | empty | Comma-separated allowed browser origins |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per API-key ID + source-IP combination per window; excess requests return HTTP 429 |

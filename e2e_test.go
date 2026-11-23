@@ -61,11 +61,15 @@ func (e2eQuerier) StockProfile(context.Context, string) (*stock.Profile, error) 
 // web 路由),回傳 MCP endpoint 的 URL。
 func e2eServer(t *testing.T) string {
 	t.Helper()
-	cfg := &config.Config{
+	cfg := &config.Config{LegacySQLiteFallback: true,
 		Host: "127.0.0.1", MCPPath: "/mcp", APIKey: "test-key",
 		RateLimitWindow: time.Minute, RateLimitMax: 1_000_000,
 		TrustedProxyHops: 1, LogLevel: slog.LevelError,
 	}
+	// run() 會開啟行程層級的「沒有呼叫端身分即拒絕」；這裡的請求不經驗證器帶入身分，
+	// 明確關閉並在結束時還原，結果不受其他測試的執行順序影響（-shuffle=on）。
+	previous := stock.SetRequirePrincipal(false)
+	t.Cleanup(func() { stock.SetRequirePrincipal(previous) })
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "stock-mcp", Version: "test"}, nil)
 	stock.AddTools(mcpSrv, e2eQuerier{}, nil)
 

@@ -43,7 +43,7 @@ func newAdminTestServer(t *testing.T) adminTestServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = keys.Close() })
-	cfg := &config.Config{
+	cfg := &config.Config{LegacySQLiteFallback: true,
 		Host: "127.0.0.1", Port: 3000, MCPPath: "/mcp",
 		AdminToken:      testAdminToken,
 		RateLimitWindow: time.Minute, RateLimitMax: 1000,

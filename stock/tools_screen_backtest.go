@@ -313,7 +313,12 @@ func (c *APIClient) ScreenBacktest(ctx context.Context, opt ScreenBacktestOption
 
 // getBacktest 呼叫回測類 endpoint:404 轉成 ErrMarketDataNotFound、422 轉成 ErrIndustryNotFound。
 func (c *APIClient) getBacktest(ctx context.Context, path string, body any) error {
-	found, err := c.getFound(ctx, path, body)
+	// 重運算：先向 stock_go 請領租約（未取得不執行），以三個標頭帶給 stock_rust。
+	headers, err := c.leaseHeaders(ctx, path)
+	if err != nil {
+		return err
+	}
+	found, err := c.getFoundWithHeaders(ctx, path, body, headers)
 	if err != nil {
 		var status *apiStatusError
 		if errors.As(err, &status) && status.status == http.StatusUnprocessableEntity {
@@ -490,7 +495,16 @@ type screenBacktestToolset struct {
 
 // backtestToolError 把回測 API 的錯誤轉成給模型看的訊息;非預期錯誤記錄後只回通用訊息。
 func backtestToolError(err error, tool string, opt ScreenBacktestOptions, logf func(string, ...any)) error {
+	var leaseErr *LeaseError
+	var status *apiStatusError
 	switch {
+	case errors.As(err, &leaseErr):
+		if leaseErr.Reason == "unavailable" {
+			logf("工具 %s 請領租約失敗:%v", tool, err)
+		}
+		return errors.New(leaseErr.Message())
+	case errors.As(err, &status) && status.status == http.StatusTooManyRequests:
+		return errors.New("回測伺服器目前忙碌（同時執行的回測已滿），請約 10 秒後再試。")
 	case errors.Is(err, ErrMarketDataNotFound) && opt.Preset != "":
 		return fmt.Errorf("找不到具名策略「%s」(可用 list_strategy_presets 查看名稱),或迄日之前查無相對強度資料", opt.Preset)
 	case errors.Is(err, ErrMarketDataNotFound):

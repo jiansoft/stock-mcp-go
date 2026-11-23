@@ -13,7 +13,7 @@
 // 不需要再處理「這個環境變數到底有沒有設定」「格式對不對」這些細節。
 //
 // ## 設計原則
-//   - 缺少必要變數(DATABASE_URL、MCP_API_KEY_PEPPER、MCP_ADMIN_TOKEN)時拒絕啟動,且錯誤訊息
+//   - 缺少必要變數時拒絕啟動；MCP_API_KEY_PEPPER、MCP_ADMIN_TOKEN 只在 SQLite 舊通道開啟期間必填,且錯誤訊息
 //     只包含「變數名稱」,絕不包含變數的「值」——避免資料庫密碼、API key
 //     不小心被印到終端機、log 檔或監控系統裡。
 //   - 所有選填變數都有安全的預設值,未設定時程式仍可正常啟動。
@@ -99,7 +99,10 @@ type Config struct {
 	// StockRustAPIBaseURL、StockRustAPIKey、APITimeout 是唯一資料來源 stock_rust Data API 的設定。
 	StockRustAPIBaseURL string
 	StockRustAPIKey     string
-	APITimeout          time.Duration
+	// StockRustAPIPersonalKey 是持股類端點專用的 DATA_API_PERSONAL_KEY（STOCK_RUST_API_PERSONAL_KEY，選填；
+	// 未設定時沿用 StockRustAPIKey，僅適用 stock_rust 的 DATA_API_STRICT_SCOPE=false 相容期）。
+	StockRustAPIPersonalKey string
+	APITimeout              time.Duration
 
 	// APIKey 是 MCP 對外驗證用的金鑰,屬敏感資訊,不可寫入 log。
 	// 它只用於空 API key 資料庫的首次相容性匯入；完成後以 SQLite 為準。
@@ -110,6 +113,19 @@ type Config struct {
 	APIKeyPepper string
 	// AdminToken 是管理 API 專用的獨立 Bearer token，不可與 MCP key 共用。
 	AdminToken string
+
+	// StockGoAPIBaseURL 與 MCPSyncToken 啟用個人 MCP Token（會員系統計畫 6.1）：向 stock_go 取 Token 快照
+	// 並在記憶體驗證。兩者都設定才啟用；MCPSyncToken 屬敏感資訊，不可寫入 log。
+	StockGoAPIBaseURL string
+	MCPSyncToken      string
+	// MCPQuotaToken 是向 stock_go 請領重運算租約的服務金鑰（MCP_QUOTA_TOKEN，2.3）；須搭配 STOCK_GO_API_BASE_URL。
+	// 未設定時回測請求不帶租約（僅適用 stock_rust 的 DATA_API_STRICT_SCOPE=false）。屬敏感資訊，不可寫入 log。
+	MCPQuotaToken string
+
+	// LegacySQLiteFallback（MCP_LEGACY_SQLITE_FALLBACK，預設 true）與 LegacySQLiteUntil（MCP_LEGACY_SQLITE_UNTIL，
+	// YYYY-MM-DD，台北時間當天結束為止）控制 SQLite 舊金鑰的過渡期（會員系統計畫 6.1）；LegacySQLiteUntil 為零值時不設截止。
+	LegacySQLiteFallback bool
+	LegacySQLiteUntil    time.Time
 
 	// TrustedOrigins 是允許跨來源(cross-origin)存取 MCP 端點的額外
 	// Origin 清單,由環境變數 MCP_TRUSTED_ORIGINS 以逗號分隔提供,例如
@@ -130,8 +146,10 @@ type Config struct {
 
 	// RateLimitWindow、RateLimitMax:每個 API key 與來源 IP 在
 	// RateLimitWindow 這段時間內,最多允許 RateLimitMax 次請求。
-	RateLimitWindow time.Duration
-	RateLimitMax    int
+	RateLimitWindow         time.Duration
+	RateLimitMax            int
+	MemberRequestsPerMinute int
+	MemberRequestBurst      int
 
 	// LogLevel 控制 log 輸出的詳細程度(debug/info/warn/error)。
 	LogLevel slog.Level
@@ -198,6 +216,7 @@ func Load() (*Config, error) {
 	}
 	cfg.StockRustAPIBaseURL = os.Getenv("STOCK_RUST_API_BASE_URL")
 	cfg.StockRustAPIKey = os.Getenv("STOCK_RUST_API_KEY")
+	cfg.StockRustAPIPersonalKey = os.Getenv("STOCK_RUST_API_PERSONAL_KEY")
 	if cfg.StockRustAPIBaseURL == "" || cfg.StockRustAPIKey == "" {
 		return nil, fmt.Errorf("缺少必要的環境變數 STOCK_RUST_API_BASE_URL 與 STOCK_RUST_API_KEY")
 	}
@@ -209,14 +228,36 @@ func Load() (*Config, error) {
 	cfg.APIKey = os.Getenv("MCP_API_KEY")
 	cfg.APIKeyDBPath = getEnv("MCP_API_KEY_DB_PATH", "data/mcp-api-keys.db")
 	cfg.APIKeyPepper = os.Getenv("MCP_API_KEY_PEPPER")
-	if len(cfg.APIKeyPepper) < 32 {
-		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
+	cfg.StockGoAPIBaseURL = os.Getenv("STOCK_GO_API_BASE_URL")
+	cfg.MCPSyncToken = os.Getenv("MCP_SYNC_TOKEN")
+	cfg.MCPQuotaToken = os.Getenv("MCP_QUOTA_TOKEN")
+	switch value := getEnv("MCP_LEGACY_SQLITE_FALLBACK", "true"); value {
+	case "true", "false":
+		cfg.LegacySQLiteFallback = value == "true"
+	default:
+		return nil, fmt.Errorf("MCP_LEGACY_SQLITE_FALLBACK 必須是 true 或 false")
+	}
+	if value := os.Getenv("MCP_LEGACY_SQLITE_UNTIL"); value != "" {
+		day, err := time.ParseInLocation("2006-01-02", value, time.FixedZone("Asia/Taipei", 8*60*60))
+		if err != nil {
+			return nil, fmt.Errorf("MCP_LEGACY_SQLITE_UNTIL 必須是 YYYY-MM-DD 日期")
+		}
+		cfg.LegacySQLiteUntil = day.AddDate(0, 0, 1)
+	}
+	if cfg.MCPQuotaToken != "" && cfg.StockGoAPIBaseURL == "" {
+		return nil, fmt.Errorf("設定 MCP_QUOTA_TOKEN 時也必須設定 STOCK_GO_API_BASE_URL")
+	}
+	if (cfg.StockGoAPIBaseURL == "") != (cfg.MCPSyncToken == "") {
+		return nil, fmt.Errorf("STOCK_GO_API_BASE_URL 與 MCP_SYNC_TOKEN 必須同時設定（啟用個人 MCP Token）或同時留空")
 	}
 	cfg.AdminToken = os.Getenv("MCP_ADMIN_TOKEN")
-	if len(cfg.AdminToken) < 32 {
+	if cfg.LegacySQLiteOpen(time.Now()) && len(cfg.APIKeyPepper) < 32 {
+		return nil, fmt.Errorf("缺少必要的環境變數 MCP_API_KEY_PEPPER，或長度少於 32 bytes")
+	}
+	if cfg.LegacySQLiteOpen(time.Now()) && len(cfg.AdminToken) < 32 {
 		return nil, fmt.Errorf("缺少必要的環境變數 MCP_ADMIN_TOKEN，或長度少於 32 bytes")
 	}
-	if cfg.APIKey != "" && subtleConstantStringEqual(cfg.APIKey, cfg.AdminToken) {
+	if cfg.LegacySQLiteOpen(time.Now()) && cfg.APIKey != "" && subtleConstantStringEqual(cfg.APIKey, cfg.AdminToken) {
 		return nil, fmt.Errorf("MCP_ADMIN_TOKEN 不可與 MCP_API_KEY 相同")
 	}
 
@@ -237,6 +278,23 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.RateLimitMax = rateMax
+
+	const memberRateEnv = "MCP_MEMBER_REQUESTS_PER_MINUTE"
+	const memberBurstEnv = "MCP_MEMBER_REQUEST_BURST"
+	cfg.MemberRequestsPerMinute, err = intEnv(memberRateEnv, 0, 1, 1_000_000)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MemberRequestBurst, err = intEnv(memberBurstEnv, 0, 1, 1_000_000)
+	if err != nil {
+		return nil, err
+	}
+	mode := strings.TrimSpace(os.Getenv("REGISTRATION_MODE"))
+	requiresMemberLimits := (mode != "" && !strings.EqualFold(mode, "closed")) ||
+		cfg.MemberRequestsPerMinute > 0 || cfg.MemberRequestBurst > 0
+	if requiresMemberLimits && (cfg.MemberRequestsPerMinute == 0 || cfg.MemberRequestBurst == 0) {
+		return nil, fmt.Errorf("須一併設定 %s 與 %s", memberRateEnv, memberBurstEnv)
+	}
 
 	switch getEnv("LOG_LEVEL", "info") {
 	case "debug":
@@ -327,4 +385,9 @@ func intEnv(name string, fallback, min, max int) (int, error) {
 		return 0, fmt.Errorf("環境變數 %s 的值格式不正確:必須介於 %d 到 %d 之間", name, min, max)
 	}
 	return n, nil
+}
+
+// LegacySQLiteOpen 是舊金鑰及其管理入口共用的開關；零截止時間維持既有無期限設定。
+func (c *Config) LegacySQLiteOpen(at time.Time) bool {
+	return c.LegacySQLiteFallback && (c.LegacySQLiteUntil.IsZero() || at.Before(c.LegacySQLiteUntil))
 }

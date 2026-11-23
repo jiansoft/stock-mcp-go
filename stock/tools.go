@@ -85,6 +85,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	addDeepDiveTool(server, q, logf)
 	addEtfTrackingTool(server, q, logf)
 
+	// registerTool(policy.go)包裝 mcp.AddTool:先依工具政策檢查呼叫端權限(會員系統計畫 6.3)。
 	// mcp.AddTool 是 go-sdk 提供的泛型函式(Go 1.18 起支援的語言特性):
 	// 它的完整簽名類似 AddTool[In, Out any](s *Server, t *Tool, h ToolHandlerFor[In, Out])。
 	// 泛型讓同一個 AddTool 函式可以搭配不同的輸入/輸出型別使用(這裡分別
@@ -93,7 +94,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 基本骨架;但本專案選擇額外手寫更精確的 InputSchema(見下方
 	// searchStockSchema 等函式),因為手寫可以精確控制 MinLength、
 	// Pattern、Default 這些細節,比單純用反射推導更貼近規格書要求。
-	mcp.AddTool(server, &mcp.Tool{
+	registerTool(server, &mcp.Tool{
 		Name:        "search_stock",
 		Description: "以股票代號或中文/英文名稱關鍵字搜尋台股股票基本資料。",
 		InputSchema: searchStockSchema(),
@@ -105,28 +106,28 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.searchStock)
 
-	mcp.AddTool(server, &mcp.Tool{
+	registerTool(server, &mcp.Tool{
 		Name:        "get_latest_daily_quote",
 		Description: "查詢指定股票代號在資料庫中最新可取得的一筆日報價。",
 		InputSchema: symbolOnlySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.latestDailyQuote)
 
-	mcp.AddTool(server, &mcp.Tool{
+	registerTool(server, &mcp.Tool{
 		Name:        "get_price_history",
 		Description: "查詢歷史日線；adjusted=true 附除權息、減資、分割還原價格，適合長期比較。",
 		InputSchema: priceHistorySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.priceHistory)
 
-	mcp.AddTool(server, &mcp.Tool{
+	registerTool(server, &mcp.Tool{
 		Name:        "get_stock_profile",
 		Description: "查詢指定股票代號的完整基本面資訊:基本資料、最新報價、近一季/近四季 EPS、每股淨值、ROE、權值、發行股數與歷史高低點。",
 		InputSchema: symbolOnlySchema(),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, ts.stockProfile)
 	if snapshots, ok := q.(SnapshotQuerier); ok {
-		mcp.AddTool(server, &mcp.Tool{Name: "get_realtime_snapshot", Description: "查詢第三方採集的近即時股票報價快照，可能有數秒至數分鐘延遲。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, (&snapshotToolset{snapshots: snapshots, logf: logf}).realtimeSnapshot)
+		registerTool(server, &mcp.Tool{Name: "get_realtime_snapshot", Description: "查詢第三方採集的近即時股票報價快照，可能有數秒至數分鐘延遲。", InputSchema: symbolOnlySchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, (&snapshotToolset{snapshots: snapshots, logf: logf}).realtimeSnapshot)
 	}
 
 	// FinancialQuerier 採用與 SnapshotQuerier 相同的型別斷言註冊:只有
@@ -135,19 +136,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 介面,因此不會對使用者暴露「呼叫了一定失敗」的工具。
 	if financials, ok := q.(FinancialQuerier); ok {
 		fts := &financialToolset{financials: financials, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_monthly_revenue_history",
 			Description: "查詢指定股票的月營收歷史(當月/累計營收、月增率、年增率),可選填月份區間與筆數上限。資料為歷史彙整,非即時。",
 			InputSchema: monthlyRevenueSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.monthlyRevenueHistory)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_financial_statement_history",
 			Description: "查詢指定股票的季/年度財報歷史(毛利率、營益率、EPS、ROE、ROA、每股淨值等),period_type 可選 quarterly、annual 或 all。",
 			InputSchema: statementHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, fts.financialStatementHistory)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_dividend_history",
 			Description: "查詢指定股票的歷年股利發放(現金/股票股利、盈餘分配率、除權息日與發放日),年份篩選依股利所屬年度。",
 			InputSchema: dividendHistorySchema(),
@@ -160,19 +161,19 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 實作完成時，tools/list 才會出現這組估值與市場分析工具。
 	if analytics, ok := q.(AnalyticsQuerier); ok {
 		ats := &analyticsToolset{analytics: analytics, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_stock_valuation",
 			Description: "查詢指定股票最新或指定日期以前最近一筆估值模型結果與估值區間；這些分界不是目標價或買賣建議。",
 			InputSchema: valuationSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ats.stockValuation)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_market_breadth",
 			Description: "查詢統計表既有市場列的漲跌家數、52 週新高／新低家數、均線位置與估值分布；all 為上市＋上櫃合併統計列（市場 id 0，不含興櫃與公開發行），可回傳最多 60 個資料日。",
 			InputSchema: marketBreadthSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, ats.marketBreadth)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_dividend_yield_ranking",
 			Description: "查詢上市及/或上櫃股票的歷史殖利率排行，可依日期與產業篩選；結果僅描述歷史資料，不構成投資建議。",
 			InputSchema: yieldRankingSchema(),
@@ -185,7 +186,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 比註冊一個必然失敗的入口更能準確反映 server 能力。
 	if screener, ok := q.(Screener); ok {
 		sts := &screenToolset{screener: screener, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "screen_stocks",
 			Description: "依估值、營收動能（連續年增、最新月營收下限）、EPS、ROE、殖利率、F 分數、毛利率、負債比、自由現金流、RS 與法人連買篩選上市櫃股票；可排序，非投資建議。",
 			InputSchema: screenStocksSchema(),
@@ -198,25 +199,25 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// (目前僅 *APIClient)時才註冊,原則與上面各能力群組一致。
 	if marketData, ok := q.(MarketDataQuerier); ok {
 		mts := &marketDataToolset{marketData: marketData, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_market_index_history",
 			Description: "查詢台股大盤 TAIEX 加權指數的歷史走勢(收盤指數、漲跌點數、成交金額/筆數/股數),依日期新到舊排序。與 get_market_breadth 互補:前者看指數點位,後者看市場內部強弱。",
 			InputSchema: indexHistorySchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, mts.marketIndexHistory)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_dividend_calendar",
 			Description: "查詢日期區間內的除權息與股利發放行事曆(除息/除權/現金股利發放/股票股利發放四種事件),依事件日期由近到遠排序;區間最長 92 天,未提供時預設查詢當日起 30 天。",
 			InputSchema: dividendCalendarSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, mts.dividendCalendar)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_qfii_holding_ranking",
 			Description: "查詢外資(QFII)持股比例或持股數排行,可依市場與產業篩選。注意:這是最近一次每日更新的當前快照,沒有歷史序列,無法回答外資增減持趨勢問題。",
 			InputSchema: qfiiRankingSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, mts.qfiiHoldingRanking)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name: "get_market_movers",
 			Description: "查詢當日漲跌幅或成交量排行(漲幅前 N 名、跌幅前 N 名、成交量前 N 名),可依市場篩選。" +
 				"盤中回傳即時排行,收盤後回傳當日最終排行,資料來源由伺服器端自動判斷並以 source/is_realtime/data_as_of 回報。" +
@@ -229,13 +230,13 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 籌碼工具同樣以型別斷言偵測能力:只有 *APIClient 實作 ChipQuerier。
 	if chips, ok := q.(ChipQuerier); ok {
 		cts := &chipToolset{chips: chips, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_chip_data",
 			Description: "查詢個股三大法人買賣超（股）、融資融券（張）、連買賣天數、千張與 400 張以上大戶、董監與券商分點籌碼。",
 			InputSchema: chipSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, cts.stockChip)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name: "get_holder_levels",
 			Description: "查詢個股單週集保股權分散全部持股分級:1～15 級(1～999 股到 1,000,001 股以上)、差異數調整與合計的人數、股數與比例;" +
 				"可指定日期(取該日以前最近一週),預設最新一週。注意:分級資料自 2026-10-22 起逐週累積,更早的週請用 get_chip_data 的千張與 400 張摘要。",
@@ -247,7 +248,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	// 三大報表工具同樣以型別斷言偵測能力:只有 *APIClient 實作 FinancialReportQuerier。
 	if reports, ok := q.(FinancialReportQuerier); ok {
 		rts := &financialReportToolset{reports: reports, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_financial_reports",
 			Description: "查詢個股損益表、資產負債表與現金流量表；可選季報或年報。",
 			InputSchema: financialReportSchema(),
@@ -257,7 +258,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if health, ok := q.(FinancialHealthQuerier); ok {
 		hts := &financialHealthToolset{health: health, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_financial_health",
 			Description: "查詢 Piotroski F 分數與九項年度財務體質指標、比較年度及缺漏資料。",
 			InputSchema: financialHealthSchema(),
@@ -267,7 +268,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if fill, ok := q.(DividendFillQuerier); ok {
 		dts := &dividendFillToolset{fill: fill, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_dividend_fill",
 			Description: "查詢個股歷次除權息填息進度、是否填息、交易天數及歷史統計。",
 			InputSchema: dividendFillSchema(),
@@ -277,7 +278,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if band, ok := q.(ValuationBandQuerier); ok {
 		vts := &valuationBandToolset{band: band, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_valuation_band",
 			Description: "查詢 PE／PB 歷史百分位與分位數對應股價；不是目標價。",
 			InputSchema: valuationBandSchema(),
@@ -287,7 +288,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if peers, ok := q.(PeersQuerier); ok {
 		pts := &peersToolset{peers: peers, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_stock_peers",
 			Description: "比較同產業個股市值、估值、營收、獲利及財務體質；不含 ETF。",
 			InputSchema: peersSchema(),
@@ -297,7 +298,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if technicals, ok := q.(TechnicalsQuerier); ok {
 		tts := &technicalsToolset{technicals: technicals, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_technical_indicators",
 			Description: "查詢個股還原日線技術指標：均線、乖離、KD、MACD、RSI、布林通道與訊號。",
 			InputSchema: technicalsSchema(),
@@ -307,7 +308,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if signals, ok := q.(SignalsQuerier); ok {
 		sts := &signalsToolset{signals: signals, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_signal_stocks",
 			Description: "列出指定交易日出現均線、KD、MACD、RS 或價量訊號的上市櫃股票。",
 			InputSchema: signalsSchema(),
@@ -317,13 +318,13 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if history, ok := q.(SignalHistoryQuerier); ok {
 		hts := &signalHistoryToolset{history: history, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_signal_performance",
 			Description: "統計技術訊號之後各持有期間的含息報酬、勝率及大盤比較；歷史表現非預測。",
 			InputSchema: signalPerformanceSchema(),
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, hts.signalPerformance)
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_stock_signal_history",
 			Description: "列出個股歷史技術訊號、當日價格及訊號後各期間含息報酬。",
 			InputSchema: stockSignalHistorySchema(),
@@ -333,7 +334,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if tq, ok := q.(StockTimelineQuerier); ok {
 		tts := &stockTimelineToolset{tq: tq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_stock_timeline",
 			Description: "查詢個股除權息、股利、減資分割、營收、財報與技術訊號時間軸。",
 			InputSchema: stockTimelineSchema(),
@@ -343,7 +344,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if rs, ok := q.(RelativeStrengthQuerier); ok {
 		rts := &relativeStrengthToolset{rs: rs, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_relative_strength_ranking",
 			Description: "查詢上市櫃普通股 RS 排行（60／120／240 日還原報酬加權百分位）；99 最強。",
 			InputSchema: relativeStrengthSchema(),
@@ -353,7 +354,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if rs, ok := q.(RelativeStrengthHistoryQuerier); ok {
 		hts := &relativeStrengthHistoryToolset{rs: rs, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_relative_strength_history",
 			Description: "查詢個股 RS 分數、排名及同日母體規模的歷史走勢；不含 ETF、特別股。",
 			InputSchema: relativeStrengthHistorySchema(),
@@ -363,7 +364,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if is, ok := q.(IndustryStrengthQuerier); ok {
 		ists := &industryStrengthToolset{is: is, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_industry_strength",
 			Description: "查詢產業 RS 中位數、強勢股比例及領先個股，辨識產業輪動。",
 			InputSchema: industryStrengthSchema(),
@@ -373,7 +374,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if fq, ok := q.(InstitutionalFlowQuerier); ok {
 		fts := &institutionalFlowToolset{fq: fq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_institutional_flow_ranking",
 			Description: "查詢法人買賣超排行、連續買賣天數與成交占比；區分股數及金額。",
 			InputSchema: institutionalFlowSchema(),
@@ -383,7 +384,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if sq, ok := q.(InstitutionalStreakQuerier); ok {
 		sts := &institutionalStreakToolset{sq: sq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_institutional_streak_performance",
 			Description: "統計法人連續買超或賣超滿 N 天之後的含息報酬、勝率與大盤比較。",
 			InputSchema: institutionalStreakSchema(),
@@ -395,7 +396,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if fq, ok := q.(IndustryFlowQuerier); ok {
 		its := &industryFlowToolset{fq: fq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_industry_flow",
 			Description: "查詢三大法人各產業買賣超金額、股數與集中方向。",
 			InputSchema: industryFlowSchema(),
@@ -405,7 +406,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if mq, ok := q.(MarginRankingQuerier); ok {
 		mts := &marginRankingToolset{mq: mq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_margin_ranking",
 			Description: "查詢融資融券增減或券資比排行；可依市場及天數篩選。",
 			InputSchema: marginRankingSchema(),
@@ -417,7 +418,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 	if screener, ok := q.(Screener); ok {
 		if rq, ok := q.(MarketRegimeQuerier); ok {
 			cts := &canslimToolset{screener: screener, regime: rq, logf: logf}
-			mcp.AddTool(server, &mcp.Tool{
+			registerTool(server, &mcp.Tool{
 				Name:        "screen_canslim",
 				Description: "以歐尼爾 CANSLIM 選股:單季 EPS 成長、52 週新高、相對強度(年度 EPS 成長與 ROE 預設不篩,台股回測變差),附大盤 60 日均線判斷;可調門檻或跳過字母,非投資建議。",
 				InputSchema: screenCanslimSchema(),
@@ -428,7 +429,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if rq, ok := q.(MarketRegimeQuerier); ok {
 		rts := &marketRegimeToolset{rq: rq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_market_regime",
 			Description: "查詢 TAIEX 趨勢狀態、均線位置方向、波動與回撤；不代表未來行情。",
 			InputSchema: marketRegimeSchema(),
@@ -438,7 +439,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if vq, ok := q.(MarketValuationQuerier); ok {
 		vts := &marketValuationToolset{vq: vq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_market_valuation",
 			Description: "查詢上市櫃官方 PE／PB 每日中位數及歷史百分位；不含虧損股與 ETF。",
 			InputSchema: marketValuationSchema(),
@@ -448,7 +449,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if sq, ok := q.(DividendFillStatsQuerier); ok {
 		sts := &dividendFillStatsToolset{sq: sq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_dividend_fill_stats",
 			Description: "查詢全市場依現金殖利率分組的填息率與填息天數中位數。",
 			InputSchema: dividendFillStatsSchema(),
@@ -458,7 +459,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if fq, ok := q.(MarketForwardReturnsQuerier); ok {
 		fts := &marketForwardReturnsToolset{fq: fq, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_market_forward_returns",
 			Description: "查詢大盤等權各天期未來報酬與上漲比例（整段與依年度）；不等於加權指數。",
 			InputSchema: marketForwardReturnsSchema(),
@@ -468,7 +469,7 @@ func AddTools(server *mcp.Server, q Querier, logf func(format string, args ...an
 
 	if industries, ok := q.(IndustriesQuerier); ok {
 		its := &industriesToolset{industries: industries, logf: logf}
-		mcp.AddTool(server, &mcp.Tool{
+		registerTool(server, &mcp.Tool{
 			Name:        "get_industry_performance",
 			Description: "查詢產業市值加權報酬、中位數、上漲比例及領漲跌個股；不含 ETF。",
 			InputSchema: industriesSchema(),

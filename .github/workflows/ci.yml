@@ -41,11 +41,12 @@ jobs:
           fi
 
       # 全部測試都以假的 Data API(httptest)與記憶體內 MCP 連線執行,不連任何外部服務。
+      # -coverpkg=./...：main 套件的整合測試（經 HTTP 驗證帶入 Token 身分）也計入 stock 等套件的覆蓋率。
       - name: go test and coverage
         env:
           MIN_COVERAGE: '85.0'
         run: |
-          go test ./... -coverprofile=coverage.out
+          go test ./... -coverpkg=./... -coverprofile=coverage.out
           go tool cover -func=coverage.out
           total="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
           echo "Total statement coverage: ${total}% (minimum: ${MIN_COVERAGE}%)"

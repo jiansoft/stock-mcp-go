@@ -54,9 +54,17 @@ type keyRecord struct {
 	HashAlgorithm string
 }
 
+// Principal 是通過驗證的呼叫端（會員系統計畫 6.3）。個人 Token 帶會員、家庭與 stock_go 解析完成的授權
+// （grants：權限碼 → none／own／household／granted）；Legacy 為本機 SQLite 舊金鑰，Grants 為 nil 時沿用改版前的行為。
 type Principal struct {
-	KeyID  string
-	Prefix string
+	KeyID       string
+	Prefix      string
+	MemberID    int64
+	HouseholdID int64
+	Household   []int64
+	Account     string
+	Grants      map[string]string
+	Legacy      bool
 }
 
 type AuditEvent struct {

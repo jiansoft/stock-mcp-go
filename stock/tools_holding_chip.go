@@ -75,14 +75,21 @@ type HoldingChipEnvelope struct {
 
 // HoldingChipQuerier 是 get_holding_chip 對資料來源的需求介面;只有 *APIClient 實作。
 type HoldingChipQuerier interface {
-	HoldingChip(ctx context.Context, date string) (*HoldingChipEnvelope, error)
+	HoldingChip(ctx context.Context, date string, memberID int64) (*HoldingChipEnvelope, error)
 }
 
-// HoldingChip 查詢持股籌碼日報;date 空字串代表最新交易日。
-func (c *APIClient) HoldingChip(ctx context.Context, date string) (*HoldingChipEnvelope, error) {
+// HoldingChip 查詢持股籌碼日報;date 空字串代表最新交易日,memberID 0 為家庭合計(未帶參數)。
+func (c *APIClient) HoldingChip(ctx context.Context, date string, memberID int64) (*HoldingChipEnvelope, error) {
 	path := "/api/v1/portfolio/chip"
+	values := url.Values{}
 	if date != "" {
-		path += "?" + url.Values{"date": {date}}.Encode()
+		values.Set("date", date)
+	}
+	if memberID > 0 {
+		values.Set("member_id", fmt.Sprint(memberID))
+	}
+	if len(values) > 0 {
+		path += "?" + values.Encode()
 	}
 	var body HoldingChipEnvelope
 	if err := c.get(ctx, path, &body); err != nil {
@@ -96,7 +103,8 @@ func (c *APIClient) HoldingChip(ctx context.Context, date string) (*HoldingChipE
 
 // HoldingChipInput 是 get_holding_chip 的輸入。
 type HoldingChipInput struct {
-	Date string `json:"date,omitempty"`
+	Date     string `json:"date,omitempty"`
+	MemberID int64  `json:"member_id,omitempty"`
 }
 
 // HoldingChipOutput 是持股籌碼 envelope 加上 MCP 分析中繼資料。
@@ -117,6 +125,10 @@ func holdingChipSchema() *jsonschema.Schema {
 				Pattern:     `^\d{4}-\d{2}-\d{2}$`,
 				Description: "查詢日(格式 YYYY-MM-DD,選填);取不晚於它的最近一個有籌碼資料的交易日,未提供為最新交易日",
 			},
+			"member_id": {
+				Type: "integer", Minimum: ptr(0.0),
+				Description: "會員編號(選填);未提供或 0 為全部會員合計",
+			},
 		},
 	}
 }
@@ -133,7 +145,10 @@ func (ts *holdingChipToolset) holdingChip(ctx context.Context, _ *mcp.CallToolRe
 	if err != nil {
 		return nil, nil, err
 	}
-	envelope, err := ts.hq.HoldingChip(ctx, date)
+	if in.MemberID < 0 {
+		return nil, nil, fmt.Errorf("member_id 不可為負數")
+	}
+	envelope, err := ts.hq.HoldingChip(ctx, date, in.MemberID)
 	if err != nil {
 		ts.logf("工具 get_holding_chip 執行失敗:%v", err)
 		return nil, nil, fmt.Errorf("%s", errInternal)

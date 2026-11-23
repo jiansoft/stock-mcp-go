@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,7 +27,67 @@ const (
 // APIClient 是 stock_rust Data API 的 HTTP 實作；不記錄 API key，並以明確 timeout 避免內網故障時卡住 MCP worker。
 type APIClient struct {
 	baseURL, apiKey string
-	client          *http.Client
+	// personalKey 是持股類端點（/api/v1/portfolio/*）專用的 DATA_API_PERSONAL_KEY（會員系統計畫 5.0.1）；
+	// 未設定時沿用 apiKey（stock_rust 的 DATA_API_STRICT_SCOPE=false 相容期）。
+	personalKey string
+	// leases 請領重運算租約（4-04）；nil 時回測請求不帶租約（相容期）。
+	leases LeaseIssuer
+	client *http.Client
+}
+
+// WithLeases 設定重運算租約的請領 client，回傳同一個 client 方便串接。
+func (c *APIClient) WithLeases(leases LeaseIssuer) *APIClient {
+	c.leases = leases
+	return c
+}
+
+// WithPersonalKey 設定持股類端點使用的金鑰，回傳同一個 client 方便串接。
+func (c *APIClient) WithPersonalKey(key string) *APIClient {
+	c.personalKey = key
+	return c
+}
+
+// isPersonalPath 判斷是否為持股類端點。
+func isPersonalPath(path string) bool { return strings.HasPrefix(path, "/api/v1/portfolio/") }
+
+// keyFor 依端點類別選金鑰。
+func (c *APIClient) keyFor(path string) string {
+	if isPersonalPath(path) && c.personalKey != "" {
+		return c.personalKey
+	}
+	return c.apiKey
+}
+
+// scopedPath 在持股類 GET 補上 context 中的 household_id（工具包裝層經 resolveMemberID 放入）。
+func scopedPath(ctx context.Context, path string) string {
+	scope, ok := dataScopeFrom(ctx)
+	if !ok || !isPersonalPath(path) {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "household_id=" + strconv.FormatInt(scope.HouseholdID, 10)
+}
+
+// scopedBody 在持股類寫入的 JSON body 補上 household_id、actor_source=mcp 與 actor_ref（Token id）。
+func scopedBody(ctx context.Context, path string, body []byte) ([]byte, error) {
+	scope, ok := dataScopeFrom(ctx)
+	if !ok || !isPersonalPath(path) {
+		return body, nil
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, fmt.Errorf("補上家庭欄位:%w", err)
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["household_id"] = scope.HouseholdID
+	fields["actor_source"] = "mcp"
+	fields["actor_ref"] = scope.ActorRef
+	return json.Marshal(fields)
 }
 
 // NewAPIClient 建立 Data API client；baseURL 必須是可到達的內網服務根位址。
@@ -547,11 +608,19 @@ func (c *APIClient) get(ctx context.Context, path string, output any) error {
 
 // getFound 將 404 交給呼叫端解讀，其餘非 2xx 狀態都維持安全的通用錯誤。
 func (c *APIClient) getFound(ctx context.Context, path string, output any) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	return c.getFoundWithHeaders(ctx, path, output, nil)
+}
+
+// getFoundWithHeaders 同 getFound，另外帶上額外標頭（回測租約）。
+func (c *APIClient) getFoundWithHeaders(ctx context.Context, path string, output any, extra http.Header) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+scopedPath(ctx, path), nil)
 	if err != nil {
 		return false, fmt.Errorf("建立資料 API 請求:%w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.keyFor(path))
+	for name, values := range extra {
+		req.Header[name] = values
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("呼叫資料 API:%w", err)
@@ -604,11 +673,14 @@ func (c *APIClient) sendJSON(ctx context.Context, method, path string, input any
 	if err != nil {
 		return fmt.Errorf("序列化資料 API 請求:%w", err)
 	}
+	if bodyBytes, err = scopedBody(ctx, path, bodyBytes); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("建立資料 API 請求:%w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.keyFor(path))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {

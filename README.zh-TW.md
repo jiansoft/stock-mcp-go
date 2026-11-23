@@ -202,11 +202,17 @@ claude mcp add --transport http stock-mcp https://mcp.example.com/mcp \
 | `TRUSTED_PROXY_HOPS` | `1` | 會附加 `X-Forwarded-For` 的受信任代理層數 |
 | `STOCK_RUST_API_BASE_URL` | 必填 | 上游 Data API base URL |
 | `STOCK_RUST_API_KEY` | 必填 | 上游專用 Bearer Key |
+| `STOCK_RUST_API_PERSONAL_KEY` | 建議 | 持股類端點（`/api/v1/portfolio/*`）用的上游金鑰，即 stock_rust 的 `DATA_API_PERSONAL_KEY`；未設定時沿用 `STOCK_RUST_API_KEY`，stock_rust 改為 `DATA_API_STRICT_SCOPE=true` 後會被拒 |
 | `API_TIMEOUT_MS` | `30000` | 上游 HTTP timeout（如 `get_institutional_streak_performance` 等多年期統計，在 Pi 上可能需要數秒） |
 | `MCP_API_KEY` | 空 | 一次性相容 bootstrap Key |
 | `MCP_API_KEY_DB_PATH` | `data/mcp-api-keys.db` | API Key SQLite 路徑 |
 | `MCP_API_KEY_PEPPER` | 必填 | 至少 32 bytes 的 HMAC pepper |
 | `MCP_ADMIN_TOKEN` | 必填 | 至少 32 bytes 的獨立管理密鑰 |
+| `STOCK_GO_API_BASE_URL` | 選填 | stock_go API 位址；與 `MCP_SYNC_TOKEN` 同時設定時啟用個人 `smcp_` Token，以 stock_go 的快照驗證（每 30 秒刷新，超過 15 分鐘未刷新即拒絕） |
+| `MCP_SYNC_TOKEN` | 選填 | 取得 stock_go Token 快照的服務金鑰；須與 `STOCK_GO_API_BASE_URL` 同時設定 |
+| `MCP_LEGACY_SQLITE_FALLBACK` | 選填 | `true`（預設）在會員系統過渡期繼續接受 SQLite 舊金鑰；設定 stock_go 後視為舊金鑰會員，權限不超過該會員當下的權限。`false` 一律拒絕 |
+| `MCP_LEGACY_SQLITE_UNTIL` | 選填 | 截止日 `YYYY-MM-DD`（台北時間），隔日起拒絕 SQLite 舊金鑰 |
+| `MCP_QUOTA_TOKEN` | 建議 | 向 stock_go 請領回測租約的服務金鑰（須設定 `STOCK_GO_API_BASE_URL`）；未設定時回測不帶租約，stock_rust 改為 `DATA_API_STRICT_SCOPE=true` 後會被拒 |
 | `MCP_TRUSTED_ORIGINS` | 空 | 逗號分隔的允許瀏覽器 Origin |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit 視窗 |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | 每組 API Key ID＋來源 IP 在視窗內的請求上限；超額回 HTTP 429 |

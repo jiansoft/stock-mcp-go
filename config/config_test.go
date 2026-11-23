@@ -22,6 +22,9 @@ func setRequired(t *testing.T) {
 		"RATE_LIMIT_WINDOW_MS", "RATE_LIMIT_MAX_REQUESTS", "LOG_LEVEL",
 		"MCP_TRUSTED_ORIGINS", "MCP_API_KEY_DB_PATH",
 		"STOCK_RUST_API_BASE_URL", "STOCK_RUST_API_KEY", "API_TIMEOUT_MS",
+		"STOCK_GO_API_BASE_URL", "MCP_SYNC_TOKEN", "STOCK_RUST_API_PERSONAL_KEY", "MCP_QUOTA_TOKEN",
+		"MCP_LEGACY_SQLITE_FALLBACK", "MCP_LEGACY_SQLITE_UNTIL",
+		"REGISTRATION_MODE", "MCP_MEMBER_REQUESTS_PER_MINUTE", "MCP_MEMBER_REQUEST_BURST",
 	} {
 		t.Setenv(name, "")
 	}
@@ -30,6 +33,26 @@ func setRequired(t *testing.T) {
 	t.Setenv("MCP_API_KEY", "test-key")
 	t.Setenv("MCP_API_KEY_PEPPER", "test-pepper-32-bytes-minimum-value")
 	t.Setenv("MCP_ADMIN_TOKEN", "test-admin-token-32-bytes-minimum")
+}
+
+func TestLoadMemberLimits(t *testing.T) {
+	setRequired(t)
+	if _, err := Load(); err != nil {
+		t.Fatalf("closed 允許保留舊限流設定：%v", err)
+	}
+	t.Setenv("REGISTRATION_MODE", "invite")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_MEMBER_REQUESTS_PER_MINUTE") {
+		t.Fatalf("邀請模式須設定會員限流：%v", err)
+	}
+	t.Setenv("MCP_MEMBER_REQUESTS_PER_MINUTE", "30")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_MEMBER_REQUEST_BURST") {
+		t.Fatalf("須明確設定突發上限：%v", err)
+	}
+	t.Setenv("MCP_MEMBER_REQUEST_BURST", "5")
+	got, err := Load()
+	if err != nil || got.MemberRequestsPerMinute != 30 || got.MemberRequestBurst != 5 {
+		t.Fatalf("載入限流設定失敗：%v", err)
+	}
 }
 
 func TestLoadRejectsInvalidSettings(t *testing.T) {
@@ -59,6 +82,26 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 			name: "API_TIMEOUT_MS",
 			env:  "API_TIMEOUT_MS", value: "0",
 			needle: "API_TIMEOUT_MS",
+		},
+		{
+			name: "個人 Token 同步設定只設一半",
+			env:  "STOCK_GO_API_BASE_URL", value: "http://127.0.0.1:8000",
+			needle: "MCP_SYNC_TOKEN",
+		},
+		{
+			name: "租約金鑰缺 stock_go 位址",
+			env:  "MCP_QUOTA_TOKEN", value: "quota-secret",
+			needle: "STOCK_GO_API_BASE_URL",
+		},
+		{
+			name: "舊金鑰開關不合法",
+			env:  "MCP_LEGACY_SQLITE_FALLBACK", value: "yes",
+			needle: "MCP_LEGACY_SQLITE_FALLBACK",
+		},
+		{
+			name: "舊金鑰截止日格式錯誤",
+			env:  "MCP_LEGACY_SQLITE_UNTIL", value: "2026/12/31",
+			needle: "MCP_LEGACY_SQLITE_UNTIL",
 		},
 		{
 			name: "admin token equals bootstrap key",
@@ -261,4 +304,37 @@ func TestTrustedOrigins(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestLoadPersonalDataAPIKey：持股類端點的個人金鑰為選填，有設定時載入。
+func TestLoadPersonalDataAPIKey(t *testing.T) {
+	setRequired(t)
+	cfg, err := Load()
+	if err != nil || cfg.StockRustAPIPersonalKey != "" {
+		t.Fatalf("未設定時應為空：%+v %v", cfg, err)
+	}
+	t.Setenv("STOCK_RUST_API_PERSONAL_KEY", "personal-secret")
+	t.Setenv("STOCK_GO_API_BASE_URL", "http://127.0.0.1:8000")
+	t.Setenv("MCP_SYNC_TOKEN", "sync-secret")
+	t.Setenv("MCP_QUOTA_TOKEN", "quota-secret")
+	cfg, err = Load()
+	if err != nil || cfg.StockRustAPIPersonalKey != "personal-secret" || cfg.MCPQuotaToken != "quota-secret" {
+		t.Fatalf("應載入個人金鑰與租約金鑰：%v", err)
+	}
+}
+
+// TestLoadLegacySQLiteSettings：舊金鑰預設啟用、沒有截止日；截止日為台北時間該日結束（隔日 00:00）。
+func TestLoadLegacySQLiteSettings(t *testing.T) {
+	setRequired(t)
+	cfg, err := Load()
+	if err != nil || !cfg.LegacySQLiteFallback || !cfg.LegacySQLiteUntil.IsZero() {
+		t.Fatalf("預設應啟用且無截止日：%+v %v", cfg, err)
+	}
+	t.Setenv("MCP_LEGACY_SQLITE_FALLBACK", "false")
+	t.Setenv("MCP_LEGACY_SQLITE_UNTIL", "2026-12-31")
+	cfg, err = Load()
+	want := time.Date(2026, 12, 31, 16, 0, 0, 0, time.UTC)
+	if err != nil || cfg.LegacySQLiteFallback || !cfg.LegacySQLiteUntil.Equal(want) {
+		t.Fatalf("應停用並在 2027-01-01 00:00（+08）截止：%v %v", cfg.LegacySQLiteUntil, err)
+	}
 }

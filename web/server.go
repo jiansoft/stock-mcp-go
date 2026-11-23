@@ -37,14 +37,21 @@ import (
 // readiness 由呼叫端注入,用來檢查資料來源是否可用;傳 nil 代表不檢查,
 // 此時 /readyz 的行為與 /healthz 相同。
 func NewHandler(cfg *config.Config, logger *slog.Logger, mcpHandler http.Handler, readiness func(context.Context) error) http.Handler {
-	return newHandler(cfg, logger, mcpHandler, readiness, staticAuthenticator(cfg.APIKey), nil, nil)
+	return newHandler(cfg, logger, mcpHandler, readiness, legacyOnlyAuthenticator{cfg: cfg, next: staticAuthenticator(cfg.APIKey)}, nil, nil)
 }
 
 // Option 調整 NewHandlerWithAPIKeys 組出的路由。
 type Option func(*handlerOptions)
 
 type handlerOptions struct {
-	openAPI []byte
+	openAPI       []byte
+	authenticator Authenticator
+}
+
+// WithAuthenticator 以 authenticator 驗證 MCP 請求（例如個人 Token 與舊金鑰分流的 apikey.Composite）；
+// 管理 API 仍使用 API key service。
+func WithAuthenticator(authenticator Authenticator) Option {
+	return func(o *handlerOptions) { o.authenticator = authenticator }
 }
 
 // WithOpenAPI 提供 /openapi.json 的內容,並啟用 /docs 的 Swagger UI。
@@ -62,11 +69,14 @@ func NewHandlerWithAPIKeys(
 	keys *apikey.Service,
 	opts ...Option,
 ) http.Handler {
-	var options handlerOptions
+	options := handlerOptions{}
+	if keys != nil {
+		options.authenticator = legacyOnlyAuthenticator{cfg: cfg, next: keys}
+	}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return newHandler(cfg, logger, mcpHandler, readiness, keys, keys, options.openAPI)
+	return newHandler(cfg, logger, mcpHandler, readiness, options.authenticator, keys, options.openAPI)
 }
 
 func newHandler(
@@ -95,18 +105,23 @@ func newHandler(
 	// requireAPIKey(驗證失敗就在這裡被攔下),驗證通過才會進入
 	// rateLimit(超過額度就在這裡被攔下),兩者都通過才會真正呼叫
 	// mcpHandler。
-	limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
+	handler := limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))
+	if cfg.MemberRequestsPerMinute > 0 && cfg.MemberRequestBurst > 0 {
+		handler = rateLimitMemberRequests(cfg.MemberRequestsPerMinute, cfg.MemberRequestBurst, handler)
+	} else {
+		limiter := NewRateLimiter(cfg.RateLimitWindow, cfg.RateLimitMax)
+		handler = rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops, handler)
+	}
 	authFailures := NewRateLimiter(time.Minute, 20)
-	protected := requireAuthenticator(authenticator, authFailures, cfg.TrustProxy, cfg.TrustedProxyHops,
-		rateLimit(limiter, cfg.TrustProxy, cfg.TrustedProxyHops,
-			limitBody(crossOrigin(cfg.TrustedOrigins, mcpHandler))))
+	protected := requireAuthenticator(configuredAuthenticator{cfg: cfg, next: authenticator}, authFailures, cfg.TrustProxy, cfg.TrustedProxyHops,
+		handler)
 	mux.Handle(cfg.MCPPath, protected)
 	if keys != nil {
 		registerAPIKeyAdmin(mux, cfg, keys)
 	}
 	registerDocs(mux, openAPI)
 
-	return withRequestLog(logger, mux)
+	return withRequestLog(logger, gateLegacyAdmin(cfg, time.Now, mux))
 }
 
 const (
